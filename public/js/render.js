@@ -291,6 +291,9 @@ const Renderer = (() => {
     ctx.beginPath(); ctx.arc(x, cy, 7, 0, 7); ctx.fill(); ctx.shadowBlur = 0;
     ctx.fillStyle = '#a8780a'; ctx.font = '800 10px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('$', x, cy + 3.5);
     ctx.font = '700 12px "Noto Sans SC"'; ctx.fillStyle = '#bfe8cf'; ctx.fillText('神秘商人', x, m.y - r - 26);
+    ctx.font = '800 11px "Noto Sans SC"';
+    ctx.fillStyle = m.idle ? '#6ee7a0' : '#9aa3b2';
+    ctx.fillText(m.idle ? '● 营业中' : '… 赶路中', x, m.y - r - 12);
   }
 
   function drawItem(it) {

@@ -18,7 +18,8 @@ const HUD = (() => {
       ppGold: id('ppGold'), ppKd: id('ppKd'), ppLives: id('ppLives'), buffRow: id('buffRow'),
       skillbar: id('skillbar'), boardRt: id('boardRt'), boardHist: id('boardHist'),
       chatLog: id('chatLog'), toastWrap: id('toastWrap'), shopGrid: id('shopGrid'),
-      shopGold: id('shopGold'), menuHistory: id('menuHistory')
+      shopGold: id('shopGold'), menuHistory: id('menuHistory'),
+      killFeed: id('killFeed'), killBanner: id('killBanner'), killCue: id('killCue')
     };
     // leaderboard tabs
     document.querySelectorAll('.board-tabs .tab').forEach(t => t.addEventListener('click', () => {
@@ -137,6 +138,86 @@ const HUD = (() => {
     $.chatLog.scrollTop = $.chatLog.scrollHeight;
   }
 
+  // ---- kill feed + 王者-style announcements -------------------------------
+  function clsColor(c) { return (CLASSES[c] && CLASSES[c].color) || (c === 'boss' ? '#ff4d4d' : '#fff'); }
+  const MULTI = { 2: ['双杀', 'DOUBLE KILL'], 3: ['三杀', 'TRIPLE KILL'], 4: ['四杀', 'QUADRA KILL'], 5: ['五杀', 'PENTA KILL'] };
+  const SPREE = { 3: '势不可挡', 4: '大杀特杀', 5: '横扫千军', 6: '主宰全场', 7: '天下无双' };
+  function multiInfo(n) { return n >= 6 ? [n + '连环杀', 'UNSTOPPABLE'] : MULTI[n]; }
+  function spreeInfo(n) { if (n >= 8) return ['超神', 'GODLIKE']; return SPREE[n] ? [SPREE[n], n + ' 连杀'] : null; }
+  function killLine(fx) { return `${fx.killer} ⚔ ${fx.victim}`; }
+
+  function killFeed(fx, selfId) {
+    // scrolling feed entry: killer ⚔ victim
+    const row = document.createElement('div');
+    const isSelf = !!fx.killerId && fx.killerId === selfId;
+    row.className = 'kf-row' + (isSelf ? ' kf-me' : '') + (fx.boss ? ' kf-boss' : '');
+    const vName = fx.boss ? ('👑' + fx.victim) : fx.victim;
+    row.innerHTML =
+      `<span class="kf-k" style="color:${clsColor(fx.kcls)}">${escapeHtml(fx.killer)}</span>` +
+      `<span class="kf-x">⚔</span>` +
+      `<span class="kf-v" style="color:${clsColor(fx.vcls)}">${escapeHtml(vName)}</span>`;
+    $.killFeed.appendChild(row);
+    while ($.killFeed.children.length > 6) $.killFeed.removeChild($.killFeed.firstChild);
+    setTimeout(() => row.remove(), 5600);
+
+    if (fx.boss) {
+      // Boss kills are always worth an immediate global announcement.  It preempts
+      // queued streak messages so the reward never feels swallowed by UI noise.
+      enqueueBanner({ big: '击败 BOSS', sub: killLine(fx), kind: 'boss', urgent: true, duration: 2300 });
+      return;
+    }
+    // big center banner for special moments
+    let b = null;
+    if (fx.multi >= 2) { const m = multiInfo(fx.multi); if (m) b = { big: m[0], sub: killLine(fx), kind: 'multi' }; }
+    else if (fx.fb) b = { big: '首杀', sub: killLine(fx), kind: 'fb' };
+    else { const s = spreeInfo(fx.spree); if (s) b = { big: s[0], sub: killLine(fx), kind: 'spree' }; }
+    if (b) enqueueBanner(b);
+    else if (isSelf) showKillCue(fx);           // every ordinary kill still has instant local feedback
+    if (fx.shutdown >= 3) toast(`${fx.killer} 终结了 ${fx.victim} 的 ${fx.shutdown} 连杀！`, '#ff9f43');
+  }
+
+  let killCueTimer = 0;
+  function showKillCue(fx) {
+    const el = $.killCue;
+    clearTimeout(killCueTimer);
+    el.className = 'kill-cue';
+    el.innerHTML = `<span class="kc-killer" style="color:${clsColor(fx.kcls)}">${escapeHtml(fx.killer)}</span>` +
+      `<span class="kc-label">击败</span><strong>${escapeHtml(fx.victim)}</strong>`;
+    void el.offsetWidth;                        // restart CSS animation
+    el.classList.add('show');
+    killCueTimer = setTimeout(() => el.classList.remove('show'), 1150);
+  }
+
+  const bannerQ = []; let bannerBusy = false; let bannerTimer = 0;
+  function enqueueBanner(b) {
+    if (b.urgent) {
+      bannerQ.length = 0;
+      clearTimeout(bannerTimer);
+      bannerBusy = false;
+      $.killBanner.classList.remove('show');
+      showBanner(b);
+      return;
+    }
+    if (bannerQ.length < 3) bannerQ.push(b);   // avoid replaying stale messages after a hectic fight
+    if (!bannerBusy) showNextBanner();
+  }
+  function showNextBanner() {
+    if (!bannerQ.length) { bannerBusy = false; return; }
+    showBanner(bannerQ.shift());
+  }
+  function showBanner(b) {
+    bannerBusy = true;
+    const el = $.killBanner;
+    el.className = 'kill-banner kb-' + b.kind;
+    el.innerHTML = `<div class="kb-big">${escapeHtml(b.big)}</div><div class="kb-sub">${escapeHtml(b.sub)}${b.who ? ` · ${escapeHtml(b.who)}` : ''}</div>`;
+    void el.offsetWidth;                        // restart CSS animation
+    el.classList.add('show');
+    bannerTimer = setTimeout(() => {
+      el.classList.remove('show');
+      bannerTimer = setTimeout(() => { bannerTimer = 0; showNextBanner(); }, 240);
+    }, b.duration || 1900);
+  }
+
   // ---- toasts -------------------------------------------------------------
   function toast(text, color) {
     const el = document.createElement('div'); el.className = 'toast'; el.textContent = text;
@@ -172,6 +253,6 @@ const HUD = (() => {
   return {
     init, setDefs, buildClassPicker, buildSkillbar, triggerCd, renderSkillbar,
     updatePlayer, updateLeaderboard, updateMenuHistory, addChat, toast,
-    buildShop, updateShopGold
+    buildShop, updateShopGold, killFeed
   };
 })();

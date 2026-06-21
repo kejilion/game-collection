@@ -5,7 +5,7 @@
 // ============================================================================
 
 const {
-  WORLD, CLASSES, ITEM_TYPES, ITEM_WEIGHTS, SHOP, BALANCE, BOSS_NAMES, OBSTACLES, DROP
+  WORLD, CLASSES, ITEM_TYPES, ITEM_WEIGHTS, SHOP, BALANCE, BOSS_NAMES, OBSTACLES, DROP, KILL
 } = require('./config');
 
 // ---- small helpers ---------------------------------------------------------
@@ -48,6 +48,9 @@ class Player {
     this.chat = null;              // { text, until }
     this.spawnProtectUntil = 0;
     this.online = true;
+    this.killStreak = 0;          // consecutive kills without dying (连杀)
+    this.multiKill = 0;           // kills within the multi-kill window (双杀/三杀…)
+    this.lastKillAt = 0;
   }
   get cls() { return CLASSES[this.clsId]; }
   hasBuff(t, t2) { return this.buffs[t] && this.buffs[t] > t2; }
@@ -81,7 +84,9 @@ class Boss {
 class Merchant {
   constructor(x, y) {
     this.id = uid('M'); this.kind = 'merchant'; this.name = '神秘商人';
-    this.x = x; this.y = y; this.tx = x; this.ty = y; this.nextRoamAt = 0;
+    this.x = x; this.y = y; this.tx = x; this.ty = y;
+    this.state = 'idle';          // 'idle' (营业中) | 'move'
+    this.stateUntil = 0;
   }
 }
 
@@ -116,6 +121,7 @@ class World {
     this.bossRespawnAt = 0;
     this.itemsDirty = true;       // only broadcast the item list when it changes
     this.itemsHeartbeatAt = 0;
+    this.firstBlood = false;      // 一血 announced once per server lifetime
     this.genObstacles();
     for (let i = 0; i < BALANCE.merchantCount; i++) {
       const p = this.randomPoint(200); const m = new Merchant(p.x, p.y); this.merchants.set(m.id, m);
@@ -265,7 +271,9 @@ class World {
         this.pushFx({ t: 'revive', x: target.x, y: target.y });
         return;
       }
+      const victimStreak = target.killStreak;
       target.dead = true; target.deaths += 1;
+      target.killStreak = 0; target.multiKill = 0;
       target.respawnAt = t + BALANCE.respawnDelay;
       target.input = { up: false, down: false, left: false, right: false };
       this.pushFx({ t: 'death', x: target.x, y: target.y, color: target.cls.color, name: target.name });
@@ -277,7 +285,7 @@ class World {
         const bounty = randInt(BALANCE.killBounty[0], BALANCE.killBounty[1]) + target.level * 3;
         killer.gold += bounty;
         this.gainXp(killer, BALANCE.xp.killBase + target.level * BALANCE.xp.killPerLevel);
-        this.pushFx({ t: 'kill', x: killer.x, y: killer.y, name: killer.name, victim: target.name });
+        this.recordKill(killer, target.name, target.clsId, false, victimStreak);
       }
     } else if (target.kind === 'boss') {
       this.bosses.delete(target.id);
@@ -290,10 +298,27 @@ class World {
         killer.bossKills += 1; killer.gold += BALANCE.boss.bounty;
         this.gainXp(killer, BALANCE.xp.bossKill);
         this.pushFx({ t: 'bossKill', x: target.x, y: target.y, name: killer.name, boss: target.name });
+        this.pushFx({ t: 'killfeed', killer: killer.name, killerId: killer.id, kcls: killer.clsId, victim: target.name, vcls: 'boss', boss: true });
       } else {
         this.pushFx({ t: 'bossKill', x: target.x, y: target.y, name: '', boss: target.name });
       }
     }
+  }
+
+  // record a hero kill: update streak/multi-kill/first-blood and emit a feed event
+  recordKill(killer, victimName, victimCls, isBoss, victimStreak) {
+    const t = now();
+    if (t - killer.lastKillAt <= KILL.multiWindowMs) killer.multiKill += 1; else killer.multiKill = 1;
+    killer.lastKillAt = t;
+    killer.killStreak += 1;
+    const fb = !this.firstBlood; if (fb) this.firstBlood = true;
+    this.pushFx({
+      t: 'killfeed',
+      killer: killer.name, killerId: killer.id, kcls: killer.clsId,
+      victim: victimName, vcls: victimCls, boss: !!isBoss,
+      fb, multi: killer.multiKill, spree: killer.killStreak,
+      shutdown: (victimStreak >= 3) ? victimStreak : 0
+    });
   }
 
   gainXp(p, amount) {
@@ -514,12 +539,24 @@ class World {
       this.spawnBoss(); this.bossRespawnAt = 0;
     }
 
-    // merchants roam
+    // merchants: short hop, then stand still a while so players can shop
     for (const m of this.merchants.values()) {
-      if (t >= m.nextRoamAt && dist2(m.x, m.y, m.tx, m.ty) < 900) {
-        const pt = this.randomPoint(160); m.tx = pt.x; m.ty = pt.y; m.nextRoamAt = t + randInt(2500, 6000);
+      if (m.state === 'idle') {
+        if (t >= m.stateUntil) {                 // done resting -> pick a nearby spot and walk there
+          const ang = Math.random() * Math.PI * 2;
+          const d = randInt(BALANCE.merchantRoamDist[0], BALANCE.merchantRoamDist[1]);
+          m.tx = clamp(m.x + Math.cos(ang) * d, 80, WORLD.width - 80);
+          m.ty = clamp(m.y + Math.sin(ang) * d, 80, WORLD.height - 80);
+          m.state = 'move'; m.stateUntil = t + BALANCE.merchantMoveMaxMs;
+        }
+        continue;                                // hold position while idle
       }
-      const a = Math.atan2(m.ty - m.y, m.tx - m.x);
+      const dx = m.tx - m.x, dy = m.ty - m.y;
+      if ((dx * dx + dy * dy) < 36 || t >= m.stateUntil) {   // arrived (or timed out) -> rest
+        m.state = 'idle'; m.stateUntil = t + randInt(BALANCE.merchantPauseMs[0], BALANCE.merchantPauseMs[1]);
+        continue;
+      }
+      const a = Math.atan2(dy, dx);
       m.x = clamp(m.x + Math.cos(a) * BALANCE.merchantSpeed * dt, 24, WORLD.width - 24);
       m.y = clamp(m.y + Math.sin(a) * BALANCE.merchantSpeed * dt, 24, WORLD.height - 24);
     }
@@ -632,7 +669,7 @@ class World {
     for (const b of this.bosses.values())
       bosses.push({ id: b.id, name: b.name, x: r(b.x), y: r(b.y), hp: r(Math.max(0, b.hp)), maxHp: b.maxHp, facing: +b.facing.toFixed(2) });
     const merchants = [];
-    for (const m of this.merchants.values()) merchants.push({ id: m.id, name: m.name, x: r(m.x), y: r(m.y) });
+    for (const m of this.merchants.values()) merchants.push({ id: m.id, name: m.name, x: r(m.x), y: r(m.y), idle: m.state === 'idle' });
     // items rarely change → only include the list when dirty (saves bandwidth on laggy links)
     let items;
     if (this.itemsDirty) {

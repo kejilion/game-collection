@@ -99,7 +99,11 @@ const BALANCE = {
     orbMs: 6500, orbCount: 10, orbSpeed: 230, orbDmg: 24, orbRadius: 11,
     bounty: 270
   },
-  merchantCount: 2, merchantSpeed: 72
+  // merchant: short hops then a pause, so players can actually reach & buy
+  merchantCount: 2, merchantSpeed: 70,
+  merchantPauseMs: [4500, 8500],   // how long it stands still ("营业中")
+  merchantRoamDist: [170, 420],    // distance of each short hop
+  merchantMoveMaxMs: 9000          // safety cap on a single hop
 };
 
 const BOSS_NAMES = ['炎魔·巴洛尔', '深渊看守者', '远古石巨人', '混沌之眼', '霜牙暴君', '虚空领主'];
@@ -110,7 +114,10 @@ const OBSTACLES = { count: 18, minR: 34, maxR: 72, margin: 200, gap: 120 };
 // ---- loot dropped on death (uses ITEM_WEIGHTS) ----------------------------
 const DROP = { playerMin: 1, playerMax: 5, bossMin: 6, bossMax: 10, scatter: 84 };
 
+// ---- kill feed / announcements --------------------------------------------
+const KILL = { multiWindowMs: 10000 };   // consecutive kills within this window chain into 双杀/三杀…
+
 module.exports = {
   WORLD, TICK_RATE, BROADCAST_RATE,
-  CLASSES, ITEM_TYPES, ITEM_WEIGHTS, SHOP, BALANCE, BOSS_NAMES, OBSTACLES, DROP
+  CLASSES, ITEM_TYPES, ITEM_WEIGHTS, SHOP, BALANCE, BOSS_NAMES, OBSTACLES, DROP, KILL
 };

@@ -107,6 +107,7 @@
         const d = G.defs.items[fx.type];
         if (d) HUD.toast(`获得 ${d.name} · ${d.desc}`, d.color);
       }
+      else if (fx.t === 'killfeed') HUD.killFeed(fx, G.selfId);
     }
 
     // self-derived HUD

@@ -197,6 +197,44 @@ body.chat-open .chat-form input{opacity:1;font-size:16px;padding:12px 14px}
 .respawn-card #respawnCount{color:var(--gold);font-weight:800;font-size:20px}
 .respawn-card .set-btn{margin-top:18px}
 
+/* ============================ KILL FEED + 全服播报 ============================ */
+.kill-feed{top:176px;left:14px;width:284px;display:flex;flex-direction:column;gap:5px;pointer-events:none;z-index:6}
+.kf-row{align-self:flex-start;max-width:100%;display:flex;align-items:center;gap:7px;padding:5px 11px;border-radius:20px;
+  background:rgba(10,14,34,.78);border:1px solid var(--line);box-shadow:0 4px 14px rgba(0,0,0,.4);
+  font-size:13px;font-weight:800;white-space:nowrap;overflow:hidden;
+  animation:kfIn .25s ease, kfOut .5s ease 5s forwards}
+.kf-row.kf-me{box-shadow:0 0 0 1.5px rgba(255,210,63,.7),0 4px 14px rgba(0,0,0,.4)}
+.kf-row.kf-boss{border-color:rgba(255,210,63,.65);background:linear-gradient(90deg,rgba(76,42,18,.9),rgba(10,14,34,.8))}
+.kf-x{color:#ff5d5d;font-size:14px}
+.kf-v{opacity:.92;overflow:hidden;text-overflow:ellipsis}
+@keyframes kfIn{from{opacity:0;transform:translateX(-16px)}}
+@keyframes kfOut{to{opacity:0;transform:translateX(10px)}}
+
+.kill-banner{position:absolute;top:20%;left:50%;transform:translate(-50%,-10px) scale(.7);z-index:25;
+  text-align:center;pointer-events:none;opacity:0}
+.kill-banner.show{animation:kbPop .42s cubic-bezier(.2,1.4,.4,1) forwards}
+@keyframes kbPop{0%{opacity:0;transform:translate(-50%,-10px) scale(.6)}
+  60%{opacity:1;transform:translate(-50%,0) scale(1.08)}100%{opacity:1;transform:translate(-50%,0) scale(1)}}
+.kb-big{font-size:46px;font-weight:900;letter-spacing:2px;line-height:1;color:#ffd23f;
+  text-shadow:0 3px 0 rgba(57,28,5,.8),0 7px 18px rgba(0,0,0,.58);-webkit-text-stroke:1px rgba(255,244,205,.35)}
+.kb-sub{margin-top:5px;font-size:13px;font-weight:800;color:#fff;letter-spacing:1px;text-shadow:0 2px 8px #000a}
+.kb-fb .kb-big{color:#ff7043}.kb-multi .kb-big{color:#ffb13d}.kb-spree .kb-big{color:#72d9ff}.kb-boss .kb-big{color:#ffe06b}
+.kb-boss .kb-sub{color:#ffe8a5}
+
+.kill-cue{position:absolute;top:34%;left:50%;z-index:24;display:flex;align-items:center;gap:9px;
+  padding:6px 12px;border:1px solid rgba(255,255,255,.22);border-radius:999px;background:rgba(8,13,34,.84);
+  box-shadow:0 8px 26px rgba(0,0,0,.45);color:#fff;pointer-events:none;opacity:0;transform:translate(-50%,-4px) scale(.88)}
+.kill-cue.show{animation:kcPop 1.15s ease-out forwards}
+.kill-cue .kc-killer{font-size:14px;font-weight:900;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.kill-cue .kc-label{font-size:11px;font-weight:800;color:#ffcf54;letter-spacing:1px}
+.kill-cue strong{font-size:16px;letter-spacing:1px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@keyframes kcPop{0%{opacity:0;transform:translate(-50%,-12px) scale(.8)}18%{opacity:1;transform:translate(-50%,0) scale(1.05)}
+  72%{opacity:1;transform:translate(-50%,0) scale(1)}100%{opacity:0;transform:translate(-50%,-6px) scale(.98)}}
+@media(max-width:680px), (hover:none) and (pointer:coarse){
+  .kill-feed{top:176px;left:8px;width:min(284px,calc(100vw - 16px));display:flex;gap:4px}.kf-row{padding:4px 9px;font-size:11px}
+  .kill-banner{top:23%}.kb-big{font-size:32px;letter-spacing:1px}.kb-sub{font-size:11px}.kill-cue{top:34%;padding:5px 10px}.kill-cue strong{font-size:14px}
+}
+
 ::-webkit-scrollbar{width:7px;height:7px}
 ::-webkit-scrollbar-thumb{background:rgba(255,255,255,.18);border-radius:6px}
 ::-webkit-scrollbar-track{background:transparent}
