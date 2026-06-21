@@ -58,10 +58,11 @@ wss.on('connection', (ws) => {
         if (!name) name = '无名英雄';
         const p = world.addPlayer(name, clsId);
         sockets.set(ws, p.id);
+        world.itemsDirty = true;                 // ensure this joiner's first post-join state contains the item snapshot
         send(ws, {
           type: 'welcome', id: p.id, world: WORLD,
           classes: CLASSES, items: ITEM_TYPES, shop: SHOP,
-          tickRate: TICK_RATE
+          obstacles: world.getObstacles(), tickRate: TICK_RATE
         });
         broadcast({ type: 'sys', text: `${name} 加入了大乱斗！`, color: p.cls.color });
         break;

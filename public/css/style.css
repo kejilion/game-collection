@@ -82,6 +82,11 @@ button{font-family:inherit;cursor:pointer;border:none;color:inherit}
 #game{background:#0a0f24}
 #canvas{position:absolute;inset:0;width:100%;height:100%;display:block;cursor:crosshair}
 #mobileControls{display:none}
+.mobile-hint{display:none}
+/* mobile: tapping 💬 reveals a centered chat input even though the chat panel is hidden */
+body.chat-open .panel-chat{display:block;left:50%;right:auto;bottom:42%;transform:translateX(-50%);width:min(86vw,360px);z-index:32}
+body.chat-open .chat-log{display:none}
+body.chat-open .chat-form input{opacity:1;font-size:16px;padding:12px 14px}
 .hud{position:absolute;z-index:5}
 
 /* player panel */
@@ -209,9 +214,10 @@ button{font-family:inherit;cursor:pointer;border:none;color:inherit}
   #moveJoystick::after{content:'';position:absolute;inset:22px;border:1px solid rgba(255,255,255,.12);border-radius:50%}
   #moveJoystickKnob{position:absolute;top:37px;left:37px;width:54px;height:54px;border-radius:50%;
     background:linear-gradient(145deg,#9fc7ff,#5277db);border:2px solid rgba(255,255,255,.46);box-shadow:0 5px 14px rgba(0,0,0,.34);transition:transform .06s linear}
-  #mobileSettings{position:absolute;right:12px;bottom:calc(160px + env(safe-area-inset-bottom));width:48px;height:48px;border-radius:15px;
-    pointer-events:auto;touch-action:manipulation;font-size:23px;font-weight:800;background:var(--panel-solid);border:1px solid var(--line);
-    box-shadow:0 6px 18px rgba(0,0,0,.35)}
+  #mobileBtns{position:absolute;right:12px;bottom:calc(150px + env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:8px;z-index:11}
+  #mobileBtns button{position:static;pointer-events:auto;touch-action:manipulation;width:48px;height:48px;border-radius:14px;
+    font-size:20px;font-weight:800;color:var(--text);background:var(--panel-solid);border:1px solid var(--line);
+    box-shadow:0 6px 18px rgba(0,0,0,.35);display:grid;place-items:center}
   .panel-player{top:8px;left:8px;width:178px;padding:9px 10px;border-radius:13px}.pp-top{margin-bottom:6px}.pp-name{font-size:14px}
   .bar{height:15px;margin-bottom:4px}.bar.xp{height:8px}.bar-txt{font-size:9px}.pp-stats{font-size:10px;margin-top:4px}.buff-row{display:none}
   .panel-right{top:8px;right:8px;width:128px}.panel-right #minimap{display:none}.board{border-radius:12px}.board-tabs .tab{padding:6px 3px;font-size:11px}
@@ -227,13 +233,13 @@ button{font-family:inherit;cursor:pointer;border:none;color:inherit}
   #moveJoystick{left:10px;bottom:calc(10px + env(safe-area-inset-bottom));width:118px;height:118px}
   #moveJoystickKnob{top:32px;left:32px;width:50px;height:50px}
   .skillbar{right:10px;gap:6px;grid-template-columns:repeat(2,53px)}.skill{width:53px;height:53px}
-  #mobileSettings{right:10px;bottom:calc(145px + env(safe-area-inset-bottom));width:44px;height:44px}
+  #mobileBtns{right:10px;bottom:calc(138px + env(safe-area-inset-bottom))}#mobileBtns button{width:44px;height:44px}
 }
 
 @media(max-height:520px) and (orientation:landscape) and (hover:none) and (pointer:coarse){
   #moveJoystick{left:12px;bottom:12px;width:108px;height:108px}
   #moveJoystickKnob{top:29px;left:29px;width:46px;height:46px}
   .skillbar{right:12px;bottom:10px;grid-template-columns:repeat(2,50px);gap:6px}.skill{width:50px;height:50px}
-  #mobileSettings{right:12px;bottom:124px;width:42px;height:42px}
+  #mobileBtns{right:12px;bottom:68px;flex-direction:row}#mobileBtns button{width:44px;height:44px}
   .panel-right{display:none}.toast-wrap{top:8px}.panel-player{top:6px;left:6px}
 }

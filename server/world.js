@@ -5,7 +5,7 @@
 // ============================================================================
 
 const {
-  WORLD, CLASSES, ITEM_TYPES, ITEM_WEIGHTS, SHOP, BALANCE, BOSS_NAMES
+  WORLD, CLASSES, ITEM_TYPES, ITEM_WEIGHTS, SHOP, BALANCE, BOSS_NAMES, OBSTACLES, DROP
 } = require('./config');
 
 // ---- small helpers ---------------------------------------------------------
@@ -111,8 +111,12 @@ class World {
     this.items = new Map();
     this.projectiles = new Map();
     this.fx = [];                 // transient visual events, flushed each broadcast
+    this.obstacles = [];          // static cover; sent to clients once on join
     this.itemSpawnAt = 0;
     this.bossRespawnAt = 0;
+    this.itemsDirty = true;       // only broadcast the item list when it changes
+    this.itemsHeartbeatAt = 0;
+    this.genObstacles();
     for (let i = 0; i < BALANCE.merchantCount; i++) {
       const p = this.randomPoint(200); const m = new Merchant(p.x, p.y); this.merchants.set(m.id, m);
     }
@@ -123,12 +127,54 @@ class World {
   randomPoint(margin = 120) {
     return { x: rand(margin, WORLD.width - margin), y: rand(margin, WORLD.height - margin) };
   }
+  // a random point not overlapping any obstacle (so items/spawns stay reachable)
+  freePoint(margin = 120) {
+    for (let i = 0; i < 24; i++) {
+      const p = this.randomPoint(margin);
+      let ok = true;
+      for (const o of this.obstacles) if (dist2(p.x, p.y, o.x, o.y) < (o.r + 44) ** 2) { ok = false; break; }
+      if (ok) return p;
+    }
+    return this.randomPoint(margin);
+  }
+  genObstacles() {
+    let tries = 0;
+    while (this.obstacles.length < OBSTACLES.count && tries < OBSTACLES.count * 40) {
+      tries++;
+      const r = rand(OBSTACLES.minR, OBSTACLES.maxR);
+      const x = rand(OBSTACLES.margin, WORLD.width - OBSTACLES.margin);
+      const y = rand(OBSTACLES.margin, WORLD.height - OBSTACLES.margin);
+      let ok = true;
+      for (const o of this.obstacles)
+        if (dist2(x, y, o.x, o.y) < (r + o.r + OBSTACLES.gap) ** 2) { ok = false; break; }
+      if (ok) this.obstacles.push({
+        id: uid('O'), x: Math.round(x), y: Math.round(y), r: Math.round(r),
+        type: Math.random() < 0.5 ? 'rock' : 'crate'
+      });
+    }
+  }
+  getObstacles() { return this.obstacles; }
+  // push an entity out of any obstacle it overlaps, then clamp to world bounds
+  resolveObstacles(ent, radius) {
+    for (const o of this.obstacles) {
+      const dx = ent.x - o.x, dy = ent.y - o.y;
+      const min = o.r + radius;
+      const d2 = dx * dx + dy * dy;
+      if (d2 < min * min) {
+        const d = Math.sqrt(d2) || 0.001;
+        const push = min - d;
+        ent.x += (dx / d) * push; ent.y += (dy / d) * push;
+      }
+    }
+    ent.x = clamp(ent.x, radius, WORLD.width - radius);
+    ent.y = clamp(ent.y, radius, WORLD.height - radius);
+  }
   pushFx(e) { this.fx.push(e); }
 
   // ---- lifecycle ----------------------------------------------------------
   addPlayer(name, clsId) {
     const p = new Player(name, clsId);
-    const pt = this.randomPoint(160);
+    const pt = this.freePoint(160);
     p.x = pt.x; p.y = pt.y;
     p.spawnProtectUntil = now() + BALANCE.spawnProtect;
     this.players.set(p.id, p);
@@ -138,17 +184,31 @@ class World {
   removePlayer(id) { this.players.delete(id); }
 
   spawnBoss() {
-    const p = this.randomPoint(300);
+    const p = this.freePoint(300);
     const b = new Boss(p.x, p.y);
     this.bosses.set(b.id, b);
     this.pushFx({ t: 'bossSpawn', x: b.x, y: b.y, name: b.name });
   }
+  // low-level: add an item to the field (used by natural spawn AND death drops)
+  addItem(type, x, y) {
+    const it = new Item(type, clamp(x, 36, WORLD.width - 36), clamp(y, 36, WORLD.height - 36));
+    this.items.set(it.id, it);
+    this.itemsDirty = true;
+    return it;
+  }
   spawnItem() {
     if (this.items.size >= BALANCE.itemCap) return;
-    const type = weightedPick(ITEM_WEIGHTS);
-    const p = this.randomPoint(80);
-    const it = new Item(type, p.x, p.y);
-    this.items.set(it.id, it);
+    const p = this.freePoint(80);
+    this.addItem(weightedPick(ITEM_WEIGHTS), p.x, p.y);
+  }
+  // scatter 1-N random items around a death location
+  dropLoot(x, y, count) {
+    for (let i = 0; i < count; i++) {
+      const ang = Math.random() * Math.PI * 2;
+      const d = rand(18, DROP.scatter);
+      this.addItem(weightedPick(ITEM_WEIGHTS), x + Math.cos(ang) * d, y + Math.sin(ang) * d);
+    }
+    this.pushFx({ t: 'loot', x, y, count });
   }
 
   // ---- input from clients -------------------------------------------------
@@ -208,7 +268,8 @@ class World {
       target.dead = true; target.deaths += 1;
       target.respawnAt = t + BALANCE.respawnDelay;
       target.input = { up: false, down: false, left: false, right: false };
-      this.pushFx({ t: 'death', x: target.x, y: target.y, color: target.cls.color });
+      this.pushFx({ t: 'death', x: target.x, y: target.y, color: target.cls.color, name: target.name });
+      this.dropLoot(target.x, target.y, randInt(DROP.playerMin, DROP.playerMax));
       const killer = attacker && attacker.kind === 'player' ? attacker
         : (target.lastHitBy && this.players.get(target.lastHitBy));
       if (killer && killer !== target) {
@@ -221,6 +282,8 @@ class World {
     } else if (target.kind === 'boss') {
       this.bosses.delete(target.id);
       this.bossRespawnAt = t + BALANCE.boss.respawnMs;
+      this.pushFx({ t: 'bossDeath', x: target.x, y: target.y });
+      this.dropLoot(target.x, target.y, randInt(DROP.bossMin, DROP.bossMax));
       const killer = (attacker && attacker.kind === 'player') ? attacker
         : (target.lastHitBy && this.players.get(target.lastHitBy));
       if (killer) {
@@ -334,6 +397,7 @@ class World {
         if (t2 <= (skill.radius + this.radiusOf(e)) ** 2) this.damageEntity(e, base, p, { crit: true });
       }
       p.x = nx; p.y = ny;
+      this.resolveObstacles(p, 22);
       this.pushFx({ t: 'dash', x1: sx, y1: sy, x2: nx, y2: ny, color: p.cls.color });
     }
   }
@@ -372,7 +436,7 @@ class World {
       default: // timed buffs
         if (BALANCE.buffDur[type]) p.buffs[type] = t + BALANCE.buffDur[type];
     }
-    this.pushFx({ t: 'pickup', x: p.x, y: p.y, color: def.color, icon: def.icon });
+    this.pushFx({ t: 'pickup', x: p.x, y: p.y, color: def.color, icon: def.icon, type, id: p.id });
   }
 
   // ---- main update --------------------------------------------------------
@@ -399,8 +463,8 @@ class World {
         const len = Math.hypot(dx, dy);
         dx /= len; dy /= len;
         const sp = p.effSpeed(t);
-        p.x = clamp(p.x + dx * sp * dt, 24, WORLD.width - 24);
-        p.y = clamp(p.y + dy * sp * dt, 24, WORLD.height - 24);
+        p.x += dx * sp * dt; p.y += dy * sp * dt;
+        this.resolveObstacles(p, 22);
         p.facing = Math.atan2(dy, dx);
         p.moving = true;
       } else p.moving = false;
@@ -412,6 +476,15 @@ class World {
       pr.x += pr.vx * dt; pr.y += pr.vy * dt;
       if (pr.life <= 0 || pr.x < -40 || pr.y < -40 || pr.x > WORLD.width + 40 || pr.y > WORLD.height + 40) {
         if (pr.type === 'fireball') this.explode(pr);
+        this.projectiles.delete(pr.id); continue;
+      }
+      // obstacles block shots (cover)
+      let blocked = false;
+      for (const o of this.obstacles)
+        if (dist2(pr.x, pr.y, o.x, o.y) <= (o.r + pr.radius) ** 2) { blocked = true; break; }
+      if (blocked) {
+        if (pr.type === 'fireball') this.explode(pr);
+        else this.pushFx({ t: 'hit', x: pr.x, y: pr.y, color: '#cdd6ea' });
         this.projectiles.delete(pr.id); continue;
       }
       const targets = pr.ownerKind === 'boss'
@@ -453,13 +526,15 @@ class World {
 
     // item spawning
     if (t >= this.itemSpawnAt) { this.spawnItem(); this.itemSpawnAt = t + BALANCE.itemSpawnMs; }
+    // periodically force a full item resync (cheap self-heal for the delta channel)
+    if (t >= this.itemsHeartbeatAt) { this.itemsDirty = true; this.itemsHeartbeatAt = t + 3000; }
 
     // pickups
     for (const p of this.players.values()) {
       if (p.dead) continue;
       for (const it of this.items.values()) {
         if (dist2(p.x, p.y, it.x, it.y) <= BALANCE.pickupRadius ** 2) {
-          this.applyItem(p, it.type); this.items.delete(it.id);
+          this.applyItem(p, it.type); this.items.delete(it.id); this.itemsDirty = true;
         }
       }
     }
@@ -500,8 +575,9 @@ class World {
     b.facing = Math.atan2(tgt.y - b.y, tgt.x - b.x);
     const d2 = dist2(b.x, b.y, tgt.x, tgt.y);
     if (d2 > B.contactRange * B.contactRange) {
-      b.x = clamp(b.x + Math.cos(b.facing) * B.speed * dt, B.radius, WORLD.width - B.radius);
-      b.y = clamp(b.y + Math.sin(b.facing) * B.speed * dt, B.radius, WORLD.height - B.radius);
+      b.x += Math.cos(b.facing) * B.speed * dt;
+      b.y += Math.sin(b.facing) * B.speed * dt;
+      this.resolveObstacles(b, B.radius);
     } else if (t >= b.attackReadyAt) {
       b.attackReadyAt = t + B.contactMs;
       this.damageEntity(tgt, B.attack, b);
@@ -557,8 +633,13 @@ class World {
       bosses.push({ id: b.id, name: b.name, x: r(b.x), y: r(b.y), hp: r(Math.max(0, b.hp)), maxHp: b.maxHp, facing: +b.facing.toFixed(2) });
     const merchants = [];
     for (const m of this.merchants.values()) merchants.push({ id: m.id, name: m.name, x: r(m.x), y: r(m.y) });
-    const items = [];
-    for (const it of this.items.values()) items.push({ id: it.id, type: it.type, x: r(it.x), y: r(it.y) });
+    // items rarely change → only include the list when dirty (saves bandwidth on laggy links)
+    let items;
+    if (this.itemsDirty) {
+      items = [];
+      for (const it of this.items.values()) items.push({ id: it.id, type: it.type, x: r(it.x), y: r(it.y) });
+      this.itemsDirty = false;
+    }
     const projectiles = [];
     for (const pr of this.projectiles.values())
       projectiles.push({ id: pr.id, x: r(pr.x), y: r(pr.y), type: pr.type, r: pr.radius, owner: pr.ownerId });

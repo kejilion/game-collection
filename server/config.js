@@ -104,7 +104,13 @@ const BALANCE = {
 
 const BOSS_NAMES = ['炎魔·巴洛尔', '深渊看守者', '远古石巨人', '混沌之眼', '霜牙暴君', '虚空领主'];
 
+// ---- static cover / obstacles ---------------------------------------------
+const OBSTACLES = { count: 18, minR: 34, maxR: 72, margin: 200, gap: 120 };
+
+// ---- loot dropped on death (uses ITEM_WEIGHTS) ----------------------------
+const DROP = { playerMin: 1, playerMax: 5, bossMin: 6, bossMax: 10, scatter: 84 };
+
 module.exports = {
   WORLD, TICK_RATE, BROADCAST_RATE,
-  CLASSES, ITEM_TYPES, ITEM_WEIGHTS, SHOP, BALANCE, BOSS_NAMES
+  CLASSES, ITEM_TYPES, ITEM_WEIGHTS, SHOP, BALANCE, BOSS_NAMES, OBSTACLES, DROP
 };

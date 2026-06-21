@@ -9,8 +9,10 @@ const Renderer = (() => {
   let vw = 0, vh = 0, dpr = 1;
   let camX = 0, camY = 0;
   let decor = [];
+  let obstacles = [];
   const particles = [], floaters = [], rings = [], slashes = [], dashes = [];
   const projPrev = new Map();
+  const itemSeen = new Map();      // item id -> first-seen time, for pop-in animation
   let shake = 0;
 
   function init(canvasEl, minimapEl) {
@@ -33,6 +35,7 @@ const Renderer = (() => {
         r: 40 + Math.random() * 120, h: Math.random() * 360, a: 0.04 + Math.random() * 0.05 });
     }
   }
+  function setObstacles(list) { obstacles = list || []; }
 
   // ---- effects spawned from server fx events ------------------------------
   function spawnFx(e) {
@@ -46,9 +49,30 @@ const Renderer = (() => {
       case 'whirlwind': rings.push({ x: e.x, y: e.y, r: 8, max: e.radius, life: 0.5, color: e.color }); for (let i = 0; i < 22; i++) burst(e.x, e.y, e.color, 1, 4); shake = Math.max(shake, 6); break;
       case 'slam': rings.push({ x: e.x, y: e.y, r: 10, max: e.radius, life: 0.55, color: '#ff4d4d', fill: true }); shake = Math.max(shake, 10); break;
       case 'dash': dashes.push({ x1: e.x1, y1: e.y1, x2: e.x2, y2: e.y2, color: e.color, life: 0.3, max: 0.3 }); break;
-      case 'pickup': for (let i = 0; i < 10; i++) burst(e.x, e.y, e.color, 1, 2.6); floaters.push({ x: e.x, y: e.y - 24, v: e.icon, life: 0.8, vy: -34, text: true, color: e.color }); break;
+      case 'pickup': {
+        for (let i = 0; i < 12; i++) burst(e.x, e.y, e.color, 1, 2.8);
+        rings.push({ x: e.x, y: e.y, r: 6, max: 38, life: 0.4, color: e.color });
+        const nm = (ITEMS[e.type] || {}).name || '';
+        floaters.push({ x: e.x, y: e.y - 26, v: (e.icon ? e.icon + ' ' : '') + nm, life: 1.0, vy: -36, text: true, color: e.color });
+        break;
+      }
       case 'spawn': rings.push({ x: e.x, y: e.y, r: 4, max: 46, life: 0.5, color: e.color }); break;
-      case 'death': burst(e.x, e.y, e.color, 26, 4); break;
+      case 'death':
+        burst(e.x, e.y, e.color, 36, 5); burst(e.x, e.y, '#ffffff', 10, 3);
+        rings.push({ x: e.x, y: e.y, r: 6, max: 72, life: 0.5, color: e.color });
+        rings.push({ x: e.x, y: e.y, r: 6, max: 44, life: 0.4, color: '#ffffff' });
+        floaters.push({ x: e.x, y: e.y - 28, v: 'K.O.', life: 1.1, vy: -28, text: true, color: '#ffffff' });
+        shake = Math.max(shake, 11);
+        break;
+      case 'bossDeath':
+        for (let k = 0; k < 3; k++) rings.push({ x: e.x, y: e.y, r: 8, max: 150 + k * 60, life: 0.6 + k * 0.12, color: k % 2 ? '#ffd23f' : '#ff5a3c', fill: k === 0 });
+        burst(e.x, e.y, '#ffb347', 50, 6); burst(e.x, e.y, '#fff2b0', 24, 4);
+        floaters.push({ x: e.x, y: e.y - 50, v: 'BOSS 倒下！', life: 1.5, vy: -22, text: true, color: '#ffd23f' });
+        shake = Math.max(shake, 22);
+        break;
+      case 'loot':
+        for (let i = 0; i < Math.min(40, (e.count || 1) * 4); i++) burst(e.x, e.y, i % 2 ? '#ffd23f' : '#fff2b0', 1, 4.5);
+        break;
       case 'revive': rings.push({ x: e.x, y: e.y, r: 4, max: 50, life: 0.5, color: '#ff7ab8' }); break;
       case 'levelup': rings.push({ x: e.x, y: e.y, r: 6, max: 60, life: 0.7, color: '#ffd23f' }); floaters.push({ x: e.x, y: e.y - 40, v: 'LEVEL UP!', life: 1.2, vy: -26, text: true, color: '#ffd23f' }); break;
       case 'bossCast': rings.push({ x: e.x, y: e.y, r: 10, max: 90, life: 0.4, color: '#ff5a3c' }); break;
@@ -78,6 +102,7 @@ const Renderer = (() => {
     ctx.translate(-camX + sx, -camY + sy);
 
     drawGround();
+    drawObstacles();
     // depth order: items < projectiles < merchants < boss < players
     for (const it of view.items) drawItem(it);
     drawRings(dt, false);
@@ -121,6 +146,33 @@ const Renderer = (() => {
     ctx.shadowColor = 'rgba(120,170,255,.6)'; ctx.shadowBlur = 18;
     ctx.strokeRect(3, 3, W.width - 6, W.height - 6);
     ctx.shadowBlur = 0;
+  }
+
+  function drawObstacles() {
+    const x0 = camX, y0 = camY;
+    for (const o of obstacles) {
+      if (o.x < x0 - o.r - 40 || o.x > x0 + vw + o.r + 40 || o.y < y0 - o.r - 40 || o.y > y0 + vh + o.r + 40) continue;
+      shadow(o.x, o.y, o.r);
+      if (o.type === 'crate') {
+        const s = o.r * 1.5;
+        ctx.save(); ctx.translate(o.x, o.y);
+        const g = ctx.createLinearGradient(-s / 2, -s / 2, s / 2, s / 2);
+        g.addColorStop(0, '#bd8744'); g.addColorStop(1, '#875525');
+        ctx.fillStyle = g; ctx.strokeStyle = '#553616'; ctx.lineWidth = 4;
+        roundRect(-s / 2, -s / 2, s, s, 8); ctx.fill(); ctx.stroke();
+        ctx.lineWidth = 3; ctx.beginPath();
+        ctx.moveTo(-s / 2, -s / 2); ctx.lineTo(s / 2, s / 2);
+        ctx.moveTo(s / 2, -s / 2); ctx.lineTo(-s / 2, s / 2); ctx.stroke();
+        ctx.restore();
+      } else {
+        const g = ctx.createRadialGradient(o.x - o.r * 0.3, o.y - o.r * 0.4, o.r * 0.2, o.x, o.y, o.r);
+        g.addColorStop(0, '#9aa3b5'); g.addColorStop(1, '#4d5564');
+        ctx.fillStyle = g; ctx.strokeStyle = '#333a48'; ctx.lineWidth = 4;
+        ctx.beginPath(); ctx.arc(o.x, o.y, o.r, 0, 7); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = 'rgba(255,255,255,.12)';
+        ctx.beginPath(); ctx.ellipse(o.x - o.r * 0.25, o.y - o.r * 0.3, o.r * 0.42, o.r * 0.26, -0.5, 0, 7); ctx.fill();
+      }
+    }
   }
 
   // ---- entities -----------------------------------------------------------
@@ -244,8 +296,14 @@ const Renderer = (() => {
   function drawItem(it) {
     const def = ITEMS[it.type] || { color: '#fff', icon: '?' };
     const t = performance.now() / 1000;
+    // pop-in scale when an item first appears (great for scattered death loot)
+    let seen = itemSeen.get(it.id);
+    if (!seen) { seen = { first: performance.now() }; itemSeen.set(it.id, seen); }
+    seen.last = performance.now();
+    const age = (performance.now() - seen.first) / 1000;
+    const sc = age < 0.32 ? 0.25 + 0.75 * easeOut(age / 0.32) : 1;
     const bob = Math.sin(t * 2.2 + it.x) * 4;
-    const x = it.x, y = it.y + bob, r = 13;
+    const x = it.x, y = it.y + bob, r = 13 * sc;
     // glow
     ctx.fillStyle = hexA(def.color, 0.22); ctx.beginPath(); ctx.arc(x, y, r + 7 + Math.sin(t * 3) * 2, 0, 7); ctx.fill();
     shadow(x, it.y + 6, r * 0.8);
@@ -255,7 +313,7 @@ const Renderer = (() => {
     ctx.fillStyle = g; ctx.strokeStyle = 'rgba(0,0,0,.35)'; ctx.lineWidth = 2;
     roundRect(-r, -r, r * 2, r * 2, 7); ctx.fill(); ctx.stroke();
     ctx.restore();
-    ctx.fillStyle = '#fff'; ctx.font = '800 15px "Baloo 2"'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#fff'; ctx.font = `800 ${(15 * sc).toFixed(0)}px "Baloo 2"`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText(def.icon, x, y + 1); ctx.textBaseline = 'alphabetic';
   }
 
@@ -372,6 +430,9 @@ const Renderer = (() => {
     const sxk = MW / W.width, syk = MH / W.height;
     mmx.clearRect(0, 0, MW, MH);
     mmx.fillStyle = 'rgba(10,16,40,.9)'; mmx.fillRect(0, 0, MW, MH);
+    // obstacles
+    mmx.fillStyle = 'rgba(150,160,180,.5)';
+    for (const o of obstacles) { mmx.beginPath(); mmx.arc(o.x * sxk, o.y * syk, Math.max(1.5, o.r * sxk), 0, 7); mmx.fill(); }
     // items
     for (const it of view.items) { const d = ITEMS[it.type]; mmx.fillStyle = hexA(d ? d.color : '#fff', .5); mmx.fillRect(it.x * sxk - 1, it.y * syk - 1, 2, 2); }
     // merchants
@@ -399,8 +460,12 @@ const Renderer = (() => {
   function cl(v) { return Math.max(0, Math.min(255, v | 0)); }
   function hx(hex) { hex = hex.replace('#', ''); if (hex.length === 3) hex = hex.split('').map(c => c + c).join(''); return [parseInt(hex.slice(0, 2), 16), parseInt(hex.slice(2, 4), 16), parseInt(hex.slice(4, 6), 16)]; }
 
-  // periodically forget stale projectile-trail entries
-  setInterval(() => { const t = performance.now(); for (const [k, v] of projPrev) if (t - v.seen > 500) projPrev.delete(k); }, 1000);
+  // periodically forget stale projectile-trail / item-pop entries
+  setInterval(() => {
+    const t = performance.now();
+    for (const [k, v] of projPrev) if (t - v.seen > 500) projPrev.delete(k);
+    for (const [k, v] of itemSeen) if (t - (v.last || 0) > 1500) itemSeen.delete(k);
+  }, 1000);
 
-  return { init, resize, setWorld, spawnFx, draw, get cam() { return { x: camX, y: camY }; } };
+  return { init, resize, setWorld, setObstacles, spawnFx, draw, get cam() { return { x: camX, y: camY }; } };
 })();

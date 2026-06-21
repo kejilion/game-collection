@@ -83,12 +83,17 @@
   <!-- bottom-center skill bar -->
   <div class="hud skillbar" id="skillbar"></div>
 
-  <!-- mobile controls: movement is handled by the virtual stick; actions use the skill bar -->
+  <!-- mobile controls: movement = virtual stick (left), actions = skill bar (right) -->
   <div id="mobileControls" aria-label="Mobile game controls">
     <div id="moveJoystick" role="application" aria-label="Move your character">
       <span id="moveJoystickKnob"></span>
     </div>
-    <button id="mobileSettings" type="button" data-touch-action="settings" aria-label="Open game settings">☰</button>
+    <div id="mobileBtns">
+      <button id="mobileSettings" type="button" data-touch-action="settings" aria-label="设置">☰</button>
+      <button id="mobileFs" type="button" aria-label="全屏">⛶</button>
+      <button id="mobileShop" type="button" aria-label="商店">🛒</button>
+      <button id="mobileChat" type="button" aria-label="聊天">💬</button>
+    </div>
   </div>
 
   <!-- shop panel -->
@@ -102,6 +107,7 @@
   <div class="overlay-panel settings" id="settingsPanel">
     <div class="op-head"><h3>⚙ 游戏设置</h3><button class="op-close" data-close="settings">✕</button></div>
     <button class="set-btn" id="btnResume">继续游戏</button>
+    <button class="set-btn" id="btnFullscreen">⛶ 全屏切换</button>
     <button class="set-btn" id="btnReselect">↩ 重新选择角色</button>
     <button class="set-btn danger" id="btnQuit">⏻ 退出游戏</button>
     <p class="op-sub center">提示：方向键移动 · A 攻击 · 1 技能 · B 商店</p>

@@ -4,18 +4,23 @@
 //  and renders them with interpolation + client-side prediction for self.
 // ============================================================================
 (() => {
-  const INTERP_DELAY = 100;        // ms behind server for smooth interpolation
   const G = {
     selfId: null, defs: { classes: {}, items: {}, shop: [] }, world: { width: 3200, height: 2200 },
     snaps: [], leaderboard: { rt: [], hist: [] },
     pred: { x: 0, y: 0, ready: false }, lastSelf: null,
     selectedClass: 'warrior', screen: 'menu', nearMerchant: false,
-    deadSince: 0, shopOpen: false, settingsOpen: false, merchantHinted: false
+    deadSince: 0, shopOpen: false, settingsOpen: false, merchantHinted: false,
+    obstacles: [], items: [],            // items are delta-synced; keep our own copy
+    interpDelay: 120, gapEMA: 50, lastStateAt: 0,  // adaptive interpolation for jittery links
+    shopCloseAt: 0, isTouch: false
   };
   let lastFrame = performance.now();
 
   // ---- boot ---------------------------------------------------------------
   window.addEventListener('DOMContentLoaded', () => {
+    if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
+      G.isTouch = true; document.body.classList.add('is-touch');
+    }
     HUD.init();
     Renderer.init(document.getElementById('canvas'), document.getElementById('minimap'));
     wireMenu(); wireGameUI();
@@ -64,21 +69,32 @@
   function onWelcome(m) {
     G.selfId = m.id; G.world = m.world;
     G.defs = { classes: m.classes, items: m.items, shop: m.shop };
+    G.obstacles = m.obstacles || [];
     Renderer.setWorld(m.world, m.classes, m.items);
+    Renderer.setObstacles(G.obstacles);
     HUD.setDefs(m.classes, m.items, m.shop);
     HUD.buildSkillbar(G.selectedClass);
     HUD.buildShop(buy);
-    G.pred.ready = false; G.snaps.length = 0; G.deadSince = 0;
+    G.pred.ready = false; G.snaps.length = 0; G.items = []; G.deadSince = 0; G.shopCloseAt = 0;
     showScreen('game');
   }
 
   function onState(m) {
     const recv = performance.now();
-    // index entities by id for fast interpolation lookup
+    // adaptive interpolation: track packet inter-arrival jitter and stay that far behind
+    if (G.lastStateAt) {
+      const gap = recv - G.lastStateAt;
+      G.gapEMA = G.gapEMA * 0.85 + gap * 0.15;
+      G.interpDelay = clamp(G.gapEMA * 1.6 + 35, 90, 260);
+    }
+    G.lastStateAt = recv;
+
+    // index moving entities by id for interpolation (items are delta-synced separately)
     const idx = {};
-    for (const k of ['players', 'bosses', 'merchants', 'items', 'projectiles']) {
+    for (const k of ['players', 'bosses', 'merchants', 'projectiles']) {
       idx[k] = new Map(); for (const e of m[k]) idx[k].set(e.id, e);
     }
+    if (m.items) G.items = m.items;        // only present when the set changed
     G.snaps.push({ t: recv, data: m, idx });
     while (G.snaps.length > 16) G.snaps.shift();
 
@@ -87,6 +103,10 @@
       Renderer.spawnFx(fx);
       if (fx.t === 'bossKill') HUD.toast(`${fx.name || '有人'} 击杀了 BOSS ${fx.boss}！`, '#ffd23f');
       else if (fx.t === 'levelup' && fx.id === G.selfId) HUD.toast(`升级！ Lv.${fx.level}`, '#6ee7a0');
+      else if (fx.t === 'pickup' && fx.id === G.selfId) {
+        const d = G.defs.items[fx.type];
+        if (d) HUD.toast(`获得 ${d.name} · ${d.desc}`, d.color);
+      }
     }
 
     // self-derived HUD
@@ -103,8 +123,13 @@
       let near = false;
       for (const mm of m.merchants) if (dist2(self.x, self.y, mm.x, mm.y) <= 140 * 140) { near = true; break; }
       G.nearMerchant = near;
-      if (near && !G.merchantHinted) { HUD.toast('靠近商人，按 B 购买道具', '#6ee7a0'); G.merchantHinted = true; }
-      if (!near) { G.merchantHinted = false; if (G.shopOpen) closeShop(); }
+      if (near) {
+        G.shopCloseAt = 0;                 // back in range — cancel any pending auto-close
+        if (!G.merchantHinted) { HUD.toast('靠近商人，按 B（或点击🛒）购买道具', '#6ee7a0'); G.merchantHinted = true; }
+      } else {
+        G.merchantHinted = false;
+        if (G.shopOpen && !G.shopCloseAt) G.shopCloseAt = recv + 4000;  // grace period before it closes
+      }
     } else if (G.screen === 'game' && G.selfId) {
       // we were removed (e.g. after leave) — ignore
     }
@@ -122,11 +147,13 @@
         document.getElementById('respawnCount').textContent = Math.ceil(left);
       }
     }
+    // shop auto-closes only after a grace period away from the merchant
+    if (G.shopCloseAt && performance.now() > G.shopCloseAt) { G.shopCloseAt = 0; closeShop(); }
     requestAnimationFrame(loop);
   }
 
   function buildView(now, dt) {
-    const target = now - INTERP_DELAY;
+    const target = now - G.interpDelay;
     // find bracketing snapshots
     let a = G.snaps[0], b = G.snaps[G.snaps.length - 1];
     for (let i = 0; i < G.snaps.length - 1; i++) {
@@ -135,7 +162,7 @@
     const span = b.t - a.t || 1;
     const alpha = clamp((target - a.t) / span, 0, 1);
 
-    const view = { selfId: G.selfId, players: [], bosses: [], merchants: [], items: b.data.items, projectiles: [] };
+    const view = { selfId: G.selfId, players: [], bosses: [], merchants: [], items: G.items, projectiles: [] };
     view.bosses = lerpList(a.idx.bosses, b.idx.bosses, alpha);
     view.merchants = lerpList(a.idx.merchants, b.idx.merchants, alpha);
     view.projectiles = lerpList(a.idx.projectiles, b.idx.projectiles, alpha);
@@ -166,8 +193,14 @@
     if (dx || dy) {
       const len = Math.hypot(dx, dy); dx /= len; dy /= len;
       const sp = cls.speed * (server.buffs && server.buffs.includes('speed') ? 1.42 : 1);
-      G.pred.x = clamp(G.pred.x + dx * sp * dt, 24, G.world.width - 24);
-      G.pred.y = clamp(G.pred.y + dy * sp * dt, 24, G.world.height - 24);
+      G.pred.x += dx * sp * dt; G.pred.y += dy * sp * dt;
+      // mirror server cover collision so prediction doesn't fight the authority
+      for (const o of G.obstacles) {
+        const ox = G.pred.x - o.x, oy = G.pred.y - o.y, min = o.r + 22, d2 = ox * ox + oy * oy;
+        if (d2 < min * min) { const d = Math.sqrt(d2) || 0.001, push = min - d; G.pred.x += ox / d * push; G.pred.y += oy / d * push; }
+      }
+      G.pred.x = clamp(G.pred.x, 22, G.world.width - 22);
+      G.pred.y = clamp(G.pred.y, 22, G.world.height - 22);
     }
     // gentle reconciliation toward authoritative position
     const err = Math.hypot(server.x - G.pred.x, server.y - G.pred.y);
@@ -197,7 +230,7 @@
         if (!sk) return;
         Net.send({ type: 'skill', slot }); HUD.triggerCd(String(slot), sk.cd);
       },
-      toggleShop: () => { if (G.shopOpen) closeShop(); else if (G.nearMerchant) openShop(); else HUD.toast('附近没有商人', '#ff7a7a'); },
+      toggleShop: toggleShopUI,
       escape: () => { if (G.shopOpen) return closeShop(); toggleSettings(); },
       chat: () => { const ci = document.getElementById('chatInput'); ci.focus(); }
     });
@@ -219,6 +252,7 @@
     localStorage.setItem('brawl_name', name);
     Net.send({ type: 'join', name, cls: G.selectedClass });
     setupInput();
+    if (G.isTouch) enterFullscreen();      // immersive play on phones (within the tap gesture)
   }
 
   // ---- in-game UI wiring --------------------------------------------------
@@ -229,6 +263,16 @@
     document.getElementById('btnResume').addEventListener('click', closeSettings);
     document.getElementById('btnReselect').addEventListener('click', reselect);
     document.getElementById('btnQuit').addEventListener('click', quit);
+    const fsBtn = document.getElementById('btnFullscreen');
+    if (fsBtn) fsBtn.addEventListener('click', toggleFullscreen);
+    const mSet = document.getElementById('mobileSettings');
+    if (mSet) mSet.addEventListener('click', toggleSettings);   // click fallback alongside pointer handler
+    const mFs = document.getElementById('mobileFs');
+    if (mFs) mFs.addEventListener('click', toggleFullscreen);
+    const mShop = document.getElementById('mobileShop');
+    if (mShop) mShop.addEventListener('click', toggleShopUI);
+    const mChat = document.getElementById('mobileChat');
+    if (mChat) mChat.addEventListener('click', () => { document.body.classList.add('chat-open'); document.getElementById('chatInput').focus(); });
     document.getElementById('btnBackMenu').addEventListener('click', () => {
       document.getElementById('quitScreen').classList.remove('show'); showScreen('menu');
     });
@@ -238,15 +282,28 @@
       const ci = document.getElementById('chatInput');
       const text = ci.value.trim();
       if (text) Net.send({ type: 'chat', text });
-      ci.value = ''; ci.blur();
+      ci.value = ''; ci.blur(); document.body.classList.remove('chat-open');
     });
-    document.getElementById('chatInput').addEventListener('keydown', (e) => { if (e.key === 'Escape') e.target.blur(); });
+    const chatInput = document.getElementById('chatInput');
+    chatInput.addEventListener('keydown', (e) => { if (e.key === 'Escape') e.target.blur(); });
+    chatInput.addEventListener('blur', () => document.body.classList.remove('chat-open'));
   }
 
   function buy(itemId) { Net.send({ type: 'buy', item: itemId }); }
 
-  function openShop() { G.shopOpen = true; document.getElementById('shopPanel').classList.add('show'); if (G.lastSelf) HUD.updateShopGold(G.lastSelf.gold); }
-  function closeShop() { G.shopOpen = false; document.getElementById('shopPanel').classList.remove('show'); }
+  function openShop() { G.shopOpen = true; G.shopCloseAt = 0; document.getElementById('shopPanel').classList.add('show'); if (G.lastSelf) HUD.updateShopGold(G.lastSelf.gold); }
+  function closeShop() { G.shopOpen = false; G.shopCloseAt = 0; document.getElementById('shopPanel').classList.remove('show'); }
+  function toggleShopUI() { if (G.shopOpen) closeShop(); else if (G.nearMerchant) openShop(); else HUD.toast('附近没有商人', '#ff7a7a'); }
+
+  function toggleFullscreen() {
+    try {
+      if (!document.fullscreenElement) (document.documentElement.requestFullscreen || document.documentElement.webkitRequestFullscreen).call(document.documentElement);
+      else (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+    } catch (e) {}
+  }
+  function enterFullscreen() {
+    try { if (!document.fullscreenElement && document.documentElement.requestFullscreen) document.documentElement.requestFullscreen(); } catch (e) {}
+  }
   function toggleSettings() { G.settingsOpen ? closeSettings() : openSettings(); }
   function openSettings() { G.settingsOpen = true; document.getElementById('settingsPanel').classList.add('show'); }
   function closeSettings() { G.settingsOpen = false; document.getElementById('settingsPanel').classList.remove('show'); }
