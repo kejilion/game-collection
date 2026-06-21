@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>大乱斗 · Arena Brawl</title>
+<link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+
+<!-- ============================ MENU ============================ -->
+<section id="menu" class="screen show">
+  <div class="menu-bg"></div>
+  <div class="menu-card">
+    <h1 class="logo">大乱斗 <span>ARENA&nbsp;BRAWL</span></h1>
+    <p class="tagline">一张大地图，全世界同服开打 · 选个职业，立刻进场</p>
+
+    <label class="field">
+      <span>你的名字</span>
+      <input id="nameInput" maxlength="14" placeholder="输入昵称…" autocomplete="off" />
+    </label>
+
+    <div class="class-pick" id="classPick"><!-- class cards injected by JS --></div>
+
+    <button id="playBtn" class="play-btn">进入大乱斗 ⚔</button>
+    <p class="hint">方向键移动 · <b>A</b> 普通攻击 · <b>1</b> 技能 · <b>Enter</b> 聊天 · <b>B</b> 商店 · <b>Esc</b> 设置</p>
+
+    <div class="menu-board">
+      <h3>🏆 历史排行榜</h3>
+      <ol id="menuHistory" class="mini-board"><li class="empty">暂无记录</li></ol>
+    </div>
+  </div>
+  <div class="conn-status" id="connStatus">连接中…</div>
+</section>
+
+<!-- ============================ GAME ============================ -->
+<section id="game" class="screen">
+  <canvas id="canvas"></canvas>
+
+  <!-- top-left player panel -->
+  <div class="hud panel-player" id="playerPanel">
+    <div class="pp-top">
+      <span class="pp-class" id="ppClass">战士</span>
+      <span class="pp-name" id="ppName">玩家</span>
+      <span class="pp-level" id="ppLevel">Lv.1</span>
+    </div>
+    <div class="bar hp"><div class="bar-fill" id="ppHp"></div><span class="bar-txt" id="ppHpTxt">100/100</span></div>
+    <div class="bar xp"><div class="bar-fill" id="ppXp"></div><span class="bar-txt" id="ppXpTxt">0%</span></div>
+    <div class="pp-stats">
+      <span id="ppGold">💰 0</span>
+      <span id="ppKd">⚔ 0 / ☠ 0</span>
+      <span id="ppLives">❤×0</span>
+    </div>
+    <div class="buff-row" id="buffRow"></div>
+  </div>
+
+  <!-- top-right minimap + leaderboard -->
+  <div class="hud panel-right">
+    <canvas id="minimap" width="190" height="130"></canvas>
+    <div class="board">
+      <div class="board-tabs">
+        <button class="tab active" data-tab="rt">实时</button>
+        <button class="tab" data-tab="hist">历史</button>
+      </div>
+      <ol id="boardRt" class="board-list show"></ol>
+      <ol id="boardHist" class="board-list"></ol>
+    </div>
+  </div>
+
+  <!-- system toast -->
+  <div class="hud toast-wrap" id="toastWrap"></div>
+
+  <!-- bottom-left chat -->
+  <div class="hud panel-chat">
+    <div class="chat-log" id="chatLog"></div>
+    <form id="chatForm" class="chat-form" autocomplete="off">
+      <input id="chatInput" maxlength="80" placeholder="按 Enter 聊天…" />
+    </form>
+  </div>
+
+  <!-- bottom-center skill bar -->
+  <div class="hud skillbar" id="skillbar"></div>
+
+  <!-- shop panel -->
+  <div class="overlay-panel shop" id="shopPanel">
+    <div class="op-head"><h3>🛒 神秘商人</h3><button class="op-close" data-close="shop">✕</button></div>
+    <p class="op-sub">靠近商人时可购买 · 你的金币 <b id="shopGold">0</b></p>
+    <div class="shop-grid" id="shopGrid"></div>
+  </div>
+
+  <!-- settings menu -->
+  <div class="overlay-panel settings" id="settingsPanel">
+    <div class="op-head"><h3>⚙ 游戏设置</h3><button class="op-close" data-close="settings">✕</button></div>
+    <button class="set-btn" id="btnResume">继续游戏</button>
+    <button class="set-btn" id="btnReselect">↩ 重新选择角色</button>
+    <button class="set-btn danger" id="btnQuit">⏻ 退出游戏</button>
+    <p class="op-sub center">提示：方向键移动 · A 攻击 · 1 技能 · B 商店</p>
+  </div>
+
+  <!-- respawn overlay -->
+  <div class="respawn" id="respawn">
+    <div class="respawn-card">
+      <div class="skull">☠</div>
+      <h2>你被击败了</h2>
+      <p>复活倒计时 <span id="respawnCount">3</span> 秒…</p>
+    </div>
+  </div>
+
+  <!-- quit screen -->
+  <div class="respawn" id="quitScreen">
+    <div class="respawn-card">
+      <div class="skull">👋</div>
+      <h2>已退出游戏</h2>
+      <p>感谢游玩大乱斗！</p>
+      <button class="set-btn" id="btnBackMenu">返回主菜单</button>
+    </div>
+  </div>
+</section>
+
+<script src="js/net.js"></script>
+<script src="js/input.js"></script>
+<script src="js/render.js"></script>
+<script src="js/hud.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>

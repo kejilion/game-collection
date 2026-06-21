@@ -1,0 +1,14 @@
+# docker compose up -d         → build & run locally
+# IMAGE=youruser/arena-brawl:latest docker compose up -d  → run a pulled image
+services:
+  arena-brawl:
+    image: ${IMAGE:-arena-brawl:latest}
+    build: .
+    container_name: arena-brawl
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+    volumes:
+      - ./data:/app/data        # keep historical leaderboard across restarts
+    restart: unless-stopped
