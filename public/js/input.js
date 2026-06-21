@@ -8,6 +8,9 @@ const Input = (() => {
   let handlers = {};
   let attackHeld = false;
   let attackTimer = null;
+  let initialized = false;
+  let joystickPointerId = null;
+  let attackPointerId = null;
 
   const MOVE = {
     ArrowUp: 'up', KeyW: 'up',
@@ -28,6 +31,14 @@ const Input = (() => {
     attackTimer = setInterval(() => { if (attackHeld) handlers.attack && handlers.attack(); }, 140);
   }
   function stopAttackLoop() { attackHeld = false; clearInterval(attackTimer); attackTimer = null; }
+
+  function setKeys(next) {
+    let changed = false;
+    for (const key of Object.keys(keys)) {
+      if (keys[key] !== next[key]) { keys[key] = next[key]; changed = true; }
+    }
+    if (changed) sendMove();
+  }
 
   function onKeyDown(e) {
     // chat / typing: let the field handle it (Enter/Esc managed in main)
@@ -51,15 +62,87 @@ const Input = (() => {
   }
 
   function releaseAll() {
-    keys.up = keys.down = keys.left = keys.right = false;
+    setKeys({ up: false, down: false, left: false, right: false });
     stopAttackLoop(); sendMove();
+    joystickPointerId = null; attackPointerId = null;
+    const knob = document.getElementById('moveJoystickKnob');
+    if (knob) knob.style.transform = 'translate(0, 0)';
+  }
+
+  function updateJoystick(e) {
+    const stick = document.getElementById('moveJoystick');
+    const knob = document.getElementById('moveJoystickKnob');
+    if (!stick || !knob) return;
+    const rect = stick.getBoundingClientRect();
+    let x = (e.clientX - rect.left - rect.width / 2) / (rect.width / 2);
+    let y = (e.clientY - rect.top - rect.height / 2) / (rect.height / 2);
+    const length = Math.hypot(x, y);
+    if (length > 1) { x /= length; y /= length; }
+    knob.style.transform = `translate(${x * 38}px, ${y * 38}px)`;
+    const deadzone = 0.24;
+    setKeys({ up: y < -deadzone, down: y > deadzone, left: x < -deadzone, right: x > deadzone });
+  }
+
+  function clearJoystick() {
+    joystickPointerId = null;
+    setKeys({ up: false, down: false, left: false, right: false });
+    const knob = document.getElementById('moveJoystickKnob');
+    if (knob) knob.style.transform = 'translate(0, 0)';
+  }
+
+  function onJoystickDown(e) {
+    e.preventDefault();
+    joystickPointerId = e.pointerId;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    updateJoystick(e);
+  }
+
+  function onJoystickMove(e) {
+    if (e.pointerId === joystickPointerId) { e.preventDefault(); updateJoystick(e); }
+  }
+
+  function onPointerDown(e) {
+    const skill = e.target.closest('#skillbar .skill[data-k]');
+    const target = e.target.closest('[data-touch-action]');
+    if (!skill && !target) return;
+    const compactLayout = e.pointerType === 'touch' || window.matchMedia('(max-width: 680px)').matches;
+    if (!compactLayout) return;
+    e.preventDefault();
+    if (skill) {
+      if (skill.dataset.k === 'A') {
+        if (!attackHeld) { attackHeld = true; attackPointerId = e.pointerId; skill.setPointerCapture(e.pointerId); startAttackLoop(); }
+      } else {
+        handlers.skill && handlers.skill(Number(skill.dataset.k));
+      }
+    } else if (target.dataset.touchAction === 'settings') {
+      handlers.escape && handlers.escape();
+    }
+  }
+
+  function onPointerEnd(e) {
+    if (e.pointerId === joystickPointerId) clearJoystick();
+    if (e.pointerId === attackPointerId) { attackPointerId = null; stopAttackLoop(); }
+  }
+
+  function bindTouchControls() {
+    const stick = document.getElementById('moveJoystick');
+    if (stick) {
+      stick.addEventListener('pointerdown', onJoystickDown);
+      stick.addEventListener('pointermove', onJoystickMove);
+    }
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('pointerup', onPointerEnd);
+    document.addEventListener('pointercancel', onPointerEnd);
   }
 
   function init(h) {
     handlers = h;
+    if (initialized) return;
+    initialized = true;
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
     window.addEventListener('blur', releaseAll);
+    bindTouchControls();
   }
 
   return { init, releaseAll, keys };

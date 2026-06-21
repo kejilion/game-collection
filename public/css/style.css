@@ -65,6 +65,7 @@ button{font-family:inherit;cursor:pointer;border:none;color:inherit}
 .play-btn:active{transform:translateY(1px)}
 .hint{margin-top:14px;font-size:12px;color:var(--dim)}
 .hint b{color:#ffe08a}
+.mobile-hint{display:none;margin-top:10px;font-size:12px;color:#9be7ff}
 .menu-board{margin-top:18px;padding-top:14px;border-top:1px solid var(--line)}
 .menu-board h3{font-size:14px;color:var(--dim);margin-bottom:8px}
 .mini-board{list-style:none;font-size:13px}
@@ -80,6 +81,7 @@ button{font-family:inherit;cursor:pointer;border:none;color:inherit}
 /* ============================ GAME ============================ */
 #game{background:#0a0f24}
 #canvas{position:absolute;inset:0;width:100%;height:100%;display:block;cursor:crosshair}
+#mobileControls{display:none}
 .hud{position:absolute;z-index:5}
 
 /* player panel */
@@ -140,8 +142,9 @@ button{font-family:inherit;cursor:pointer;border:none;color:inherit}
 
 /* skill bar */
 .skillbar{bottom:16px;left:50%;transform:translateX(-50%);display:flex;gap:10px}
-.skill{position:relative;width:56px;height:56px;border-radius:14px;background:var(--panel-solid);
-  border:2px solid var(--line);display:grid;place-items:center;box-shadow:0 6px 18px rgba(0,0,0,.4);overflow:hidden}
+.skill{position:relative;width:56px;height:56px;padding:0;border-radius:14px;background:var(--panel-solid);
+  border:2px solid var(--line);display:grid;place-items:center;box-shadow:0 6px 18px rgba(0,0,0,.4);overflow:hidden;
+  appearance:none;-webkit-appearance:none}
 .skill .ic{font-size:24px;z-index:2}
 .skill .key{position:absolute;top:2px;left:5px;font-size:11px;font-weight:800;color:var(--dim);z-index:2}
 .skill .nm{position:absolute;bottom:2px;left:0;right:0;text-align:center;font-size:9px;color:#cfe0ff;z-index:2;font-weight:700}
@@ -193,8 +196,44 @@ button{font-family:inherit;cursor:pointer;border:none;color:inherit}
 ::-webkit-scrollbar-thumb{background:rgba(255,255,255,.18);border-radius:6px}
 ::-webkit-scrollbar-track{background:transparent}
 
-@media(max-width:680px){
-  .panel-player{width:200px}.panel-chat{width:210px}.panel-right{width:150px}
-  #minimap{width:140px;height:96px}.skill{width:48px;height:48px}
-  .logo{font-size:36px}
+@media(max-width:680px), (hover:none) and (pointer:coarse){
+  .menu-card{width:min(560px,calc(100vw - 24px));margin:12px;padding:22px 16px 18px}
+  .class-pick{gap:8px}.class-card{padding:12px 5px 10px}.class-card .ava{width:50px;height:50px;font-size:25px}
+  .class-card h4{font-size:15px}.class-card .role{font-size:10px}.logo{font-size:36px}
+  .mobile-hint{display:block}
+  #canvas{cursor:default;touch-action:none}
+  #mobileControls{position:absolute;inset:0;z-index:10;display:block;pointer-events:none}
+  #moveJoystick{position:absolute;left:16px;bottom:calc(16px + env(safe-area-inset-bottom));width:132px;height:132px;border-radius:50%;
+    pointer-events:auto;touch-action:none;background:radial-gradient(circle at 35% 30%,rgba(255,255,255,.16),transparent 42%),rgba(12,19,49,.74);
+    border:2px solid rgba(255,255,255,.2);box-shadow:0 8px 24px rgba(0,0,0,.35),inset 0 0 26px rgba(91,140,255,.18)}
+  #moveJoystick::after{content:'';position:absolute;inset:22px;border:1px solid rgba(255,255,255,.12);border-radius:50%}
+  #moveJoystickKnob{position:absolute;top:37px;left:37px;width:54px;height:54px;border-radius:50%;
+    background:linear-gradient(145deg,#9fc7ff,#5277db);border:2px solid rgba(255,255,255,.46);box-shadow:0 5px 14px rgba(0,0,0,.34);transition:transform .06s linear}
+  #mobileSettings{position:absolute;right:12px;bottom:calc(160px + env(safe-area-inset-bottom));width:48px;height:48px;border-radius:15px;
+    pointer-events:auto;touch-action:manipulation;font-size:23px;font-weight:800;background:var(--panel-solid);border:1px solid var(--line);
+    box-shadow:0 6px 18px rgba(0,0,0,.35)}
+  .panel-player{top:8px;left:8px;width:178px;padding:9px 10px;border-radius:13px}.pp-top{margin-bottom:6px}.pp-name{font-size:14px}
+  .bar{height:15px;margin-bottom:4px}.bar.xp{height:8px}.bar-txt{font-size:9px}.pp-stats{font-size:10px;margin-top:4px}.buff-row{display:none}
+  .panel-right{top:8px;right:8px;width:128px}.panel-right #minimap{display:none}.board{border-radius:12px}.board-tabs .tab{padding:6px 3px;font-size:11px}
+  .board-list{max-height:120px;padding:4px}.board-list li{padding:4px;font-size:10.5px}.board-list .rank{width:14px}
+  .panel-chat{display:none}
+  .toast-wrap{top:122px;max-width:calc(100vw - 30px)}.toast{font-size:11px;padding:6px 12px}
+  .skillbar{z-index:11;left:auto;right:12px;bottom:calc(12px + env(safe-area-inset-bottom));transform:none;display:grid;grid-template-columns:repeat(2,58px);gap:8px}
+  .skill{width:58px;height:58px;border-radius:16px;touch-action:none}.skill.locked{display:none}.skill .key{display:none}.skill .ic{font-size:25px}.skill .nm{font-size:9px;bottom:4px}
+  .overlay-panel{z-index:20;width:calc(100vw - 28px);max-height:calc(100vh - 32px);padding:18px;overflow:auto}.shop-grid{max-height:55vh}.respawn-card{max-width:calc(100vw - 28px);padding:26px 24px}
+}
+
+@media(max-width:390px){
+  #moveJoystick{left:10px;bottom:calc(10px + env(safe-area-inset-bottom));width:118px;height:118px}
+  #moveJoystickKnob{top:32px;left:32px;width:50px;height:50px}
+  .skillbar{right:10px;gap:6px;grid-template-columns:repeat(2,53px)}.skill{width:53px;height:53px}
+  #mobileSettings{right:10px;bottom:calc(145px + env(safe-area-inset-bottom));width:44px;height:44px}
+}
+
+@media(max-height:520px) and (orientation:landscape) and (hover:none) and (pointer:coarse){
+  #moveJoystick{left:12px;bottom:12px;width:108px;height:108px}
+  #moveJoystickKnob{top:29px;left:29px;width:46px;height:46px}
+  .skillbar{right:12px;bottom:10px;grid-template-columns:repeat(2,50px);gap:6px}.skill{width:50px;height:50px}
+  #mobileSettings{right:12px;bottom:124px;width:42px;height:42px}
+  .panel-right{display:none}.toast-wrap{top:8px}.panel-player{top:6px;left:6px}
 }

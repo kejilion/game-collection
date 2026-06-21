@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
 <title>大乱斗 · Arena Brawl</title>
 <link rel="stylesheet" href="css/style.css" />
 </head>
@@ -24,6 +24,8 @@
 
     <button id="playBtn" class="play-btn">进入大乱斗 ⚔</button>
     <p class="hint">方向键移动 · <b>A</b> 普通攻击 · <b>1</b> 技能 · <b>Enter</b> 聊天 · <b>B</b> 商店 · <b>Esc</b> 设置</p>
+
+    <p class="mobile-hint">手机操作：左下摇杆移动，右下按钮攻击和施放技能</p>
 
     <div class="menu-board">
       <h3>🏆 历史排行榜</h3>
@@ -80,6 +82,14 @@
 
   <!-- bottom-center skill bar -->
   <div class="hud skillbar" id="skillbar"></div>
+
+  <!-- mobile controls: movement is handled by the virtual stick; actions use the skill bar -->
+  <div id="mobileControls" aria-label="Mobile game controls">
+    <div id="moveJoystick" role="application" aria-label="Move your character">
+      <span id="moveJoystickKnob"></span>
+    </div>
+    <button id="mobileSettings" type="button" data-touch-action="settings" aria-label="Open game settings">☰</button>
+  </div>
 
   <!-- shop panel -->
   <div class="overlay-panel shop" id="shopPanel">
