@@ -15,7 +15,9 @@
     interpDelay: 120, gapEMA: 50, lastStateAt: 0,  // adaptive interpolation for jittery links
     shopCloseAt: 0, isTouch: false,
     spectating: false, specTarget: null, specFree: true, spectatorCount: 0,
-    lastKilledBy: null, lastKilledAt: 0   // who landed the killing blow on us (for the death notice)
+    lastKilledBy: null, lastKilledAt: 0,   // who landed the killing blow on us (for the death notice)
+    // free-cam: a spectator camera detached from any player — pan it anywhere
+    specCam: { x: 1600, y: 1100 }, specKeys: { up: false, down: false, left: false, right: false }, specDrag: null
   };
   let lastFrame = performance.now();
 
@@ -24,6 +26,8 @@
   function onSpectateWelcome(m) {
     G.spectating = true; G.specFree = true; G.specTarget = null;
     G.world = m.world;
+    G.specCam = { x: m.world.width / 2, y: m.world.height / 2 };   // free camera starts centered
+    G.specKeys = { up: false, down: false, left: false, right: false };
     G.defs = { classes: m.classes, items: m.items, shop: m.shop, bosses: m.bosses || {} };
     G.obstacles = m.obstacles || [];
     Renderer.setWorld(m.world, m.classes, m.items, m.bosses);
@@ -36,6 +40,7 @@
     document.getElementById('playerPanel').style.display = 'none';
     document.getElementById('skillbar').style.display = 'none';
     wireSpectatorControls();
+    updateSpecUI();                       // show the 自由视角 + pan hint right away
   }
 
   function onSpectatorCount(m) {
@@ -72,6 +77,17 @@
     G.specFree = true; G.specTarget = null; updateSpecUI();
   }
 
+  // free-cam: glide the detached spectator camera from held keys (px/sec)
+  function updateSpecCam(dt) {
+    let dx = (G.specKeys.right ? 1 : 0) - (G.specKeys.left ? 1 : 0);
+    let dy = (G.specKeys.down ? 1 : 0) - (G.specKeys.up ? 1 : 0);
+    if (!dx && !dy) return;
+    const len = Math.hypot(dx, dy); dx /= len; dy /= len;
+    const sp = 760;
+    G.specCam.x = clamp(G.specCam.x + dx * sp * dt, 0, G.world.width);
+    G.specCam.y = clamp(G.specCam.y + dy * sp * dt, 0, G.world.height);
+  }
+
   function specExit() {
     Net.send({ type: 'spectateLeave' });
     G.spectating = false; G.specTarget = null; G.specFree = true;
@@ -85,7 +101,7 @@
 
   function updateSpecUI() {
     const el = document.getElementById('specTarget');
-    if (G.specFree) { el.textContent = '\u81EA\u7531\u89C6\u89D2'; return; }
+    if (G.specFree) { el.textContent = '\u81EA\u7531\u89C6\u89D2 \u00B7 WASD/\u62D6\u52A8 \u79FB\u52A8\u955C\u5934'; return; }
     const snap = G.snaps.length > 0 ? G.snaps[G.snaps.length - 1] : null;
     const target = snap ? snap.data.players.find(p => p.id === G.specTarget) : null;
     el.textContent = target ? target.name : '\u81EA\u7531\u89C6\u89D2';
@@ -122,11 +138,45 @@
     document.getElementById('specExit').addEventListener('click', specExit);
     window.addEventListener('keydown', (e) => {
       if (!G.spectating) return;
-      if (e.code === 'ArrowLeft' || e.code === 'KeyA') { e.preventDefault(); specSwitchTarget(-1); }
-      if (e.code === 'ArrowRight' || e.code === 'KeyD') { e.preventDefault(); specSwitchTarget(1); }
-      if (e.code === 'Escape') { e.preventDefault(); specExit(); }
-      if (e.code === 'Space') { e.preventDefault(); specGoFree(); }
+      const c = e.code;
+      if (c === 'Escape') { e.preventDefault(); specExit(); return; }
+      if (c === 'Space')  { e.preventDefault(); specGoFree(); return; }
+      const up = c==='ArrowUp'||c==='KeyW', down = c==='ArrowDown'||c==='KeyS';
+      const left = c==='ArrowLeft'||c==='KeyA', right = c==='ArrowRight'||c==='KeyD';
+      if (!(up||down||left||right)) return;
+      e.preventDefault();
+      if (G.specFree) {                          // free camera: hold to pan
+        if (up) G.specKeys.up = true; if (down) G.specKeys.down = true;
+        if (left) G.specKeys.left = true; if (right) G.specKeys.right = true;
+      } else if (left) specSwitchTarget(-1);     // following: ← / → cycle players
+      else if (right) specSwitchTarget(1);
     });
+    window.addEventListener('keyup', (e) => {
+      if (!G.spectating) return;
+      const c = e.code;
+      if (c==='ArrowUp'||c==='KeyW') G.specKeys.up = false;
+      else if (c==='ArrowDown'||c==='KeyS') G.specKeys.down = false;
+      else if (c==='ArrowLeft'||c==='KeyA') G.specKeys.left = false;
+      else if (c==='ArrowRight'||c==='KeyD') G.specKeys.right = false;
+    });
+    // drag the canvas to pan the free camera (mouse / touch)
+    const cv = document.getElementById('canvas');
+    if (cv) {
+      cv.addEventListener('pointerdown', (e) => {
+        if (!G.spectating || !G.specFree) return;
+        G.specDrag = { x: e.clientX, y: e.clientY };
+        try { cv.setPointerCapture(e.pointerId); } catch (e2) {}
+      });
+      cv.addEventListener('pointermove', (e) => {
+        if (!G.specDrag) return;
+        G.specCam.x = clamp(G.specCam.x - (e.clientX - G.specDrag.x), 0, G.world.width);
+        G.specCam.y = clamp(G.specCam.y - (e.clientY - G.specDrag.y), 0, G.world.height);
+        G.specDrag.x = e.clientX; G.specDrag.y = e.clientY;
+      });
+      const endDrag = () => { G.specDrag = null; };
+      cv.addEventListener('pointerup', endDrag);
+      cv.addEventListener('pointercancel', endDrag);
+    }
   }
 
   function escapeHtml(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
@@ -282,6 +332,7 @@
   // ---- main loop: interpolate + predict + render --------------------------
   function loop(now) {
     const dt = Math.min((now - lastFrame) / 1000, 0.05); lastFrame = now;
+    if (G.spectating && G.specFree) updateSpecCam(dt);   // pan the free camera from held keys
     if (G.screen === 'game' && G.snaps.length) {
       const view = buildView(now, dt);
       Renderer.draw(view, dt);
@@ -330,14 +381,16 @@
     if (G.spectating) {
       if (!G.specFree && G.specTarget) {
         const tp = view.players.find(p => p.id === G.specTarget);
-        if (tp) { view.self = tp; }
-        else { G.specFree = true; G.specTarget = null; updateSpecUI(); }
+        if (tp) view.self = tp;
+        else { G.specFree = true; G.specTarget = null; updateSpecUI(); }   // followed player gone -> free
       }
-      if (!view.self && view.players.length > 0) {
-        view.self = view.players[0];
-      }
-      if (!view.self) {
-        view.lastX = G.world.width / 2; view.lastY = G.world.height / 2;
+      if (G.specFree) {
+        view.self = null;                                     // detach from every player
+        view.lastX = G.specCam.x; view.lastY = G.specCam.y;   // free camera: wherever the spectator panned
+      } else if (view.self) {
+        G.specCam.x = view.self.x; G.specCam.y = view.self.y; // keep cam synced so 自由视角 resumes from here
+      } else {
+        view.lastX = G.specCam.x; view.lastY = G.specCam.y;   // followed target off-screen this frame
       }
     }
     return view;
