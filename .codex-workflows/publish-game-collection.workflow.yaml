@@ -1,0 +1,85 @@
+---
+name: publish-game-collection
+description: "Create a new public or private GitHub game-collection repository and publish an existing project safely."
+version: "1.0.0"
+author: "Codex"
+tags: [git, github, publish, game]
+params: [project_dir, repo_owner, repo_name, visibility, branch]
+created: "2026-06-22T02:49:12Z"
+updated: "2026-06-22T02:49:12Z"
+---
+
+# Publish Game Collection
+
+## Purpose
+
+Publish an existing local game project to a new GitHub repository without rewriting its history, committing ignored runtime data, or accidentally publishing unrelated tags.
+
+## Prerequisites
+
+- `${{project_dir}}` is the intended Git project root.
+- The worktree has been inspected and any unrelated local changes are preserved.
+- GitHub authentication is available through GitHub CLI, HTTPS credentials, or an authenticated GitHub browser session.
+- `${{repo_owner}}/${{repo_name}}` has been confirmed as the intended repository and `${{visibility}}` has been confirmed by the user.
+
+## Steps
+
+### 1. Inspect the local repository
+
+```bash
+git -C "${{project_dir}}" status --short --branch
+git -C "${{project_dir}}" remote -v
+git -C "${{project_dir}}" log --oneline -5
+git -C "${{project_dir}}" check-ignore -v node_modules data .env
+```
+
+**Expected output:** The correct branch is identified, remotes and existing history are understood, and generated/runtime files are ignored. Do not reset, stash, or commit unrelated changes.
+
+### 2. Create the empty GitHub repository
+
+```bash
+# Preferred when GitHub CLI is authenticated:
+gh repo create "${{repo_owner}}/${{repo_name}}" --${{visibility}} --source "${{project_dir}}" --remote origin
+```
+
+**Expected output:** A new repository exists at `https://github.com/${{repo_owner}}/${{repo_name}}` with no README, license, or `.gitignore` initialized remotely. If using the GitHub website, create the same empty repository and then add its HTTPS remote locally.
+
+### 3. Connect and push only the intended branch
+
+```bash
+git -C "${{project_dir}}" remote add origin "https://github.com/${{repo_owner}}/${{repo_name}}.git"
+git -C "${{project_dir}}" push -u origin "${{branch}}"
+```
+
+**Expected output:** `${{branch}}` is the upstream branch. Do not use `--mirror`, `--all`, or `--tags` unless the user explicitly requests them.
+
+### 4. Verify the publication
+
+```bash
+git -C "${{project_dir}}" status --short --branch
+git -C "${{project_dir}}" remote -v
+git ls-remote --heads "https://github.com/${{repo_owner}}/${{repo_name}}.git" "${{branch}}"
+```
+
+**Expected output:** The worktree remains unchanged, `origin` points at the intended repository, and the remote branch resolves to the local `HEAD`. Open the repository page to confirm its visibility and README rendering.
+
+## Parameters
+
+- `${{project_dir}}`: Absolute path of the local project.
+- `${{repo_owner}}`: GitHub user or organization that will own the repository.
+- `${{repo_name}}`: New GitHub repository name.
+- `${{visibility}}`: `public` or `private`.
+- `${{branch}}`: Branch to publish (default: `main`).
+
+## Verification
+
+- `git status --short --branch` reports a clean worktree and `${{branch}}...origin/${{branch}}`.
+- `git ls-remote` returns the same commit as local `git rev-parse HEAD`.
+- The GitHub repository page is accessible with the requested visibility.
+- No runtime data, credentials, `node_modules`, or accidental backup tags were published.
+
+## Notes
+
+- For an existing remote, inspect it and obtain explicit approval before replacing or removing it.
+- A remote-only rollback is a destructive external action: do not delete the GitHub repository without explicit user approval. To merely disconnect locally, run `git remote remove origin`.
+- Create and push a release tag only when a user-facing release is intended; publishing a branch alone does not require a new tag.
