@@ -1,0 +1,118 @@
+---
+name: push-github-main
+description: "Safely test, commit, and push the latest local game-collection code to GitHub main."
+version: "1.0.0"
+author: "Codex"
+tags: [git, github, test, release, game]
+params: [project_dir, branch, remote, test_command, commit_message, ssh_key]
+created: "2026-06-22T23:45:48Z"
+updated: "2026-06-22T23:45:48Z"
+---
+
+# Push Github Main
+
+## Purpose
+
+Standardize the repeated “push latest local code to the GitHub repository” task for this project. The workflow keeps local changes reviewable, runs the project test suite, creates a focused commit when needed, pushes only the intended branch, and verifies that GitHub points at the same commit as the local worktree.
+
+## Prerequisites
+
+- `${{project_dir}}` is the local Git worktree for the game project.
+- `${{remote}}` points to the intended GitHub repository, normally `origin` -> `git@github.com:kejilion/game-collection.git`.
+- SSH access is available through `${{ssh_key}}`.
+- The requested push is for `${{branch}}`, normally `main`.
+- If there are uncommitted changes, inspect them before staging; do not commit unrelated user work.
+
+## Steps
+
+### 1. Inspect repository state and remote drift
+
+```powershell
+$repo = "${{project_dir}}"
+$env:GIT_SSH_COMMAND = 'ssh -i "${{ssh_key}}" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15'
+git -C $repo status --short --branch
+git -C $repo remote -v
+git -C $repo fetch ${{remote}} --prune
+git -C $repo rev-list --left-right --count "${{remote}}/${{branch}}...${{branch}}"
+```
+
+**Expected output:** The working branch, remote URL, and ahead/behind counts are known before any write. If the remote is ahead, stop and resolve deliberately; do not force push.
+
+### 2. Review local changes before committing
+
+```powershell
+$repo = "${{project_dir}}"
+git -C $repo diff --check
+git -C $repo diff --stat
+git -C $repo diff -- <intended-files>
+```
+
+**Expected output:** The diff is coherent and belongs to the requested push. Whitespace checks pass. If no local changes exist and the branch is not ahead, skip to verification.
+
+### 3. Run project verification
+
+```powershell
+cd "${{project_dir}}"
+${{test_command}}
+```
+
+**Expected output:** The test command exits 0. For this project the default is `npm.cmd test`, which runs `node --test`.
+
+### 4. Stage and commit only intended files
+
+```powershell
+$repo = "${{project_dir}}"
+git -C $repo add -- <intended-files>
+git -C $repo diff --cached --check
+git -C $repo diff --cached --stat
+git -C $repo commit -m "${{commit_message}}"
+```
+
+**Expected output:** One focused commit is created. If changes were already committed, do not create an empty commit.
+
+### 5. Push only the branch
+
+```powershell
+$repo = "${{project_dir}}"
+$env:GIT_SSH_COMMAND = 'ssh -i "${{ssh_key}}" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15'
+git -C $repo push ${{remote}} "${{branch}}"
+```
+
+**Expected output:** GitHub accepts `${{branch}}`. Do not push local `v*-test.*`, backup, or other tags unless the user explicitly asks.
+
+### 6. Verify local and remote heads match
+
+```powershell
+$repo = "${{project_dir}}"
+$remoteHead = (git -C $repo ls-remote ${{remote}} refs/heads/${{branch}}).Split("`t")[0]
+$localHead = git -C $repo rev-parse HEAD
+git -C $repo status --short --branch
+Write-Output "REMOTE_HEAD=$remoteHead"
+Write-Output "LOCAL_HEAD=$localHead"
+Write-Output "MATCH=$($remoteHead -eq $localHead)"
+```
+
+**Expected output:** `MATCH=True` and `status` shows `${{branch}}...${{remote}}/${{branch}}` with no uncommitted changes.
+
+## Parameters
+
+- `${{project_dir}}`: Local project path. Default: `C:\KEJILION大乱动`.
+- `${{branch}}`: Branch to publish. Default: `main`.
+- `${{remote}}`: Git remote name. Default: `origin`.
+- `${{test_command}}`: Verification command. Default: `npm.cmd test`.
+- `${{commit_message}}`: Conventional commit message for the current change.
+- `${{ssh_key}}`: SSH private key path used for GitHub. Default: `C:\GitHub\.ssh\kejilion_codex_ed25519`.
+
+## Verification
+
+- The test command passes.
+- `git status --short --branch` is clean and tracking `${{remote}}/${{branch}}`.
+- `git ls-remote ${{remote}} refs/heads/${{branch}}` equals local `git rev-parse HEAD`.
+- No local test or backup tags were pushed unless explicitly requested.
+
+## Notes
+
+- If the remote is ahead of local, fetch and review before pushing. Never use `--force` for this routine workflow.
+- If there are mixed or unrelated local changes, stage only files that belong to the current task and leave the rest untouched.
+- If `npm` is blocked by PowerShell execution policy, use `npm.cmd`.
+- This workflow pushes source code to GitHub; it does not deploy servers or publish releases.
