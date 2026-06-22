@@ -1,0 +1,255 @@
+---
+name: deploy-arena-test-servers
+description: "Backup, release, and verify Arena Brawl on two Docker test servers, using the primary server to transfer to the secondary server."
+version: "1.0.0"
+author: "Codex"
+tags: [deploy, ops, docker, test-server, arena-brawl]
+params: [project_dir, version, primary_server, secondary_server, ssh_key, known_hosts, app_dir, port]
+created: "2026-06-23T07:01:32+08:00"
+updated: "2026-06-23T07:01:32+08:00"
+---
+
+# Deploy Arena Test Servers
+
+## Purpose
+
+Safely deploy the latest Arena Brawl test build to two Docker-based test servers. The workflow protects rollback points first, deploys the primary server from the local project, then transfers the same release and Docker image from the primary server to the secondary server.
+
+## Prerequisites
+
+- Read and follow the project-version-control skill before running this workflow.
+- ${{project_dir}} is the local Git project root.
+- ${{ssh_key}} can log in as root to both servers, and ${{known_hosts}} contains both server host keys.
+- Docker and Docker Compose are installed on both servers.
+- ${{app_dir}} exists on both servers and uses current, previous, releases, backups, and a persistent data directory.
+- Do not print private keys, passwords, or full credential material in user-facing output.
+
+## Steps
+
+### 1. Inspect local state
+
+~~~powershell
+Set-Location -LiteralPath "${{project_dir}}"
+git status --short
+git branch --show-current
+git log -1 --pretty=format:"%h %s"
+git tag --sort=-creatordate | Select-Object -First 10
+~~~
+
+Expected output: the intended project is selected. Preserve unrelated user changes; do not reset, stash, or overwrite them.
+
+### 2. Create a pre-deploy local backup
+
+~~~powershell
+Set-Location -LiteralPath "${{project_dir}}"
+$stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+$backupRoot = "${{project_dir}}-backups"
+New-Item -ItemType Directory -Force -Path $backupRoot | Out-Null
+$prefix = Join-Path $backupRoot "arena-brawl-predeploy-$stamp"
+git bundle create "$prefix.bundle" --all
+git diff --cached --binary > "$prefix-staged.patch"
+git diff --binary > "$prefix-worktree.patch"
+@(
+  "timestamp=$stamp"
+  "branch=$(git branch --show-current)"
+  "head=$(git rev-parse HEAD)"
+  "describe=$(git describe --tags --always --dirty)"
+  "status:"
+  (git status --short)
+) | Set-Content -LiteralPath "$prefix-manifest.txt" -Encoding UTF8
+~~~
+
+Expected output: a bundle, staged patch, worktree patch, and manifest exist for local rollback.
+
+### 3. Run local verification and save the release
+
+~~~powershell
+Set-Location -LiteralPath "${{project_dir}}"
+git diff --check
+git diff --cached --check
+npm.cmd test
+node --check server\index.js
+node --check server\world.js
+node --check server\config.js
+node --check public\js\main.js
+node --check public\js\render.js
+~~~
+
+Expected output: tests and syntax checks pass. If tests fail because app behavior intentionally changed, fix the test or code before deployment.
+
+If ${{version}} does not already exist and the release content is ready:
+
+~~~powershell
+git add -- <changed-files>
+git commit -m "release: ${{version}}"
+git tag -a "${{version}}" -m "${{version}}
+
+Rollback: previous deployed version"
+~~~
+
+Expected output: the release has a clear commit and annotated tag. If the user asks to deploy an existing tag, do not create a new tag.
+
+### 4. Backup both current server releases
+
+Run this on both ${{primary_server}} and ${{secondary_server}} before switching either server.
+
+~~~bash
+APP="${{app_dir}}"
+VER="${{version}}"
+STAMP=$(date +%Y%m%d-%H%M%S)
+mkdir -p "$APP/backups"
+CUR=$(readlink -f "$APP/current")
+CURVER=$(cat "$APP/DEPLOYED_VERSION" 2>/dev/null || true)
+PREV=$(readlink -f "$APP/previous" 2>/dev/null || true)
+BACKUP="$APP/backups/pre-$VER-$STAMP-release.tar.gz"
+MANIFEST="$APP/backups/pre-$VER-$STAMP-manifest.txt"
+tar -C "$CUR" --exclude='./data' -czf "$BACKUP" .
+SHA=$(sha256sum "$BACKUP" | awk '{print $1}')
+{
+  echo "timestamp=$STAMP"
+  echo "current_path=$CUR"
+  echo "previous_path=$PREV"
+  echo "deployed_version=$CURVER"
+  echo "backup=$BACKUP"
+  echo "sha256=$SHA"
+} > "$MANIFEST"
+~~~
+
+### 5. Deploy the primary server from local source
+
+Create and upload the release archive:
+
+~~~powershell
+Set-Location -LiteralPath "${{project_dir}}"
+$version = "${{version}}"
+$commit = git rev-parse "$version^{}"
+$archive = Join-Path $env:TEMP "arena-brawl-$version.tar"
+git archive --format=tar --output=$archive $version
+$hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash.ToLowerInvariant()
+scp -i "${{ssh_key}}" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="${{known_hosts}}" $archive "root@${{primary_server}}:/tmp/arena-brawl-$version.tar"
+~~~
+
+On ${{primary_server}}, extract to releases/${{version}}, link data, build the Docker image, and switch with a stable Compose project name:
+
+~~~bash
+APP="${{app_dir}}"
+VER="${{version}}"
+COMMIT="<commit-from-local>"
+ARCH="/tmp/arena-brawl-$VER.tar"
+REL="$APP/releases/$VER"
+TMP="$APP/releases/.$VER.tmp.$$"
+OLD=$(readlink -f "$APP/current" 2>/dev/null || true)
+rm -rf "$TMP"
+mkdir -p "$TMP"
+tar -xf "$ARCH" -C "$TMP"
+rm -rf "$TMP/data"
+ln -s "$APP/data" "$TMP/data"
+echo "$VER-$COMMIT-<archive-sha256>" > "$TMP/DEPLOYED_VERSION"
+printf 'docker\n' > "$TMP/DEPLOYED_RUNTIME"
+mv "$TMP" "$REL"
+cd "$REL"
+docker build -t "arena-brawl:$VER" -t arena-brawl:latest .
+if [ -n "$OLD" ] && [ "$OLD" != "$REL" ]; then ln -sfn "$OLD" "$APP/previous"; fi
+ln -sfn "$REL" "$APP/current"
+cp "$REL/DEPLOYED_VERSION" "$APP/DEPLOYED_VERSION"
+cp "$REL/DEPLOYED_RUNTIME" "$APP/DEPLOYED_RUNTIME"
+docker rm -f arena-brawl >/dev/null 2>&1 || true
+IMAGE="arena-brawl:$VER" docker compose -p arena-brawl up -d --no-build
+curl -fsS "http://127.0.0.1:${{port}}/health"
+~~~
+
+### 6. Transfer from primary to secondary
+
+Use an ephemeral SSH key generated on ${{primary_server}}, add its public key temporarily to ${{secondary_server}}, and remove it after the transfer. Prefer uploading a Linux-LF transfer script to ${{primary_server}} instead of passing a long multiline script through Windows SSH arguments.
+
+On ${{primary_server}}, package and split the image:
+
+~~~bash
+APP="${{app_dir}}"
+VER="${{version}}"
+D="/tmp/arena-154-to-110-$VER-$(date +%Y%m%d-%H%M%S)"
+mkdir -p "$D"
+tar -C "$APP/current" --exclude='./data' -czf "$D/release.tar.gz" .
+docker save "arena-brawl:$VER" | gzip -1 > "$D/image.tar.gz"
+sha256sum "$D/release.tar.gz" "$D/image.tar.gz" > "$D/SHA256SUMS"
+split -b 5m -d -a 3 "$D/image.tar.gz" "$D/part-"
+~~~
+
+Copy release.tar.gz, SHA256SUMS, and each part-* to ${{secondary_server}} with scp, retrying each part up to three times. Use explicit destination filenames such as root@${{secondary_server}}:$D/part-000; do not rely on a trailing directory path if SCP reports dest open failure.
+
+### 7. Load and switch the secondary server
+
+On ${{secondary_server}}:
+
+~~~bash
+APP="${{app_dir}}"
+VER="${{version}}"
+D="<transfer-dir>"
+REL="$APP/releases/$VER"
+TMP="$APP/releases/.$VER.tmp.$$"
+OLD=$(readlink -f "$APP/current" 2>/dev/null || true)
+cd "$D"
+cat part-* > image.tar.gz
+sha256sum -c SHA256SUMS
+gzip -dc image.tar.gz | docker load
+docker image inspect "arena-brawl:$VER" >/dev/null
+rm -rf "$TMP"
+mkdir -p "$TMP"
+tar -xzf release.tar.gz -C "$TMP"
+rm -rf "$TMP/data"
+ln -s "$APP/data" "$TMP/data"
+echo "$VER-<commit>-<archive-sha256>" > "$TMP/DEPLOYED_VERSION"
+printf 'docker\n' > "$TMP/DEPLOYED_RUNTIME"
+if [ -e "$REL" ]; then mv "$REL" "$APP/backups/existing-$VER-$(date +%Y%m%d-%H%M%S)"; fi
+mv "$TMP" "$REL"
+if [ -n "$OLD" ] && [ "$OLD" != "$REL" ]; then ln -sfn "$OLD" "$APP/previous"; fi
+ln -sfn "$REL" "$APP/current"
+cp "$REL/DEPLOYED_VERSION" "$APP/DEPLOYED_VERSION"
+cp "$REL/DEPLOYED_RUNTIME" "$APP/DEPLOYED_RUNTIME"
+cd "$APP/current"
+docker rm -f arena-brawl >/dev/null 2>&1 || true
+IMAGE="arena-brawl:$VER" docker compose -p arena-brawl up -d --no-build
+curl -fsS "http://127.0.0.1:${{port}}/health"
+rm -rf "$D"
+~~~
+
+Expected output: the secondary container runs arena-brawl:${{version}}, health is OK, and previous points to the pre-deploy release.
+
+### 8. Final verification and cleanup
+
+~~~powershell
+foreach ($server in @("${{primary_server}}", "${{secondary_server}}")) {
+  ssh -i "${{ssh_key}}" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="${{known_hosts}}" "root@$server" "cat /opt/arena-brawl/DEPLOYED_VERSION; readlink -f /opt/arena-brawl/current; readlink -f /opt/arena-brawl/previous; docker inspect --format='{{.Config.Image}} {{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}}' arena-brawl; curl -fsS http://127.0.0.1:${{port}}/health; find /root/.ssh -maxdepth 1 -name 'arena-scp-chunks-*' | wc -l"
+  curl.exe -fsS ("http://" + $server + ":${{port}}/health")
+}
+~~~
+
+Also run a WebSocket smoke test that confirms defs, welcome, state, and overview are received from both servers.
+
+## Parameters
+
+- ${{project_dir}}: Local project root. Default: C:\KEJILION大乱动.
+- ${{version}}: Release tag to deploy, for example v1.3.5-test.1.
+- ${{primary_server}}: First server to deploy and transfer from. Default: 154.36.153.9.
+- ${{secondary_server}}: Second server to receive from the primary server. Default: 110.42.101.214.
+- ${{ssh_key}}: Private key path for local root login to both servers.
+- ${{known_hosts}}: Known hosts file path used with strict host checking.
+- ${{app_dir}}: Remote application directory. Default: /opt/arena-brawl.
+- ${{port}}: Service port. Default: 3000.
+
+## Verification
+
+- Local npm.cmd test passes and syntax checks pass.
+- Both servers report current=/opt/arena-brawl/releases/${{version}}.
+- Both servers run arena-brawl:${{version}} and Docker health is healthy.
+- External HTTP checks return ok=true for both servers.
+- WebSocket smoke checks return WS_OK for both servers.
+- Temporary transfer keys and files are removed.
+
+## Notes
+
+- On Windows PowerShell, do not use $Host as a custom variable name.
+- Prefer npm.cmd over npm in PowerShell to avoid execution-policy issues.
+- Use docker compose -p arena-brawl and remove the old arena-brawl container before switching to avoid container-name conflicts.
+- If 154 to 110 SCP is unstable, retry with smaller chunks and explicit destination filenames first. If falling back to source upload and local build is necessary, report that clearly to the user.
+- Do not use destructive Git commands or overwrite unrelated worktree changes.

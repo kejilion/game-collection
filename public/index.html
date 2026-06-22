@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
 <title>大乱斗 · Arena Brawl</title>
-<link rel="stylesheet" href="css/style.css" />
+<link rel="stylesheet" href="css/style.css?v=20260623" />
 </head>
 <body>
 
@@ -23,6 +23,7 @@
     <div class="class-pick" id="classPick"><!-- class cards injected by JS --></div>
 
     <button id="playBtn" class="play-btn">进入大乱斗 ⚔</button>
+    <button id="spectateBtn" class="spectate-btn">&#128065; 观战模式</button>
     <p class="hint">方向键移动 · <b>A</b> 普通攻击 · <b>1</b> 技能 · <b>Enter</b> 聊天 · <b>B</b> 商店 · <b>Esc</b> 设置</p>
 
     <p class="mobile-hint">手机操作：左下摇杆移动，右下按钮攻击和施放技能</p>
@@ -32,6 +33,7 @@
       <ol id="menuHistory" class="mini-board"><li class="empty">暂无记录</li></ol>
     </div>
   </div>
+  <div class="menu-spec-count" id="menuSpecCount"></div>
   <div class="conn-status" id="connStatus">连接中…</div>
 </section>
 
@@ -121,13 +123,13 @@
 
   <!-- spectator mode overlay -->
   <div class="hud spectator-bar" id="spectatorBar">
-    <div class="spec-badge">馃憗 瑙傛垬涓?/div>
-    <div class="spec-target" id="specTarget">鑷敱瑙嗚</div>
+    <div class="spec-badge">👁 观战中</div>
+    <div class="spec-target" id="specTarget">自由视角</div>
     <div class="spec-controls">
-      <button class="spec-btn" id="specPrev">鈬?/button>
-      <button class="spec-btn" id="specNext">鈬?/button>
-      <button class="spec-btn spec-free" id="specFree">鑷敱</button>
-      <button class="spec-btn spec-exit" id="specExit">閫€鍑?/button>
+      <button class="spec-btn" id="specPrev">← 上一个</button>
+      <button class="spec-btn" id="specNext">下一个 →</button>
+      <button class="spec-btn spec-free" id="specFree">自由视角</button>
+      <button class="spec-btn spec-exit" id="specExit">退出观战</button>
     </div>
   </div>
 
@@ -157,10 +159,10 @@
   </div>
 </section>
 
-<script src="js/net.js"></script>
-<script src="js/input.js"></script>
-<script src="js/render.js"></script>
-<script src="js/hud.js"></script>
-<script src="js/main.js"></script>
+<script src="js/net.js?v=20260623"></script>
+<script src="js/input.js?v=20260623"></script>
+<script src="js/render.js?v=20260623"></script>
+<script src="js/hud.js?v=20260623"></script>
+<script src="js/main.js?v=20260623"></script>
 </body>
 </html>

@@ -14,7 +14,8 @@
     overview: { players: [], bosses: [], merchants: [], items: [] },  // global minimap blips (low-rate)
     interpDelay: 120, gapEMA: 50, lastStateAt: 0,  // adaptive interpolation for jittery links
     shopCloseAt: 0, isTouch: false,
-    spectating: false, specTarget: null, specFree: true, spectatorCount: 0
+    spectating: false, specTarget: null, specFree: true, spectatorCount: 0,
+    lastKilledBy: null, lastKilledAt: 0   // who landed the killing blow on us (for the death notice)
   };
   let lastFrame = performance.now();
 
@@ -51,7 +52,7 @@
   function specSwitchTarget(dir) {
     const snap = G.snaps.length > 0 ? G.snaps[G.snaps.length - 1] : null;
     if (!snap) return;
-    const alive = snap.players.filter(p => !p.dead);
+    const alive = snap.data.players.filter(p => !p.dead);
     if (alive.length === 0) { G.specFree = true; G.specTarget = null; updateSpecUI(); return; }
     G.specFree = false;
     const idx = alive.findIndex(p => p.id === G.specTarget);
@@ -86,7 +87,7 @@
     const el = document.getElementById('specTarget');
     if (G.specFree) { el.textContent = '\u81EA\u7531\u89C6\u89D2'; return; }
     const snap = G.snaps.length > 0 ? G.snaps[G.snaps.length - 1] : null;
-    const target = snap ? snap.players.find(p => p.id === G.specTarget) : null;
+    const target = snap ? snap.data.players.find(p => p.id === G.specTarget) : null;
     el.textContent = target ? target.name : '\u81EA\u7531\u89C6\u89D2';
   }
 
@@ -156,6 +157,8 @@
       case 'defs': onDefs(m); break;
       case 'welcome': onWelcome(m); break;
       case 'state': onState(m); break;
+      case 'spectateWelcome': onSpectateWelcome(m); break;
+      case 'spectatorCount': onSpectatorCount(m); break;
       case 'overview': G.overview = m; break;
       case 'leaderboard':
         G.leaderboard = { rt: m.realtime, hist: m.historical };
@@ -241,7 +244,10 @@
         const d = G.defs.items[fx.type];
         if (d) HUD.toast(`获得 ${d.name} · ${d.desc}`, d.color);
       }
-      else if (fx.t === 'killfeed') HUD.killFeed(fx, G.selfId);
+      else if (fx.t === 'killfeed') {
+        HUD.killFeed(fx, G.selfId);
+        if (fx.victimId && fx.victimId === G.selfId) { G.lastKilledBy = fx.killer; G.lastKilledAt = recv; }
+      }
     }
 
     // self-derived HUD
@@ -250,9 +256,13 @@
       G.lastSelf = self;
       HUD.updatePlayer(self);
       HUD.updateShopGold(self.gold);
-      // death / respawn overlay
-      if (self.dead && !G.deadSince) G.deadSince = recv;
-      if (!self.dead) G.deadSince = 0;
+      // death / respawn overlay (+ an explicit toast so the death is never missed)
+      if (self.dead && !G.deadSince) {
+        G.deadSince = recv;
+        const by = (G.lastKilledBy && recv - G.lastKilledAt < 1500) ? G.lastKilledBy : null;
+        HUD.toast(by ? `💀 你被 ${by} 击败！3 秒后复活` : '💀 你已阵亡！3 秒后复活', '#ff6a6a');
+      }
+      if (!self.dead) { G.deadSince = 0; G.lastKilledBy = null; }
       toggleRespawn(self.dead);
       // near-merchant detection
       let near = false;
@@ -267,9 +277,6 @@
       }
     }
     if (G.spectating && m.players) updateSpecPlayerList(m.players);
-    else if (G.screen === 'game' && G.selfId) {
-      // we were removed (e.g. after leave) — ignore
-    }
   }
 
   // ---- main loop: interpolate + predict + render --------------------------
@@ -398,6 +405,12 @@
     // class picker is built when the server's "defs" message arrives (onDefs)
     document.getElementById('playBtn').addEventListener('click', play);
     document.getElementById('nameInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') play(); });
+    const specBtn = document.getElementById('spectateBtn');
+    if (specBtn) specBtn.addEventListener('click', spectate);
+  }
+  function spectate() {
+    if (!Net.ready) { HUD.toast('正在连接服务器…', '#ff7a7a'); return; }
+    Net.send({ type: 'spectate' });   // server replies with spectateWelcome -> onSpectateWelcome
   }
   function play() {
     if (!Net.ready) { HUD.toast('正在连接服务器…', '#ff7a7a'); return; }

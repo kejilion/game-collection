@@ -310,7 +310,7 @@ class World {
         const bounty = randInt(BALANCE.killBounty[0], BALANCE.killBounty[1]) + target.level * 3;
         killer.gold += bounty;
         this.gainXp(killer, BALANCE.xp.killBase + target.level * BALANCE.xp.killPerLevel);
-        this.recordKill(killer, target.name, target.clsId, false, victimStreak);
+        this.recordKill(killer, target.name, target.clsId, false, victimStreak, target.id);
       }
     } else if (target.kind === 'boss') {
       this.bosses.delete(target.id);
@@ -331,7 +331,7 @@ class World {
   }
 
   // record a hero kill: update streak/multi-kill/first-blood and emit a feed event
-  recordKill(killer, victimName, victimCls, isBoss, victimStreak) {
+  recordKill(killer, victimName, victimCls, isBoss, victimStreak, victimId) {
     const t = now();
     if (t - killer.lastKillAt <= KILL.multiWindowMs) killer.multiKill += 1; else killer.multiKill = 1;
     killer.lastKillAt = t;
@@ -340,7 +340,7 @@ class World {
     this.pushFx({
       t: 'killfeed',
       killer: killer.name, killerId: killer.id, kcls: killer.clsId,
-      victim: victimName, vcls: victimCls, boss: !!isBoss,
+      victim: victimName, vcls: victimCls, victimId, boss: !!isBoss,
       fb, multi: killer.multiKill, spree: killer.killStreak,
       shutdown: (victimStreak >= 3) ? victimStreak : 0
     });
