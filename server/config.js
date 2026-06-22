@@ -24,7 +24,7 @@ const CLASSES = {
       // identity gap: the tank has no defensive cooldown. War Cry = instant survive button.
       { id: 'warcry', name: '铁壁战吼', reqLevel: 3, cd: 14000, mult: 1.3, radius: 150,
         heal: 0.18, guardMs: 4000,
-        desc: '怒吼回血、进入铁壁姿态（持续减伤），并震退周身敌人' }
+        desc: '怒吼回血、进入铁壁姿态（持续减伤），并将周身敌人吸聚到身边' }
     ],
     desc: '范围近战 · 血厚耐打，旋风斩横扫四方'
   },
@@ -38,8 +38,9 @@ const CLASSES = {
         projSpeed: 360, projRadius: 16, desc: '发射爆炸火球，命中后范围炸裂' },
       // identity gap: the glass cannon dies when chased down. Frost Nova = panic peel + setup control.
       { id: 'frostnova', name: '霜雪新星', reqLevel: 3, cd: 9000, mult: 1.6, radius: 150,
+        projSpeed: 340, projRadius: 14,
         slowMs: 2500, slowMul: 0.5,
-        desc: '冻结周身：范围伤害并大幅减速敌人，拉开身位或接火球' }
+        desc: '发射寒冰弹，命中后范围冰冻减速敌人，拉开身位或接火球' }
     ],
     desc: '远程法术 · 脆皮高爆发，火球术范围秒杀'
   },
@@ -76,8 +77,8 @@ const ITEM_TYPES = {
 
 // spawn weighting (higher = more common)
 const ITEM_WEIGHTS = {
-  gold: 22, heal: 20, exp: 14, speed: 9, haste: 9,
-  power: 8, defense: 8, reveal: 5, invis: 4, life: 2
+  gold: 12, heal: 20, exp: 14, speed: 9, haste: 9,
+  power: 8, defense: 8, reveal: 5, invis: 4, life: 1
 };
 
 // ---- Merchant shop ---------------------------------------------------------

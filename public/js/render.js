@@ -466,6 +466,10 @@ const Renderer = (() => {
       ctx.fillStyle = 'rgba(255,140,40,.3)'; ctx.beginPath(); ctx.arc(x, y, pr.r + 8, 0, 7); ctx.fill();
       const g = ctx.createRadialGradient(x, y, 2, x, y, pr.r); g.addColorStop(0, '#fff2b0'); g.addColorStop(.5, '#ff9b2e'); g.addColorStop(1, '#ff3d1a');
       ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, pr.r, 0, 7); ctx.fill();
+    } else if (pr.type === 'frostnova') {
+      ctx.fillStyle = 'rgba(127,216,255,.3)'; ctx.beginPath(); ctx.arc(x, y, pr.r + 8, 0, 7); ctx.fill();
+      const gf = ctx.createRadialGradient(x, y, 2, x, y, pr.r); gf.addColorStop(0, '#ffffff'); gf.addColorStop(.5, '#7fd8ff'); gf.addColorStop(1, '#4da6ff');
+      ctx.fillStyle = gf; ctx.beginPath(); ctx.arc(x, y, pr.r, 0, 7); ctx.fill();
     } else if (pr.type === 'orb') {
       const col = pr.c || '#ff7a3d';
       ctx.shadowColor = col; ctx.shadowBlur = 10; ctx.fillStyle = col;

@@ -23,6 +23,10 @@ function duel(clsA = 'warrior', clsB = 'mage') {
   return { w, a, b };
 }
 
+function tickProjectiles(w, maxTicks = 30) {
+  for (let i = 0; i < maxTicks && w.projectiles.size > 0; i++) w.update(0.033);
+}
+
 // ---- world bootstrap -------------------------------------------------------
 test('world seeds bosses, merchants, items and obstacles', () => {
   const w = new World();
@@ -137,6 +141,7 @@ test('skill 2 is gated behind its required level', () => {
   assert.equal(b.hp, hp0, 'locked skill does nothing below its required level');
   a.level = 3;
   w.doSkill(a, 1);                              // now unlocked
+  tickProjectiles(w);
   assert.ok(b.hp < hp0, 'skill fires once the level requirement is met');
 });
 
@@ -146,6 +151,7 @@ test('frost nova (mage skill 2) damages and slows enemies in range', () => {
   const full = b.effSpeed(Date.now());
   const hp0 = b.hp;
   w.doSkill(a, 1);
+  tickProjectiles(w);
   assert.ok(b.hp < hp0, 'nova dealt damage');
   assert.ok(b.slowUntil > Date.now(), 'enemy is chilled');
   assert.ok(b.effSpeed(Date.now()) < full, 'slowed move speed is lower than normal');

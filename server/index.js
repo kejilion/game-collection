@@ -40,6 +40,7 @@ process.on('uncaughtException', (e) => console.error('uncaught:', e.message));
 // ---- the always-on world ---------------------------------------------------
 const world = new World();
 const sockets = new Map();           // ws -> playerId
+const spectators = new Set();        // ws set for spectator connections
 
 function send(ws, obj) {
   if (ws.readyState === ws.OPEN) { try { ws.send(JSON.stringify(obj)); } catch (e) {} }
@@ -58,6 +59,7 @@ wss.on('connection', (ws) => {
 
   // send static definitions right away so the menu can render class cards
   send(ws, { type: 'defs', classes: CLASSES, items: ITEM_TYPES, shop: SHOP, bosses: BOSS_DEFS });
+  send(ws, { type: 'spectatorCount', count: spectators.size });
 
   ws.on('message', (raw) => {
     let m; try { m = JSON.parse(raw); } catch (e) { return; }
@@ -67,6 +69,7 @@ wss.on('connection', (ws) => {
     switch (m.type) {
       case 'join': {
         if (player) return;                              // already joined
+        if (spectators.has(ws)) return;                  // spectators can't join
         const clsId = CLASSES[m.cls] ? m.cls : 'warrior';
         let name = (typeof m.name === 'string' ? m.name : '').trim().slice(0, 14);
         if (!name) name = '无名英雄';
@@ -102,6 +105,24 @@ wss.on('connection', (ws) => {
         if (typeof m.w === 'number' && typeof m.h === 'number')
           ws.view = { w: clamp(m.w | 0, 320, 4096), h: clamp(m.h | 0, 240, 4096) };
         break;
+      case 'spectate': {
+        if (player || spectators.has(ws)) return;
+        spectators.add(ws);
+        send(ws, {
+          type: 'spectateWelcome', world: WORLD,
+          classes: CLASSES, items: ITEM_TYPES, shop: SHOP, bosses: BOSS_DEFS,
+          obstacles: world.getObstacles(), tickRate: TICK_RATE
+        });
+        broadcast({ type: 'spectatorCount', count: spectators.size });
+        break;
+      }
+      case 'spectateLeave': {
+        if (spectators.has(ws)) {
+          spectators.delete(ws);
+          broadcast({ type: 'spectatorCount', count: spectators.size });
+        }
+        break;
+      }
     }
   });
 
@@ -111,6 +132,10 @@ wss.on('connection', (ws) => {
       const p = world.players.get(pid);
       if (p) { leaderboard.record(p); world.removePlayer(pid); broadcast({ type: 'sys', text: `${p.name} 离开了战场`, color: '#9aa3b2' }); }
       sockets.delete(ws);
+    }
+    if (spectators.has(ws)) {
+      spectators.delete(ws);
+      broadcast({ type: 'spectatorCount', count: spectators.size });
     }
   });
 });
@@ -133,7 +158,7 @@ setInterval(() => {
 }, Math.round(1000 / TICK_RATE));
 
 setInterval(() => {
-  if (sockets.size === 0) { world.fx.length = 0; return; }      // nobody in-world; drop transient fx
+  if (sockets.size === 0 && spectators.size === 0) { world.fx.length = 0; return; }
   world.prepareSnapshot();                                      // build the full snapshot once...
   for (const [ws, pid] of sockets) {                            // ...then send each player only its slice
     if (ws.readyState !== ws.OPEN) continue;
@@ -141,6 +166,12 @@ setInterval(() => {
     const p = world.players.get(pid);
     if (!p) continue;
     send(ws, { type: 'state', ...world.viewFor(viewRect(p, ws.view), p) });
+  }
+  for (const ws of spectators) {
+    if (ws.readyState !== ws.OPEN) continue;
+    if (ws.bufferedAmount > BACKPRESSURE_BYTES) continue;
+    const full = { x0: -9999, y0: -9999, x1: WORLD.width + 9999, y1: WORLD.height + 9999 };
+    send(ws, { type: 'state', ...world.viewFor(full, null) });
   }
 }, Math.round(1000 / BROADCAST_RATE));
 

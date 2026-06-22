@@ -118,11 +118,12 @@ class Projectile {
     this.id = uid('R'); this.kind = 'proj';
     this.x = o.x; this.y = o.y; this.vx = o.vx; this.vy = o.vy;
     this.ownerId = o.ownerId; this.ownerKind = o.ownerKind; // 'player' | 'boss'
-    this.damage = o.damage; this.radius = o.radius; this.type = o.type; // 'bolt'|'fireball'|'orb'
+    this.damage = o.damage; this.radius = o.radius; this.type = o.type; // 'bolt'|'fireball'|'frostnova'|'orb'
     this.aoe = o.aoe || 0; this.aoeMult = o.aoeMult || 1; this.crit = !!o.crit;
     this.life = o.life || 2.2;
     this.homing = !!o.homing; this.turn = o.turn || 0;  // boss seekers steer toward heroes
     this.color = o.color || null;                       // tint (boss orbs carry their archetype accent)
+    this.slowMs = o.slowMs || 0; this.slowMul = o.slowMul || 1;  // frostnova slow parameters
   }
 }
 
@@ -450,25 +451,36 @@ class World {
       this.resolveObstacles(p, 22);
       this.pushFx({ t: 'dash', x1: sx, y1: sy, x2: nx, y2: ny, color: p.cls.color });
     } else if (skill.id === 'warcry') {
-      // WARRIOR defensive cooldown: heal, brace (incoming-damage cut via the `guard` buff),
-      // and a rallying shock that staggers everyone around the frontline.
+      // WARRIOR defensive cooldown: heal, brace (guard buff), damage nearby enemies
+      // and pull them toward the warrior (taunt/gather effect) for follow-up whirlwind.
       p.hp = Math.min(p.effMaxHp(), p.hp + p.effMaxHp() * skill.heal);
       p.buffs.guard = Math.max(p.buffs.guard || 0, t + skill.guardMs);
       for (const e of this.enemiesOfPlayer(p)) {
-        if (dist2(p.x, p.y, e.x, e.y) <= (skill.radius + this.radiusOf(e)) ** 2)
+        const d2 = dist2(p.x, p.y, e.x, e.y);
+        if (d2 <= (skill.radius + this.radiusOf(e)) ** 2) {
           this.damageEntity(e, base, p, { crit: false });
+          const d = Math.sqrt(d2) || 1;
+          const pull = Math.max(0, d - 40);
+          e.x += (p.x - e.x) / d * pull;
+          e.y += (p.y - e.y) / d * pull;
+        }
       }
       this.pushFx({ t: 'warcry', x: p.x, y: p.y, radius: skill.radius, color: p.cls.color });
     } else if (skill.id === 'frostnova') {
-      // MAGE control/peel: point-blank burst that chills everyone caught, so the squishy
-      // caster can open distance (or set up a follow-up 火球).
-      for (const e of this.enemiesOfPlayer(p)) {
-        if (dist2(p.x, p.y, e.x, e.y) <= (skill.radius + this.radiusOf(e)) ** 2) {
-          this.damageEntity(e, base, p, { crit: false });
-          this.applySlow(e, skill.slowMs, skill.slowMul);
-        }
-      }
-      this.pushFx({ t: 'frost', x: p.x, y: p.y, radius: skill.radius, color: '#7fd8ff' });
+      // MAGE control: fires a frost projectile toward the nearest enemy (or facing direction).
+      // On impact it detonates into an AoE that damages and slows all enemies in range.
+      const aim = this.nearestEnemy(p, p.cls.attackRange);
+      const ang = aim ? Math.atan2(aim.y - p.y, aim.x - p.x) : p.facing;
+      p.facing = ang;
+      const pr = new Projectile({
+        x: p.x + Math.cos(ang) * 28, y: p.y + Math.sin(ang) * 28,
+        vx: Math.cos(ang) * skill.projSpeed, vy: Math.sin(ang) * skill.projSpeed,
+        ownerId: p.id, ownerKind: 'player', damage: base, radius: skill.projRadius,
+        type: 'frostnova', aoe: skill.radius, aoeMult: 1, crit: false, life: 2.4,
+        slowMs: skill.slowMs, slowMul: skill.slowMul
+      });
+      this.projectiles.set(pr.id, pr);
+      this.pushFx({ t: 'cast', cls: 'mage', x: p.x, y: p.y, ang, big: true });
     } else if (skill.id === 'shadowveil') {
       // ASSASSIN disengage: blink the way you're HOLDING (the opposite of 影袭's auto-engage),
       // leave a parting smoke hit, and vanish + sprint away. Falls back to fleeing the nearest
@@ -589,6 +601,7 @@ class World {
       pr.x += pr.vx * dt; pr.y += pr.vy * dt;
       if (pr.life <= 0 || pr.x < -40 || pr.y < -40 || pr.x > WORLD.width + 40 || pr.y > WORLD.height + 40) {
         if (pr.type === 'fireball') this.explode(pr);
+        else if (pr.type === 'frostnova') this.frostExplode(pr);
         this.projectiles.delete(pr.id); continue;
       }
       // obstacles block shots (cover)
@@ -597,6 +610,7 @@ class World {
         if (dist2(pr.x, pr.y, o.x, o.y) <= (o.r + pr.radius) ** 2) { blocked = true; break; }
       if (blocked) {
         if (pr.type === 'fireball') this.explode(pr);
+        else if (pr.type === 'frostnova') this.frostExplode(pr);
         else this.pushFx({ t: 'hit', x: pr.x, y: pr.y, color: '#cdd6ea' });
         this.projectiles.delete(pr.id); continue;
       }
@@ -609,6 +623,7 @@ class World {
       }
       if (hit) {
         if (pr.type === 'fireball') { this.explode(pr); }
+        else if (pr.type === 'frostnova') { this.frostExplode(pr); }
         else {
           const owner = this.players.get(pr.ownerId) || null;
           this.damageEntity(hit, pr.damage, owner, { crit: pr.crit });
@@ -678,6 +693,18 @@ class World {
     for (const e of targets) {
       if (dist2(pr.x, pr.y, e.x, e.y) <= (pr.aoe + this.radiusOf(e)) ** 2)
         this.damageEntity(e, pr.damage * pr.aoeMult, owner, { crit: false });
+    }
+  }
+
+  frostExplode(pr) {
+    this.pushFx({ t: 'frost', x: pr.x, y: pr.y, radius: pr.aoe, color: '#7fd8ff' });
+    const owner = this.players.get(pr.ownerId) || null;
+    const targets = this.enemiesOfPlayerId(pr.ownerId);
+    for (const e of targets) {
+      if (dist2(pr.x, pr.y, e.x, e.y) <= (pr.aoe + this.radiusOf(e)) ** 2) {
+        this.damageEntity(e, pr.damage * pr.aoeMult, owner, { crit: false });
+        this.applySlow(e, pr.slowMs, pr.slowMul);
+      }
     }
   }
 

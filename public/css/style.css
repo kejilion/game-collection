@@ -281,3 +281,72 @@ body.chat-open .chat-form input{opacity:1;font-size:16px;padding:12px 14px}
   #mobileBtns{right:12px;bottom:68px;flex-direction:row}#mobileBtns button{width:44px;height:44px}
   .panel-right{display:none}.toast-wrap{top:8px}.panel-player{top:6px;left:6px}
 }
+
+/* ---- Spectator Mode ---- */
+.spectate-btn {
+  display: block; width: 100%; margin-top: 8px; padding: 10px 0;
+  background: rgba(100,140,255,.15); border: 1px solid rgba(100,140,255,.4);
+  color: #9ab8ff; font-size: .95rem; border-radius: 8px; cursor: pointer;
+  transition: background .2s, color .2s;
+}
+.spectate-btn:hover { background: rgba(100,140,255,.3); color: #fff; }
+
+.menu-spec-count {
+  position: absolute; bottom: 60px; left: 50%; transform: translateX(-50%);
+  color: rgba(180,200,255,.6); font-size: .82rem;
+}
+
+.spectator-bar {
+  display: none; position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
+  background: rgba(10,16,40,.88); border: 1px solid rgba(100,140,255,.35);
+  border-radius: 10px; padding: 8px 18px; z-index: 120;
+  align-items: center; gap: 14px; backdrop-filter: blur(8px);
+}
+.spectator-bar.show { display: flex; }
+
+.spec-badge {
+  color: #7fb0ff; font-weight: 700; font-size: .92rem; white-space: nowrap;
+}
+.spec-target {
+  color: #fff; font-size: .92rem; min-width: 80px; text-align: center;
+}
+.spec-controls { display: flex; gap: 6px; }
+.spec-btn {
+  background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.18);
+  color: #cdd6f4; padding: 4px 12px; border-radius: 6px; cursor: pointer;
+  font-size: .85rem; transition: background .15s;
+}
+.spec-btn:hover { background: rgba(255,255,255,.18); color: #fff; }
+.spec-btn.spec-exit { border-color: rgba(255,90,90,.4); color: #ff7a7a; }
+.spec-btn.spec-exit:hover { background: rgba(255,90,90,.2); }
+.spec-btn.spec-free { border-color: rgba(100,200,100,.4); color: #8ef0a8; }
+
+.spectator-list {
+  display: none; position: fixed; left: 14px; top: 56px;
+  background: rgba(10,16,40,.85); border: 1px solid rgba(100,140,255,.25);
+  border-radius: 8px; padding: 8px 0; z-index: 115; min-width: 160px;
+  max-height: 360px; overflow-y: auto; backdrop-filter: blur(6px);
+}
+.spectator-list.show { display: block; }
+.spectator-list .sl-title {
+  color: rgba(180,200,255,.5); font-size: .75rem; padding: 2px 12px 4px;
+  border-bottom: 1px solid rgba(255,255,255,.06); margin-bottom: 2px;
+}
+.spectator-list .sl-player {
+  display: flex; align-items: center; gap: 8px; padding: 5px 12px;
+  cursor: pointer; transition: background .12s; font-size: .85rem; color: #cdd6f4;
+}
+.spectator-list .sl-player:hover { background: rgba(255,255,255,.08); }
+.spectator-list .sl-player.active { background: rgba(100,140,255,.18); color: #fff; }
+.spectator-list .sl-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+}
+.spectator-list .sl-dead { opacity: .4; }
+
+.spec-count-badge {
+  display: none; position: fixed; top: 12px; right: 210px;
+  background: rgba(10,16,40,.75); border: 1px solid rgba(100,140,255,.25);
+  border-radius: 6px; padding: 3px 10px; z-index: 100;
+  color: rgba(180,200,255,.7); font-size: .78rem; backdrop-filter: blur(4px);
+}
+.spec-count-badge.show { display: block; }

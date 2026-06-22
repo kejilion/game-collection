@@ -13,10 +13,122 @@
     obstacles: [], items: [],            // items: nearby set from AoI state; keep our own copy
     overview: { players: [], bosses: [], merchants: [], items: [] },  // global minimap blips (low-rate)
     interpDelay: 120, gapEMA: 50, lastStateAt: 0,  // adaptive interpolation for jittery links
-    shopCloseAt: 0, isTouch: false
+    shopCloseAt: 0, isTouch: false,
+    spectating: false, specTarget: null, specFree: true, spectatorCount: 0
   };
   let lastFrame = performance.now();
 
+
+  // ---- spectator mode -------------------------------------------------------
+  function onSpectateWelcome(m) {
+    G.spectating = true; G.specFree = true; G.specTarget = null;
+    G.world = m.world;
+    G.defs = { classes: m.classes, items: m.items, shop: m.shop, bosses: m.bosses || {} };
+    G.obstacles = m.obstacles || [];
+    Renderer.setWorld(m.world, m.classes, m.items, m.bosses);
+    Renderer.setObstacles(G.obstacles);
+    HUD.setDefs(m.classes, m.items, m.shop);
+    G.snaps.length = 0; G.items = []; G.deadSince = 0;
+    showScreen('game');
+    document.getElementById('spectatorBar').classList.add('show');
+    document.getElementById('spectatorList').classList.add('show');
+    document.getElementById('playerPanel').style.display = 'none';
+    document.getElementById('skillbar').style.display = 'none';
+    wireSpectatorControls();
+  }
+
+  function onSpectatorCount(m) {
+    G.spectatorCount = m.count;
+    const menuEl = document.getElementById('menuSpecCount');
+    if (menuEl) menuEl.textContent = m.count > 0 ? '\uD83D\uDC41 ' + m.count + ' \u4EBA\u89C2\u6218\u4E2D' : '';
+    const badge = document.getElementById('specCountBadge');
+    if (badge) {
+      badge.textContent = '\uD83D\uDC41 \u89C2\u6218 ' + m.count;
+      badge.classList.toggle('show', m.count > 0);
+    }
+  }
+
+  function specSwitchTarget(dir) {
+    const snap = G.snaps.length > 0 ? G.snaps[G.snaps.length - 1] : null;
+    if (!snap) return;
+    const alive = snap.players.filter(p => !p.dead);
+    if (alive.length === 0) { G.specFree = true; G.specTarget = null; updateSpecUI(); return; }
+    G.specFree = false;
+    const idx = alive.findIndex(p => p.id === G.specTarget);
+    if (idx < 0) { G.specTarget = alive[0].id; }
+    else {
+      const next = (idx + dir + alive.length) % alive.length;
+      G.specTarget = alive[next].id;
+    }
+    updateSpecUI();
+  }
+
+  function specSelectPlayer(id) {
+    G.specFree = false; G.specTarget = id; updateSpecUI();
+  }
+
+  function specGoFree() {
+    G.specFree = true; G.specTarget = null; updateSpecUI();
+  }
+
+  function specExit() {
+    Net.send({ type: 'spectateLeave' });
+    G.spectating = false; G.specTarget = null; G.specFree = true;
+    G.snaps.length = 0; G.items = [];
+    document.getElementById('spectatorBar').classList.remove('show');
+    document.getElementById('spectatorList').classList.remove('show');
+    document.getElementById('playerPanel').style.display = '';
+    document.getElementById('skillbar').style.display = '';
+    showScreen('menu');
+  }
+
+  function updateSpecUI() {
+    const el = document.getElementById('specTarget');
+    if (G.specFree) { el.textContent = '\u81EA\u7531\u89C6\u89D2'; return; }
+    const snap = G.snaps.length > 0 ? G.snaps[G.snaps.length - 1] : null;
+    const target = snap ? snap.players.find(p => p.id === G.specTarget) : null;
+    el.textContent = target ? target.name : '\u81EA\u7531\u89C6\u89D2';
+  }
+
+  function updateSpecPlayerList(players) {
+    const el = document.getElementById('spectatorList');
+    if (!el || !G.spectating) return;
+    let html = '<div class="sl-title">\u6218\u573A\u4EBA\u7269 (' + players.length + ')</div>';
+    const sorted = [...players].sort((a, b) => b.score - a.score);
+    for (const p of sorted) {
+      const cls = G.defs.classes[p.cls] || { color: '#fff' };
+      const active = p.id === G.specTarget ? ' active' : '';
+      const dead = p.dead ? ' sl-dead' : '';
+      html += '<div class="sl-player' + active + dead + '" data-pid="' + p.id + '">'
+        + '<span class="sl-dot" style="background:' + cls.color + '"></span>'
+        + '<span>' + escapeHtml(p.name) + '</span>'
+        + '<span style="margin-left:auto;opacity:.5;font-size:.75rem">Lv.' + p.level + '</span>'
+        + '</div>';
+    }
+    el.innerHTML = html;
+    el.querySelectorAll('.sl-player').forEach(row => {
+      row.addEventListener('click', () => specSelectPlayer(row.dataset.pid));
+    });
+  }
+
+  let _specControlsWired = false;
+  function wireSpectatorControls() {
+    if (_specControlsWired) return;
+    _specControlsWired = true;
+    document.getElementById('specPrev').addEventListener('click', () => specSwitchTarget(-1));
+    document.getElementById('specNext').addEventListener('click', () => specSwitchTarget(1));
+    document.getElementById('specFree').addEventListener('click', specGoFree);
+    document.getElementById('specExit').addEventListener('click', specExit);
+    window.addEventListener('keydown', (e) => {
+      if (!G.spectating) return;
+      if (e.code === 'ArrowLeft' || e.code === 'KeyA') { e.preventDefault(); specSwitchTarget(-1); }
+      if (e.code === 'ArrowRight' || e.code === 'KeyD') { e.preventDefault(); specSwitchTarget(1); }
+      if (e.code === 'Escape') { e.preventDefault(); specExit(); }
+      if (e.code === 'Space') { e.preventDefault(); specGoFree(); }
+    });
+  }
+
+  function escapeHtml(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
   // ---- boot ---------------------------------------------------------------
   window.addEventListener('DOMContentLoaded', () => {
     if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
@@ -153,7 +265,9 @@
         G.merchantHinted = false;
         if (G.shopOpen && !G.shopCloseAt) G.shopCloseAt = recv + 4000;  // grace period before it closes
       }
-    } else if (G.screen === 'game' && G.selfId) {
+    }
+    if (G.spectating && m.players) updateSpecPlayerList(m.players);
+    else if (G.screen === 'game' && G.selfId) {
       // we were removed (e.g. after leave) — ignore
     }
   }
@@ -185,7 +299,7 @@
     const span = b.t - a.t || 1;
     const alpha = clamp((target - a.t) / span, 0, 1);
 
-    const view = { selfId: G.selfId, players: [], bosses: [], merchants: [], items: G.items, projectiles: [] };
+    const view = { selfId: G.spectating ? null : G.selfId, players: [], bosses: [], merchants: [], items: G.items, projectiles: [] };
     view.bosses = lerpList(a.idx.bosses, b.idx.bosses, alpha);
     view.merchants = lerpList(a.idx.merchants, b.idx.merchants, alpha);
     view.projectiles = lerpList(a.idx.projectiles, b.idx.projectiles, alpha);
@@ -196,7 +310,7 @@
     const hasReveal = selfLatest && selfLatest.buffs && selfLatest.buffs.includes('reveal');
     for (const p of others) {
       if (p.id === G.selfId) continue;
-      if (p.invis && !hasReveal) continue;            // hidden enemy
+      if (p.invis && !hasReveal && !G.spectating) continue;
       view.players.push(p);
     }
     if (selfLatest) {
@@ -206,6 +320,19 @@
     } else { view.lastX = G.pred.x; view.lastY = G.pred.y; }
     view.overview = G.overview;           // global blips for the minimap (whole map, not just AoI slice)
     view.hasReveal = hasReveal;
+    if (G.spectating) {
+      if (!G.specFree && G.specTarget) {
+        const tp = view.players.find(p => p.id === G.specTarget);
+        if (tp) { view.self = tp; }
+        else { G.specFree = true; G.specTarget = null; updateSpecUI(); }
+      }
+      if (!view.self && view.players.length > 0) {
+        view.self = view.players[0];
+      }
+      if (!view.self) {
+        view.lastX = G.world.width / 2; view.lastY = G.world.height / 2;
+      }
+    }
     return view;
   }
 
