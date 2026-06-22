@@ -5,7 +5,7 @@
 // ============================================================================
 
 const {
-  WORLD, CLASSES, ITEM_TYPES, ITEM_WEIGHTS, SHOP, BALANCE, BOSS_NAMES, OBSTACLES, DROP, KILL
+  WORLD, CLASSES, ITEM_TYPES, ITEM_WEIGHTS, SHOP, BALANCE, BOSS_TYPES, OBSTACLES, DROP, KILL
 } = require('./config');
 
 // ---- small helpers ---------------------------------------------------------
@@ -28,7 +28,7 @@ function weightedPick(weights) {
 // fx that are global announcements (kill feed / boss kill) must reach every
 // client regardless of where it happened; all other fx are positional and only
 // sent to clients whose view contains them.
-const GLOBAL_FX = new Set(['killfeed', 'bossKill']);
+const GLOBAL_FX = new Set(['killfeed', 'bossKill', 'bossSpawn']);
 
 // ===========================================================================
 //  Entities
@@ -76,13 +76,21 @@ class Player {
 }
 
 class Boss {
-  constructor(x, y) {
+  constructor(typeId, x, y) {
     this.id = uid('B'); this.kind = 'boss';
-    this.name = BOSS_NAMES[randInt(0, BOSS_NAMES.length - 1)];
-    this.maxHp = BALANCE.boss.hp; this.hp = this.maxHp;
+    this.type = typeId; this.def = BOSS_TYPES[typeId];
+    this.name = this.def.name;
+    this.maxHp = this.def.hp; this.hp = this.maxHp;
+    this.r = this.def.radius;
     this.x = x; this.y = y; this.facing = 0;
     this.targetId = null;
-    this.attackReadyAt = 0; this.slamReadyAt = now() + 3000; this.orbReadyAt = now() + 5000;
+    this.attackReadyAt = 0;
+    // per-ability cooldown clocks, staggered so a fresh boss doesn't dump its whole kit at once
+    this.cool = {}; let off = 1500;
+    for (const ab of this.def.abilities) { this.cool[ab.k] = now() + off; off += 850; }
+    this.charge = null;        // active line-charge state machine, when set
+    this.enraged = false;      // latched once HP drops past traits.enrageAt
+    this.spin = 0;             // running angle for the spiral barrage
     this.lastHitBy = null;
   }
 }
@@ -108,6 +116,8 @@ class Projectile {
     this.damage = o.damage; this.radius = o.radius; this.type = o.type; // 'bolt'|'fireball'|'orb'
     this.aoe = o.aoe || 0; this.aoeMult = o.aoeMult || 1; this.crit = !!o.crit;
     this.life = o.life || 2.2;
+    this.homing = !!o.homing; this.turn = o.turn || 0;  // boss seekers steer toward heroes
+    this.color = o.color || null;                       // tint (boss orbs carry their archetype accent)
   }
 }
 
@@ -195,9 +205,14 @@ class World {
 
   spawnBoss() {
     const p = this.freePoint(300);
-    const b = new Boss(p.x, p.y);
+    // rotate archetypes (no immediate repeat) so players meet a different boss each time
+    const ids = Object.keys(BOSS_TYPES);
+    let id = ids[randInt(0, ids.length - 1)];
+    if (this._lastBossType && ids.length > 1) while (id === this._lastBossType) id = ids[randInt(0, ids.length - 1)];
+    this._lastBossType = id;
+    const b = new Boss(id, p.x, p.y);
     this.bosses.set(b.id, b);
-    this.pushFx({ t: 'bossSpawn', x: b.x, y: b.y, name: b.name });
+    this.pushFx({ t: 'bossSpawn', x: b.x, y: b.y, name: b.name, type: b.type, color: b.def.accent });
   }
   // low-level: add an item to the field (used by natural spawn AND death drops)
   addItem(type, x, y) {
@@ -247,7 +262,7 @@ class World {
     }
     return best;
   }
-  radiusOf(e) { return e.kind === 'boss' ? BALANCE.boss.radius : e.kind === 'player' ? 22 : 16; }
+  radiusOf(e) { return e.kind === 'boss' ? e.r : e.kind === 'player' ? 22 : 16; }
 
   damageEntity(target, amount, attacker, opts = {}) {
     const t = now();
@@ -298,8 +313,8 @@ class World {
       const killer = (attacker && attacker.kind === 'player') ? attacker
         : (target.lastHitBy && this.players.get(target.lastHitBy));
       if (killer) {
-        killer.bossKills += 1; killer.gold += BALANCE.boss.bounty;
-        this.gainXp(killer, BALANCE.xp.bossKill);
+        killer.bossKills += 1; killer.gold += (target.def.bounty || BALANCE.boss.bountyDefault);
+        this.gainXp(killer, target.def.xp || BALANCE.xp.bossKill);
         this.pushFx({ t: 'bossKill', x: target.x, y: target.y, name: killer.name, boss: target.name });
         this.pushFx({ t: 'killfeed', killer: killer.name, killerId: killer.id, kcls: killer.clsId, victim: target.name, vcls: 'boss', boss: true });
       } else {
@@ -501,6 +516,18 @@ class World {
     // projectiles
     for (const pr of this.projectiles.values()) {
       pr.life -= dt;
+      // homing seekers (boss "void-eyes") bend toward the nearest hero, capped turn rate
+      if (pr.homing) {
+        let best = null, bd = 1e18;
+        for (const o of this.players.values()) { if (o.dead) continue; const d = dist2(pr.x, pr.y, o.x, o.y); if (d < bd) { bd = d; best = o; } }
+        if (best) {
+          const cur = Math.atan2(pr.vy, pr.vx);
+          const want = Math.atan2(best.y - pr.y, best.x - pr.x);
+          const turn = clamp(angDiff(want, cur), -pr.turn * dt, pr.turn * dt);
+          const a = cur + turn, sp = Math.hypot(pr.vx, pr.vy);
+          pr.vx = Math.cos(a) * sp; pr.vy = Math.sin(a) * sp;
+        }
+      }
       pr.x += pr.vx * dt; pr.y += pr.vy * dt;
       if (pr.life <= 0 || pr.x < -40 || pr.y < -40 || pr.x > WORLD.width + 40 || pr.y > WORLD.height + 40) {
         if (pr.type === 'fireball') this.explode(pr);
@@ -596,54 +623,176 @@ class World {
     }
   }
 
+  // nearest living hero to a boss within `range` (squared compare); null if none.
+  nearestPlayer(b, range) {
+    let best = null, bd = range * range;
+    for (const p of this.players.values()) {
+      if (p.dead) continue;
+      const d = dist2(b.x, b.y, p.x, p.y);
+      if (d < bd) { bd = d; best = p; }
+    }
+    return best;
+  }
+
   updateBoss(b, dt, t) {
-    const B = BALANCE.boss;
-    // pick / refresh target = nearest alive player within aggro
+    const def = b.def, tr = def.traits;
+    // passive: slow self-heal
+    if (tr.regen && b.hp < b.maxHp) b.hp = Math.min(b.maxHp, b.hp + tr.regen * dt);
+    // passive: enrage latches on once, then speeds movement & shortens cooldowns
+    if (tr.enrageAt && !b.enraged && b.hp / b.maxHp <= tr.enrageAt) {
+      b.enraged = true; this.pushFx({ t: 'bossEnrage', x: b.x, y: b.y, color: def.accent });
+    }
+    const rateMul = b.enraged ? (tr.rateMul || 1) : 1;
+    const moveMul = b.enraged ? (tr.moveMul || 1) : 1;
+
+    // an in-progress line-charge fully owns the boss's movement until it resolves
+    if (b.charge) {
+      if (b.charge.phase === 'windup') {                       // keep tracking the target while winding up
+        const p = this.nearestPlayer(b, def.aggro * 1.5);
+        if (p) b.facing = Math.atan2(p.y - b.y, p.x - b.x);
+      }
+      this.tickCharge(b, dt, t);
+      return;
+    }
+
+    // acquire / refresh target = nearest living hero, sticky until it leaves aggro
     let tgt = b.targetId && this.players.get(b.targetId);
-    if (!tgt || tgt.dead || dist2(b.x, b.y, tgt.x, tgt.y) > B.aggro * B.aggro) {
-      tgt = null; let bestD = B.aggro * B.aggro;
-      for (const p of this.players.values()) {
-        if (p.dead) continue;
-        const d = dist2(b.x, b.y, p.x, p.y);
-        if (d < bestD) { bestD = d; tgt = p; }
-      }
-      b.targetId = tgt ? tgt.id : null;
-    }
+    if (!tgt || tgt.dead || dist2(b.x, b.y, tgt.x, tgt.y) > def.aggro * def.aggro)
+      tgt = this.nearestPlayer(b, def.aggro);
+    b.targetId = tgt ? tgt.id : null;
     if (!tgt) return;
+
     b.facing = Math.atan2(tgt.y - b.y, tgt.x - b.x);
-    const d2 = dist2(b.x, b.y, tgt.x, tgt.y);
-    if (d2 > B.contactRange * B.contactRange) {
-      b.x += Math.cos(b.facing) * B.speed * dt;
-      b.y += Math.sin(b.facing) * B.speed * dt;
-      this.resolveObstacles(b, B.radius);
+    if (dist2(b.x, b.y, tgt.x, tgt.y) > def.contactRange * def.contactRange) {
+      b.x += Math.cos(b.facing) * def.speed * moveMul * dt;
+      b.y += Math.sin(b.facing) * def.speed * moveMul * dt;
+      this.resolveObstacles(b, b.r);
     } else if (t >= b.attackReadyAt) {
-      b.attackReadyAt = t + B.contactMs;
-      this.damageEntity(tgt, B.attack, b);
-      this.pushFx({ t: 'swing', x: b.x, y: b.y, ang: b.facing, range: B.contactRange, arc: Math.PI, color: '#ff4d4d' });
+      b.attackReadyAt = t + def.contactMs;
+      this.damageEntity(tgt, def.attack, b);
+      if (tr.lifesteal) b.hp = Math.min(b.maxHp, b.hp + def.attack * tr.lifesteal);
+      this.pushFx({ t: 'swing', x: b.x, y: b.y, ang: b.facing, range: def.contactRange, arc: Math.PI, color: def.accent });
     }
-    // ground slam — AOE around boss
-    if (t >= b.slamReadyAt) {
-      b.slamReadyAt = t + B.slamMs;
-      this.pushFx({ t: 'slam', x: b.x, y: b.y, radius: B.slamRadius });
-      for (const p of this.players.values()) {
-        if (!p.dead && dist2(b.x, b.y, p.x, p.y) <= (B.slamRadius + 22) ** 2)
-          this.damageEntity(p, B.slamDmg, b);
-      }
+
+    // cooldown-gated ability kit
+    for (const ab of def.abilities) {
+      if ((b.cool[ab.k] || 0) > t) continue;
+      if (ab.k === 'blink' && ab.awayIf && !this.nearestPlayer(b, ab.awayIf)) continue; // only kite when crowded
+      b.cool[ab.k] = t + ab.cd * rateMul;
+      this.bossAbility(b, ab, tgt, t);
     }
-    // radial orb barrage
-    if (t >= b.orbReadyAt) {
-      b.orbReadyAt = t + B.orbMs;
-      for (let i = 0; i < B.orbCount; i++) {
-        const a = (Math.PI * 2 * i) / B.orbCount;
-        const pr = new Projectile({
-          x: b.x + Math.cos(a) * B.radius, y: b.y + Math.sin(a) * B.radius,
-          vx: Math.cos(a) * B.orbSpeed, vy: Math.sin(a) * B.orbSpeed,
-          ownerId: b.id, ownerKind: 'boss', damage: B.orbDmg, radius: B.orbRadius,
-          type: 'orb', life: 2.6
-        });
-        this.projectiles.set(pr.id, pr);
+  }
+
+  bossAbility(b, ab, tgt, t) {
+    switch (ab.k) {
+      case 'slam':   this.bossSlam(b, ab); break;
+      case 'orbs':   this.bossOrbs(b, ab, tgt); break;
+      case 'spiral': this.bossSpiral(b, ab); break;
+      case 'charge': this.bossStartCharge(b, ab, tgt, t); break;
+      case 'blink':  this.bossBlink(b, ab, tgt); break;
+      case 'drain':  this.bossDrain(b, ab); break;
+    }
+  }
+
+  // ring AOE centered on the boss
+  bossSlam(b, ab) {
+    this.pushFx({ t: 'shock', x: b.x, y: b.y, radius: ab.radius, color: b.def.accent, fill: true });
+    for (const p of this.players.values())
+      if (!p.dead && dist2(b.x, b.y, p.x, p.y) <= (ab.radius + 22) ** 2) this.damageEntity(p, ab.dmg, b);
+  }
+
+  // projectile barrage: 'radial' (full circle) or 'aimed' (fan toward target),
+  // optionally homing. Orbs carry the archetype accent so the volley reads on screen.
+  bossOrbs(b, ab, tgt) {
+    const n = ab.count;
+    const base = (ab.mode === 'aimed' && tgt) ? Math.atan2(tgt.y - b.y, tgt.x - b.x) : 0;
+    for (let i = 0; i < n; i++) {
+      const a = ab.mode === 'aimed'
+        ? base + (n > 1 ? ((i / (n - 1)) - 0.5) * (ab.spread || 0) : 0)
+        : (Math.PI * 2 * i) / n;
+      this.spawnBossOrb(b, a, ab);
+    }
+    this.pushFx({ t: 'bossCast', x: b.x, y: b.y, color: b.def.accent });
+  }
+
+  // rotating bullet-hell fan: a few arms that advance by `step` radians each shot
+  bossSpiral(b, ab) {
+    b.spin += ab.step;
+    const arms = ab.arms || 2;
+    for (let i = 0; i < arms; i++) this.spawnBossOrb(b, b.spin + (Math.PI * 2 * i) / arms, ab);
+  }
+
+  spawnBossOrb(b, a, ab) {
+    const pr = new Projectile({
+      x: b.x + Math.cos(a) * b.r, y: b.y + Math.sin(a) * b.r,
+      vx: Math.cos(a) * ab.speed, vy: Math.sin(a) * ab.speed,
+      ownerId: b.id, ownerKind: 'boss', damage: ab.dmg, radius: ab.radius,
+      type: 'orb', life: ab.life || 2.6, homing: !!ab.homing, turn: ab.turn || 0, color: b.def.accent
+    });
+    this.projectiles.set(pr.id, pr);
+  }
+
+  // teleport: away from the target when kiting (awayIf set), else in close near it
+  bossBlink(b, ab, tgt) {
+    if (!tgt) return;
+    const ox = b.x, oy = b.y;
+    if (ab.awayIf) {
+      const a = Math.atan2(b.y - tgt.y, b.x - tgt.x);
+      b.x = clamp(b.x + Math.cos(a) * ab.dist, b.r, WORLD.width - b.r);
+      b.y = clamp(b.y + Math.sin(a) * ab.dist, b.r, WORLD.height - b.r);
+    } else {
+      const a = Math.random() * Math.PI * 2;
+      b.x = clamp(tgt.x + Math.cos(a) * ab.dist * 0.5, b.r, WORLD.width - b.r);
+      b.y = clamp(tgt.y + Math.sin(a) * ab.dist * 0.5, b.r, WORLD.height - b.r);
+    }
+    this.resolveObstacles(b, b.r);
+    this.pushFx({ t: 'blink', x: ox, y: oy, x2: b.x, y2: b.y, color: b.def.accent });
+  }
+
+  // life-drain pulse: damages heroes in range and converts a share of it into healing
+  bossDrain(b, ab) {
+    this.pushFx({ t: 'shock', x: b.x, y: b.y, radius: ab.radius, color: b.def.accent, fill: true, drain: true });
+    let healed = 0;
+    for (const p of this.players.values())
+      if (!p.dead && dist2(b.x, b.y, p.x, p.y) <= (ab.radius + 22) ** 2) {
+        this.damageEntity(p, ab.dmg, b); healed += ab.dmg * (ab.heal || 0);
       }
-      this.pushFx({ t: 'bossCast', x: b.x, y: b.y });
+    if (healed) b.hp = Math.min(b.maxHp, b.hp + healed);
+  }
+
+  // arm a telegraphed line-charge; tickCharge() drives windup -> dash -> nova
+  bossStartCharge(b, ab, tgt, t) {
+    b.charge = {
+      phase: 'windup', until: t + ab.windup, dashMs: (ab.dash / ab.speed) * 1000,
+      speed: ab.speed, dmg: ab.dmg, hitR: ab.hitR, nova: ab.nova, dx: 0, dy: 0, hit: null
+    };
+    const ang = tgt ? Math.atan2(tgt.y - b.y, tgt.x - b.x) : b.facing;
+    this.pushFx({ t: 'bossCharge', x: b.x, y: b.y, ang, dist: ab.dash, color: b.def.accent });
+  }
+
+  tickCharge(b, dt, t) {
+    const c = b.charge;
+    if (c.phase === 'windup') {
+      if (t >= c.until) {                                  // lock heading and launch
+        c.phase = 'dash'; c.until = t + c.dashMs; c.hit = new Set();
+        c.dx = Math.cos(b.facing); c.dy = Math.sin(b.facing);
+        this.pushFx({ t: 'dash', x1: b.x, y1: b.y, x2: b.x + c.dx * (c.speed * c.dashMs / 1000), y2: b.y + c.dy * (c.speed * c.dashMs / 1000), color: b.def.accent });
+      }
+      return;
+    }
+    b.x += c.dx * c.speed * dt; b.y += c.dy * c.speed * dt;
+    this.resolveObstacles(b, b.r);
+    for (const p of this.players.values()) {               // each hero is struck at most once per charge
+      if (p.dead || c.hit.has(p.id)) continue;
+      if (dist2(b.x, b.y, p.x, p.y) <= (c.hitR + 22) ** 2) { c.hit.add(p.id); this.damageEntity(p, c.dmg, b); }
+    }
+    if (t >= c.until) {
+      if (c.nova) {                                        // burst on arrival
+        this.pushFx({ t: 'shock', x: b.x, y: b.y, radius: c.nova.radius, color: b.def.accent, fill: true });
+        for (const p of this.players.values())
+          if (!p.dead && dist2(b.x, b.y, p.x, p.y) <= (c.nova.radius + 22) ** 2) this.damageEntity(p, c.nova.dmg, b);
+      }
+      b.charge = null;
     }
   }
 
@@ -672,14 +821,14 @@ class World {
     }
     const bosses = [];
     for (const b of this.bosses.values())
-      bosses.push({ id: b.id, name: b.name, x: r(b.x), y: r(b.y), hp: r(Math.max(0, b.hp)), maxHp: b.maxHp, facing: +b.facing.toFixed(2) });
+      bosses.push({ id: b.id, name: b.name, type: b.type, x: r(b.x), y: r(b.y), hp: r(Math.max(0, b.hp)), maxHp: b.maxHp, facing: +b.facing.toFixed(2), r: b.r, enraged: !!b.enraged });
     const merchants = [];
     for (const m of this.merchants.values()) merchants.push({ id: m.id, name: m.name, x: r(m.x), y: r(m.y), idle: m.state === 'idle' });
     const items = [];
     for (const it of this.items.values()) items.push({ id: it.id, type: it.type, x: r(it.x), y: r(it.y) });
     const projectiles = [];
     for (const pr of this.projectiles.values())
-      projectiles.push({ id: pr.id, x: r(pr.x), y: r(pr.y), type: pr.type, r: pr.radius, owner: pr.ownerId });
+      projectiles.push({ id: pr.id, x: r(pr.x), y: r(pr.y), type: pr.type, r: pr.radius, owner: pr.ownerId, c: pr.color });
     this._snap = { t, players, bosses, merchants, items, projectiles };
     this._fx = this.fx; this.fx = [];   // capture fx once; viewFor() culls per client
     return this._snap;
@@ -725,7 +874,7 @@ class World {
     for (const p of this.players.values())
       players.push({ id: p.id, cls: p.clsId, x: r(p.x), y: r(p.y), dead: p.dead, invis: p.hasBuff('invis', t) });
     const bosses = [];
-    for (const b of this.bosses.values()) bosses.push({ id: b.id, x: r(b.x), y: r(b.y) });
+    for (const b of this.bosses.values()) bosses.push({ id: b.id, x: r(b.x), y: r(b.y), type: b.type });
     const merchants = [];
     for (const m of this.merchants.values()) merchants.push({ id: m.id, x: r(m.x), y: r(m.y), idle: m.state === 'idle' });
     const items = [];

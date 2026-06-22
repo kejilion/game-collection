@@ -63,7 +63,7 @@
   }
 
   function onDefs(m) {
-    G.defs = { classes: m.classes, items: m.items, shop: m.shop };
+    G.defs = { classes: m.classes, items: m.items, shop: m.shop, bosses: m.bosses || {} };
     HUD.setDefs(m.classes, m.items, m.shop);
     HUD.buildClassPicker((cls) => { G.selectedClass = cls; });
     HUD.buildShop(buy);
@@ -71,9 +71,9 @@
 
   function onWelcome(m) {
     G.selfId = m.id; G.world = m.world;
-    G.defs = { classes: m.classes, items: m.items, shop: m.shop };
+    G.defs = { classes: m.classes, items: m.items, shop: m.shop, bosses: m.bosses || {} };
     G.obstacles = m.obstacles || [];
-    Renderer.setWorld(m.world, m.classes, m.items);
+    Renderer.setWorld(m.world, m.classes, m.items, m.bosses);
     Renderer.setObstacles(G.obstacles);
     HUD.setDefs(m.classes, m.items, m.shop);
     HUD.buildSkillbar(G.selectedClass);
@@ -116,6 +116,10 @@
     for (const fx of m.fx) {
       Renderer.spawnFx(fx);
       if (fx.t === 'bossKill') HUD.toast(`${fx.name || '有人'} 击杀了 BOSS ${fx.boss}！`, '#ffd23f');
+      else if (fx.t === 'bossSpawn') {
+        const bd = G.defs.bosses && G.defs.bosses[fx.type];
+        HUD.toast(`BOSS ${fx.name} 降临！${bd ? ' · ' + bd.desc : ''}`, fx.color || '#ff6a6a');
+      }
       else if (fx.t === 'levelup' && fx.id === G.selfId) HUD.toast(`升级！ Lv.${fx.level}`, '#6ee7a0');
       else if (fx.t === 'pickup' && fx.id === G.selfId) {
         const d = G.defs.items[fx.type];

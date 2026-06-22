@@ -14,9 +14,9 @@ const BROADCAST_RATE = 20;   // state snapshots / second
 const CLASSES = {
   warrior: {
     id: 'warrior', name: '战士', color: '#ef5b52', accent: '#ffd0cb',
-    maxHp: 165, speed: 158, attack: 21, defense: 7,
+    maxHp: 200, speed: 158, attack: 21, defense: 7,
     attackCd: 620, critChance: 0.06, critMult: 1.6,
-    attackType: 'melee_aoe', attackRange: 98, attackArc: Math.PI * 0.95,
+    attackType: 'melee_aoe', attackRange: 130, attackArc: Math.PI * 0.95,
     skills: [
       { id: 'whirlwind', name: '旋风斩', cd: 6000, mult: 1.9, radius: 155,
         desc: '横扫周身敌人，造成大量范围伤害' }
@@ -92,13 +92,9 @@ const BALANCE = {
   xp: { perDamage: 0.22, killBase: 40, killPerLevel: 12, bossKill: 430, expPotion: 75 },
   hp: { perLevel: 22 }, attackPerLevel: 3, defensePerLevel: 1,
   goldChest: [30, 130], killBounty: [18, 40],
-  boss: {
-    count: 1, respawnMs: 22000, hp: 1750, attack: 34, speed: 64, radius: 62,
-    aggro: 780, contactMs: 1000, contactRange: 86,
-    slamMs: 4400, slamDmg: 48, slamRadius: 175,
-    orbMs: 6500, orbCount: 10, orbSpeed: 230, orbDmg: 24, orbRadius: 11,
-    bounty: 270
-  },
+  // Boss spawn cadence only. Each archetype's stats / abilities / rewards live in
+  // BOSS_TYPES below; bounty & xp are per-type (a tougher boss is worth more).
+  boss: { count: 1, respawnMs: 22000, bountyDefault: 270 },
   // merchant: short hops then a pause, so players can actually reach & buy
   merchantCount: 2, merchantSpeed: 70,
   merchantPauseMs: [4500, 8500],   // how long it stands still ("营业中")
@@ -106,7 +102,107 @@ const BALANCE = {
   merchantMoveMaxMs: 9000          // safety cap on a single hop
 };
 
-const BOSS_NAMES = ['炎魔·巴洛尔', '深渊看守者', '远古石巨人', '混沌之眼', '霜牙暴君', '虚空领主'];
+// ---- Boss archetypes -------------------------------------------------------
+// Each entry is a *distinct playstyle*, not just a re-skin: different stats,
+// a different ability kit, and different passive traits. The simulation
+// (world.js) reads `abilities` (cooldown-gated) and `traits` (passives).
+//
+//   ability kinds:
+//     slam   { cd, dmg, radius }                 — instant ring AOE around the boss
+//     orbs   { cd, count, speed, dmg, radius, mode:'radial'|'aimed', spread, homing, turn, life }
+//     spiral { cd, arms, step, speed, dmg, radius } — rotating bullet-hell fan (fires fast)
+//     charge { cd, windup, dash, speed, dmg, hitR, nova:{dmg,radius} } — telegraphed line dash
+//     blink  { cd, dist, awayIf } — teleport (toward target, or away when a hero is within awayIf)
+//     drain  { cd, dmg, radius, heal } — AOE that heals the boss for heal*dmg per hero hit
+//   traits (passive):
+//     enrageAt (hp fraction) + moveMul + rateMul — below the threshold it speeds up
+//     regen (hp/sec), lifesteal (fraction of contact damage healed back)
+const BOSS_TYPES = {
+  // 1) Juggernaut — the original all-rounder: tanky, stomps + radial fire nova.
+  brute: {
+    name: '炎魔·巴洛尔', color: '#9e2b2b', accent: '#ff6a4d', shape: 'demon',
+    hp: 1750, attack: 34, speed: 66, radius: 60, aggro: 820,
+    contactMs: 1000, contactRange: 86, bounty: 270, xp: 430,
+    desc: '全能炎魔 · 践踏震地，火球弹幕封锁四方',
+    abilities: [
+      { k: 'slam', cd: 4400, dmg: 48, radius: 175 },
+      { k: 'orbs', cd: 6200, count: 12, speed: 230, dmg: 24, radius: 11, mode: 'radial' }
+    ],
+    traits: {}
+  },
+  // 2) Diver — fast melee bruiser. Telegraphed line-charge + frost burst on arrival.
+  //    No ranged tools: kite the charge and it is harmless. Enrages when low.
+  charger: {
+    name: '霜牙暴君', color: '#2f7fd0', accent: '#bfe6ff', shape: 'beast',
+    hp: 1500, attack: 30, speed: 98, radius: 52, aggro: 1000,
+    contactMs: 850, contactRange: 78, bounty: 300, xp: 470,
+    desc: '冲锋猛兽 · 直线冲撞撕裂，落点炸开寒霜',
+    abilities: [
+      { k: 'charge', cd: 5000, windup: 620, dash: 380, speed: 780, dmg: 58, hitR: 58,
+        nova: { dmg: 28, radius: 150 } }
+    ],
+    traits: { enrageAt: 0.3, moveMul: 1.25, rateMul: 0.7 }
+  },
+  // 3) Summoner — slow, very tanky, regenerates. Fires waves of homing void-eyes
+  //    and blinks toward heroes to keep the seekers on top of them.
+  warden: {
+    name: '深渊看守者', color: '#5a3aa8', accent: '#caa8ff', shape: 'wraith',
+    hp: 2300, attack: 26, speed: 46, radius: 64, aggro: 1150,
+    contactMs: 1100, contactRange: 92, bounty: 330, xp: 540,
+    desc: '深渊召唤者 · 追踪虚空之眼，瞬移如影随形',
+    abilities: [
+      { k: 'orbs', cd: 4800, count: 5, speed: 150, dmg: 22, radius: 13,
+        mode: 'aimed', spread: 1.0, homing: true, turn: 2.4, life: 4.8 },
+      { k: 'blink', cd: 8000, dist: 380 }
+    ],
+    traits: { regen: 5 }
+  },
+  // 4) Juggernaut-plus — enormous HP/radius, devastating shockwave + aimed boulder.
+  //    Barely moves, but enrages hard below 35% and starts slamming relentlessly.
+  golem: {
+    name: '远古石巨人', color: '#6b7280', accent: '#d3c08a', shape: 'golem',
+    hp: 3200, attack: 46, speed: 34, radius: 80, aggro: 780,
+    contactMs: 1250, contactRange: 106, bounty: 370, xp: 640,
+    desc: '重甲巨像 · 震地冲击波与飞石，残血陷入狂暴',
+    abilities: [
+      { k: 'slam', cd: 5000, dmg: 74, radius: 250 },
+      { k: 'orbs', cd: 6000, count: 1, speed: 300, dmg: 60, radius: 20, mode: 'aimed', spread: 0 }
+    ],
+    traits: { enrageAt: 0.35, moveMul: 1.3, rateMul: 0.55 }
+  },
+  // 5) Caster / kiter — fragile but fills the arena with a rotating spiral, snipes
+  //    with a 3-shot fan, and blinks AWAY the instant a hero closes in. Corner it.
+  eye: {
+    name: '混沌之眼', color: '#8e44c8', accent: '#f0c6ff', shape: 'eye',
+    hp: 1450, attack: 18, speed: 74, radius: 54, aggro: 1200,
+    contactMs: 1000, contactRange: 76, bounty: 320, xp: 500,
+    desc: '混沌法师 · 螺旋弹幕铺场，近身即瞬退',
+    abilities: [
+      { k: 'spiral', cd: 220, arms: 2, step: 0.42, speed: 240, dmg: 15, radius: 9 },
+      { k: 'orbs', cd: 3200, count: 3, speed: 330, dmg: 26, radius: 11, mode: 'aimed', spread: 0.34 },
+      { k: 'blink', cd: 3000, dist: 300, awayIf: 230 }
+    ],
+    traits: {}
+  },
+  // 6) Sustain / vampire — heals off every melee hit, and its drain pulse converts
+  //    hero HP straight into its own. Burst it down or it claws everything back.
+  revenant: {
+    name: '虚空领主', color: '#2f9e6a', accent: '#9bf0c4', shape: 'revenant',
+    hp: 1950, attack: 32, speed: 74, radius: 58, aggro: 920,
+    contactMs: 900, contactRange: 84, bounty: 340, xp: 560,
+    desc: '噬血领主 · 吸血打击与汲取脉冲，持续自愈',
+    abilities: [
+      { k: 'drain', cd: 5200, dmg: 34, radius: 200, heal: 0.8 },
+      { k: 'orbs', cd: 4200, count: 8, speed: 270, dmg: 22, radius: 10, mode: 'radial' }
+    ],
+    traits: { lifesteal: 0.6, regen: 4 }
+  }
+};
+
+// client-facing subset (visuals only) so the renderer can draw each archetype
+const BOSS_DEFS = Object.fromEntries(Object.entries(BOSS_TYPES).map(
+  ([k, d]) => [k, { id: k, name: d.name, color: d.color, accent: d.accent, shape: d.shape, radius: d.radius, desc: d.desc }]
+));
 
 // ---- static cover / obstacles ---------------------------------------------
 const OBSTACLES = { count: 18, minR: 34, maxR: 72, margin: 200, gap: 120 };
@@ -119,5 +215,5 @@ const KILL = { multiWindowMs: 10000 };   // consecutive kills within this window
 
 module.exports = {
   WORLD, TICK_RATE, BROADCAST_RATE,
-  CLASSES, ITEM_TYPES, ITEM_WEIGHTS, SHOP, BALANCE, BOSS_NAMES, OBSTACLES, DROP, KILL
+  CLASSES, ITEM_TYPES, ITEM_WEIGHTS, SHOP, BALANCE, BOSS_TYPES, BOSS_DEFS, OBSTACLES, DROP, KILL
 };

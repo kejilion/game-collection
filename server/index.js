@@ -11,7 +11,7 @@ const { WebSocketServer } = require('ws');
 
 const { World } = require('./world');
 const leaderboard = require('./leaderboard');
-const { WORLD, TICK_RATE, BROADCAST_RATE, CLASSES, ITEM_TYPES, SHOP } = require('./config');
+const { WORLD, TICK_RATE, BROADCAST_RATE, CLASSES, ITEM_TYPES, SHOP, BOSS_DEFS } = require('./config');
 
 const PORT = process.env.PORT || 3000;
 const BACKPRESSURE_BYTES = 256 * 1024;   // skip a client's state frame while its send buffer is backed up
@@ -57,7 +57,7 @@ wss.on('connection', (ws) => {
   ws.on('error', () => {});          // ignore abrupt-disconnect errors (would otherwise crash the process)
 
   // send static definitions right away so the menu can render class cards
-  send(ws, { type: 'defs', classes: CLASSES, items: ITEM_TYPES, shop: SHOP });
+  send(ws, { type: 'defs', classes: CLASSES, items: ITEM_TYPES, shop: SHOP, bosses: BOSS_DEFS });
 
   ws.on('message', (raw) => {
     let m; try { m = JSON.parse(raw); } catch (e) { return; }
@@ -74,7 +74,7 @@ wss.on('connection', (ws) => {
         sockets.set(ws, p.id);
         send(ws, {
           type: 'welcome', id: p.id, world: WORLD,
-          classes: CLASSES, items: ITEM_TYPES, shop: SHOP,
+          classes: CLASSES, items: ITEM_TYPES, shop: SHOP, bosses: BOSS_DEFS,
           obstacles: world.getObstacles(), tickRate: TICK_RATE
         });
         broadcast({ type: 'sys', text: `${name} 加入了大乱斗！`, color: p.cls.color });
