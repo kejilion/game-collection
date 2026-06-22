@@ -19,7 +19,7 @@ const CLASSES = {
     attackType: 'melee_aoe', attackRange: 130, attackArc: Math.PI * 0.95,
     // skill[0] is the level-1 signature; skill[1] unlocks at reqLevel (a mid-early power spike).
     skills: [
-      { id: 'whirlwind', name: '旋风斩', reqLevel: 1, cd: 6000, mult: 1.9, radius: 155,
+      { id: 'whirlwind', name: '旋风斩', reqLevel: 1, cd: 6000, mult: 1.9, radius: 220,
         desc: '横扫周身敌人，造成大量范围伤害' },
       // identity gap: the tank has no defensive cooldown. War Cry = instant survive button.
       { id: 'warcry', name: '铁壁战吼', reqLevel: 3, cd: 14000, mult: 1.3, radius: 150,
