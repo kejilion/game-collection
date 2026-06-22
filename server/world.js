@@ -49,6 +49,7 @@ class Player {
     this.moving = false; this.dead = false; this.respawnAt = 0;
     this.attackReadyAt = 0; this.skillReadyAt = {};
     this.buffs = {};               // type -> expiresAt
+    this.slowUntil = 0; this.slowMul = 1;   // movement debuff (e.g. 霜雪新星); 1 = no slow
     this.lastHitBy = null; this.lastHitAt = 0;
     this.chat = null;              // { text, until }
     this.chatReadyAt = 0;          // server-side chat throttle (anti-spam)
@@ -62,7 +63,10 @@ class Player {
   hasBuff(t, t2) { return this.buffs[t] && this.buffs[t] > t2; }
 
   effMaxHp() { return this.cls.maxHp + (this.level - 1) * BALANCE.hp.perLevel; }
-  effSpeed(t) { return this.cls.speed * (this.hasBuff('speed', t) ? BALANCE.buff.speedMul : 1); }
+  effSpeed(t) {
+    const slow = this.slowUntil > t ? this.slowMul : 1;
+    return this.cls.speed * (this.hasBuff('speed', t) ? BALANCE.buff.speedMul : 1) * slow;
+  }
   effAttack(t) {
     const a = this.cls.attack + (this.level - 1) * BALANCE.attackPerLevel;
     return a * (this.hasBuff('power', t) ? BALANCE.buff.powerMul : 1);
@@ -91,6 +95,7 @@ class Boss {
     this.charge = null;        // active line-charge state machine, when set
     this.enraged = false;      // latched once HP drops past traits.enrageAt
     this.spin = 0;             // running angle for the spiral barrage
+    this.slowUntil = 0; this.slowMul = 1;   // movement debuff (heroes can chill a boss)
     this.lastHitBy = null;
   }
 }
@@ -268,6 +273,7 @@ class World {
     const t = now();
     if (target.kind === 'player') {
       if (target.dead || target.spawnProtectUntil > t) return;
+      if (target.hasBuff('guard', t)) amount *= BALANCE.skill.guardMul;   // 铁壁战吼 减伤
     }
     amount = Math.max(1, Math.round(amount));
     target.hp -= amount;
@@ -403,7 +409,8 @@ class World {
     const t = now();
     if (!p || p.dead) return;
     const skill = p.cls.skills[slot];
-    if (!skill) return;                                  // slot not yet unlocked
+    if (!skill) return;                                  // empty slot (reserved for a future skill)
+    if (p.level < (skill.reqLevel || 1)) return;         // unlocks with level — see reqLevel in config
     if ((p.skillReadyAt[skill.id] || 0) > t) return;
     p.skillReadyAt[skill.id] = t + skill.cd;
     const crit = true;
@@ -442,7 +449,58 @@ class World {
       p.x = nx; p.y = ny;
       this.resolveObstacles(p, 22);
       this.pushFx({ t: 'dash', x1: sx, y1: sy, x2: nx, y2: ny, color: p.cls.color });
+    } else if (skill.id === 'warcry') {
+      // WARRIOR defensive cooldown: heal, brace (incoming-damage cut via the `guard` buff),
+      // and a rallying shock that staggers everyone around the frontline.
+      p.hp = Math.min(p.effMaxHp(), p.hp + p.effMaxHp() * skill.heal);
+      p.buffs.guard = Math.max(p.buffs.guard || 0, t + skill.guardMs);
+      for (const e of this.enemiesOfPlayer(p)) {
+        if (dist2(p.x, p.y, e.x, e.y) <= (skill.radius + this.radiusOf(e)) ** 2)
+          this.damageEntity(e, base, p, { crit: false });
+      }
+      this.pushFx({ t: 'warcry', x: p.x, y: p.y, radius: skill.radius, color: p.cls.color });
+    } else if (skill.id === 'frostnova') {
+      // MAGE control/peel: point-blank burst that chills everyone caught, so the squishy
+      // caster can open distance (or set up a follow-up 火球).
+      for (const e of this.enemiesOfPlayer(p)) {
+        if (dist2(p.x, p.y, e.x, e.y) <= (skill.radius + this.radiusOf(e)) ** 2) {
+          this.damageEntity(e, base, p, { crit: false });
+          this.applySlow(e, skill.slowMs, skill.slowMul);
+        }
+      }
+      this.pushFx({ t: 'frost', x: p.x, y: p.y, radius: skill.radius, color: '#7fd8ff' });
+    } else if (skill.id === 'shadowveil') {
+      // ASSASSIN disengage: blink the way you're HOLDING (the opposite of 影袭's auto-engage),
+      // leave a parting smoke hit, and vanish + sprint away. Falls back to fleeing the nearest
+      // threat when standing still.
+      let dx = (p.input.right ? 1 : 0) - (p.input.left ? 1 : 0);
+      let dy = (p.input.down ? 1 : 0) - (p.input.up ? 1 : 0);
+      if (!dx && !dy) {
+        const near = this.nearestEnemy(p, 600);
+        if (near) { const a = Math.atan2(p.y - near.y, p.x - near.x); dx = Math.cos(a); dy = Math.sin(a); }
+        else { dx = Math.cos(p.facing); dy = Math.sin(p.facing); }
+      }
+      const len = Math.hypot(dx, dy) || 1; dx /= len; dy /= len;
+      const sx = p.x, sy = p.y;
+      for (const e of this.enemiesOfPlayer(p)) {                 // parting smoke at the origin
+        if (dist2(sx, sy, e.x, e.y) <= (skill.radius + this.radiusOf(e)) ** 2)
+          this.damageEntity(e, base, p, { crit: false });
+      }
+      p.x = clamp(p.x + dx * skill.dash, 30, WORLD.width - 30);
+      p.y = clamp(p.y + dy * skill.dash, 30, WORLD.height - 30);
+      this.resolveObstacles(p, 22);
+      p.facing = Math.atan2(dy, dx);
+      p.buffs.invis = Math.max(p.buffs.invis || 0, t + skill.stealthMs);   // real stealth (AoI hides you)
+      p.buffs.speed = Math.max(p.buffs.speed || 0, t + skill.hasteMs);     // getaway sprint
+      this.pushFx({ t: 'veil', x1: sx, y1: sy, x2: p.x, y2: p.y, color: p.cls.color });
     }
+  }
+
+  // apply / refresh a movement slow on any entity (player or boss); keeps the stronger slow
+  applySlow(e, durMs, mul) {
+    const t = now();
+    e.slowMul = e.slowUntil > t ? Math.min(e.slowMul, mul) : mul;
+    e.slowUntil = t + durMs;
   }
 
   pointSegDist2(px, py, ax, ay, bx, by) {
@@ -664,8 +722,9 @@ class World {
 
     b.facing = Math.atan2(tgt.y - b.y, tgt.x - b.x);
     if (dist2(b.x, b.y, tgt.x, tgt.y) > def.contactRange * def.contactRange) {
-      b.x += Math.cos(b.facing) * def.speed * moveMul * dt;
-      b.y += Math.sin(b.facing) * def.speed * moveMul * dt;
+      const slow = b.slowUntil > t ? b.slowMul : 1;
+      b.x += Math.cos(b.facing) * def.speed * moveMul * slow * dt;
+      b.y += Math.sin(b.facing) * def.speed * moveMul * slow * dt;
       this.resolveObstacles(b, b.r);
     } else if (t >= b.attackReadyAt) {
       b.attackReadyAt = t + def.contactMs;

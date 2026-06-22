@@ -17,9 +17,14 @@ const CLASSES = {
     maxHp: 200, speed: 158, attack: 21, defense: 7,
     attackCd: 620, critChance: 0.06, critMult: 1.6,
     attackType: 'melee_aoe', attackRange: 130, attackArc: Math.PI * 0.95,
+    // skill[0] is the level-1 signature; skill[1] unlocks at reqLevel (a mid-early power spike).
     skills: [
-      { id: 'whirlwind', name: '旋风斩', cd: 6000, mult: 1.9, radius: 155,
-        desc: '横扫周身敌人，造成大量范围伤害' }
+      { id: 'whirlwind', name: '旋风斩', reqLevel: 1, cd: 6000, mult: 1.9, radius: 155,
+        desc: '横扫周身敌人，造成大量范围伤害' },
+      // identity gap: the tank has no defensive cooldown. War Cry = instant survive button.
+      { id: 'warcry', name: '铁壁战吼', reqLevel: 3, cd: 14000, mult: 1.3, radius: 150,
+        heal: 0.18, guardMs: 4000,
+        desc: '怒吼回血、进入铁壁姿态（持续减伤），并震退周身敌人' }
     ],
     desc: '范围近战 · 血厚耐打，旋风斩横扫四方'
   },
@@ -29,8 +34,12 @@ const CLASSES = {
     attackCd: 520, critChance: 0.08, critMult: 1.75,
     attackType: 'projectile', attackRange: 640, projSpeed: 470, projRadius: 9,
     skills: [
-      { id: 'fireball', name: '火球术', cd: 5200, mult: 2.25, radius: 115,
-        projSpeed: 360, projRadius: 16, desc: '发射爆炸火球，命中后范围炸裂' }
+      { id: 'fireball', name: '火球术', reqLevel: 1, cd: 5200, mult: 2.25, radius: 115,
+        projSpeed: 360, projRadius: 16, desc: '发射爆炸火球，命中后范围炸裂' },
+      // identity gap: the glass cannon dies when chased down. Frost Nova = panic peel + setup control.
+      { id: 'frostnova', name: '霜雪新星', reqLevel: 3, cd: 9000, mult: 1.6, radius: 150,
+        slowMs: 2500, slowMul: 0.5,
+        desc: '冻结周身：范围伤害并大幅减速敌人，拉开身位或接火球' }
     ],
     desc: '远程法术 · 脆皮高爆发，火球术范围秒杀'
   },
@@ -40,8 +49,12 @@ const CLASSES = {
     attackCd: 420, critChance: 0.5, critMult: 2.2,
     attackType: 'melee_single', attackRange: 82,
     skills: [
-      { id: 'shadowstrike', name: '影袭', cd: 7000, mult: 2.4, dash: 230, radius: 64,
-        desc: '瞬步突袭，穿越敌人并必定暴击' }
+      { id: 'shadowstrike', name: '影袭', reqLevel: 1, cd: 7000, mult: 2.4, dash: 230, radius: 64,
+        desc: '瞬步突袭，穿越敌人并必定暴击' },
+      // identity gap: can engage (影袭) but can't disengage. 影遁 = the escape, opposite direction.
+      { id: 'shadowveil', name: '影遁', reqLevel: 3, cd: 11000, mult: 1.2, radius: 90, dash: 210,
+        stealthMs: 3000, hasteMs: 2600,
+        desc: '朝移动方向瞬遁并隐身疾走，留烟反伤——脱战或换位' }
     ],
     desc: '高暴击近战 · 移速极快，影袭瞬步斩杀'
   }
@@ -91,6 +104,8 @@ const BALANCE = {
   merchantRange: 135,
   xp: { perDamage: 0.22, killBase: 40, killPerLevel: 12, bossKill: 430, expPotion: 75 },
   hp: { perLevel: 22 }, attackPerLevel: 3, defensePerLevel: 1,
+  // skill knobs: warrior 铁壁战吼 incoming-damage multiplier while braced (lower = tankier)
+  skill: { guardMul: 0.55 },
   goldChest: [30, 130], killBounty: [18, 40],
   // Boss spawn cadence only. Each archetype's stats / abilities / rewards live in
   // BOSS_TYPES below; bounty & xp are per-type (a tougher boss is worth more).

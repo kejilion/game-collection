@@ -47,6 +47,26 @@ const Renderer = (() => {
       case 'cast': for (let i = 0; i < (e.big ? 16 : 8); i++) burst(e.x, e.y, '#7fb0ff', 1, 2); break;
       case 'explosion': rings.push({ x: e.x, y: e.y, r: 8, max: e.radius, life: 0.45, color: '#ff8a3d', fill: true }); burst(e.x, e.y, '#ffb347', 26, 4); shake = Math.max(shake, 9); break;
       case 'whirlwind': rings.push({ x: e.x, y: e.y, r: 8, max: e.radius, life: 0.5, color: e.color }); for (let i = 0; i < 22; i++) burst(e.x, e.y, e.color, 1, 4); shake = Math.max(shake, 6); break;
+      // warrior 铁壁战吼: golden brace ring + a shield bloom + rising green heal motes
+      case 'warcry':
+        rings.push({ x: e.x, y: e.y, r: 10, max: e.radius, life: 0.5, color: '#ffd766', fill: true });
+        rings.push({ x: e.x, y: e.y, r: 6, max: 52, life: 0.55, color: '#ffe9a8' });
+        for (let i = 0; i < 16; i++) burst(e.x, e.y, '#ffd766', 1, 3);
+        for (let i = 0; i < 10; i++) { const a = Math.random() * Math.PI * 2; particles.push({ x: e.x + Math.cos(a) * 22, y: e.y + Math.sin(a) * 22, vx: 0, vy: -60 - Math.random() * 50, life: 0.6, max: 0.8, color: '#8ef0a8', r: 2.6 }); }
+        shake = Math.max(shake, 7); break;
+      // mage 霜雪新星: icy fill ring + inner frost ring + cyan/white shards
+      case 'frost':
+        rings.push({ x: e.x, y: e.y, r: 10, max: e.radius, life: 0.5, color: e.color || '#7fd8ff', fill: true });
+        rings.push({ x: e.x, y: e.y, r: 8, max: e.radius * 0.7, life: 0.45, color: '#dff4ff' });
+        for (let i = 0; i < 22; i++) burst(e.x, e.y, i % 2 ? '#bfeaff' : '#7fd8ff', 1, 3.4);
+        shake = Math.max(shake, 6); break;
+      // assassin 影遁: smoke puff + fading dash trail + an implosion ring at the landing spot
+      case 'veil':
+        dashes.push({ x1: e.x1, y1: e.y1, x2: e.x2, y2: e.y2, color: hexA(e.color || '#a368ff', 0.6), life: 0.3, max: 0.3 });
+        rings.push({ x: e.x1, y: e.y1, r: 6, max: 56, life: 0.4, color: '#9aa3b2' });
+        for (let i = 0; i < 16; i++) burst(e.x1, e.y1, i % 2 ? '#b6a0d8' : '#7c7c8a', 1, 3);
+        rings.push({ x: e.x2, y: e.y2, r: 30, max: 6, life: 0.3, color: e.color || '#a368ff' });
+        break;
       case 'slam': rings.push({ x: e.x, y: e.y, r: 10, max: e.radius, life: 0.55, color: '#ff4d4d', fill: true }); shake = Math.max(shake, 10); break;
       // generic boss ring AOE (slam / charge-nova / drain pulse), tinted by archetype
       case 'shock': {

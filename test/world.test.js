@@ -127,6 +127,52 @@ test('a dead player respawns at full hp after the delay', () => {
   assert.equal(b.hp, b.effMaxHp(), 'respawned at full hp');
 });
 
+// ---- skills: level-gated unlock + the per-class second skill ---------------
+test('skill 2 is gated behind its required level', () => {
+  const { w, a, b } = duel('mage', 'warrior');
+  a.x = 500; a.y = 500; b.x = 560; b.y = 500;
+  const hp0 = b.hp;
+  a.level = 1;
+  w.doSkill(a, 1);                              // 霜雪新星 needs Lv.3 — blocked while under-leveled
+  assert.equal(b.hp, hp0, 'locked skill does nothing below its required level');
+  a.level = 3;
+  w.doSkill(a, 1);                              // now unlocked
+  assert.ok(b.hp < hp0, 'skill fires once the level requirement is met');
+});
+
+test('frost nova (mage skill 2) damages and slows enemies in range', () => {
+  const { w, a, b } = duel('mage', 'warrior');
+  a.x = 500; a.y = 500; b.x = 560; b.y = 500; a.level = 3;
+  const full = b.effSpeed(Date.now());
+  const hp0 = b.hp;
+  w.doSkill(a, 1);
+  assert.ok(b.hp < hp0, 'nova dealt damage');
+  assert.ok(b.slowUntil > Date.now(), 'enemy is chilled');
+  assert.ok(b.effSpeed(Date.now()) < full, 'slowed move speed is lower than normal');
+});
+
+test('war cry (warrior skill 2) heals and braces against incoming damage', () => {
+  const { w, a, b } = duel('warrior', 'warrior');
+  a.x = 500; a.y = 500; b.x = 560; b.y = 500;
+  a.level = 3; a.hp = 60; a.spawnProtectUntil = 0;
+  w.doSkill(a, 1);
+  assert.ok(a.hp > 60, 'war cry restored health');
+  assert.ok(a.hasBuff('guard', Date.now()), 'brace (guard) buff is active');
+  const before = a.hp;
+  w.damageEntity(a, 100, b);
+  assert.ok(before - a.hp < 100, 'guard reduced the hit below its raw amount');
+});
+
+test('shadow veil (assassin skill 2) blinks the held direction and cloaks', () => {
+  const { w, a, b } = duel('assassin', 'warrior');
+  a.x = 500; a.y = 500; b.x = 560; b.y = 500; a.level = 3;
+  a.input = { up: false, down: false, left: true, right: false };   // flee left
+  const x0 = a.x;
+  w.doSkill(a, 1);
+  assert.ok(a.x < x0, 'dashed in the held (left) direction');
+  assert.ok(a.hasBuff('invis', Date.now()), 'cloaked while escaping');
+});
+
 // ---- shop ------------------------------------------------------------------
 test('buy() validates merchant proximity and gold', () => {
   const w = new World();

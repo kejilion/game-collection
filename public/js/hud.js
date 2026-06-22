@@ -6,6 +6,7 @@ const HUD = (() => {
   let $ = {};
   let CLASSES = {}, ITEMS = {}, SHOP = [];
   let selfCls = 'warrior';
+  let selfLevel = 1;              // tracked so the bar can relight a skill the moment it unlocks
   const cd = {};                  // slot key -> { until, total }
   let toastN = 0;
 
@@ -59,19 +60,28 @@ const HUD = (() => {
   }
 
   // ---- skillbar -----------------------------------------------------------
-  function buildSkillbar(clsId) {
-    selfCls = clsId;
+  // `level` decides lock state: a skill below its reqLevel renders locked but shows the
+  // level it unlocks at (so the player knows what's coming and when). Called again on
+  // level-up to relight a freshly unlocked slot without wiping in-flight cooldowns.
+  function buildSkillbar(clsId, level = 1) {
+    const clsChanged = clsId !== selfCls;
+    selfCls = clsId; selfLevel = level;
     const cls = CLASSES[clsId];
-    for (const k in cd) delete cd[k];
+    if (clsChanged) for (const k in cd) delete cd[k];   // only reset cooldowns when the class actually changes
     let html = `<div class="skill attack" data-k="A"><span class="key">A</span><span class="ic">⚔</span><span class="nm">攻击</span></div>`;
     for (let i = 0; i < 5; i++) {
       const sk = cls.skills[i];
-      if (sk) html += `<div class="skill ready" data-k="${i}"><span class="key">${i + 1}</span><span class="ic">${skillIcon(sk.id)}</span><span class="nm">${sk.name}</span></div>`;
-      else html += `<div class="skill locked"><span class="key">${i + 1}</span><span class="ic">🔒</span><span class="nm">待解锁</span></div>`;
+      if (!sk) {                                         // empty slot reserved for a future skill
+        html += `<div class="skill locked"><span class="key">${i + 1}</span><span class="ic">🔒</span><span class="nm">待解锁</span></div>`;
+      } else if (level < (sk.reqLevel || 1)) {           // exists but not yet unlocked — show the requirement
+        html += `<div class="skill locked" data-k="${i}"><span class="key">${i + 1}</span><span class="ic">${skillIcon(sk.id)}</span><span class="nm">Lv.${sk.reqLevel}</span></div>`;
+      } else {
+        html += `<div class="skill ready" data-k="${i}"><span class="key">${i + 1}</span><span class="ic">${skillIcon(sk.id)}</span><span class="nm">${sk.name}</span></div>`;
+      }
     }
     $.skillbar.innerHTML = html;
   }
-  function skillIcon(idv) { return ({ whirlwind: '🌀', fireball: '🔥', shadowstrike: '💨' })[idv] || '✦'; }
+  function skillIcon(idv) { return ({ whirlwind: '🌀', fireball: '🔥', shadowstrike: '💨', warcry: '🛡', frostnova: '❄', shadowveil: '🌫' })[idv] || '✦'; }
 
   function triggerCd(key, total) { cd[key] = { until: performance.now() + total, total }; }
 
@@ -93,6 +103,7 @@ const HUD = (() => {
   // ---- player panel -------------------------------------------------------
   function updatePlayer(p) {
     const cls = CLASSES[p.cls];
+    if (p.level !== selfLevel) buildSkillbar(p.cls, p.level);   // relight any skill that just unlocked
     $.ppClass.textContent = cls.name; $.ppClass.style.background = cls.color;
     $.ppName.textContent = p.name; $.ppLevel.textContent = 'Lv.' + p.level;
     $.ppHp.style.width = Math.max(0, (p.hp / p.maxHp) * 100) + '%';

@@ -120,7 +120,11 @@
         const bd = G.defs.bosses && G.defs.bosses[fx.type];
         HUD.toast(`BOSS ${fx.name} 降临！${bd ? ' · ' + bd.desc : ''}`, fx.color || '#ff6a6a');
       }
-      else if (fx.t === 'levelup' && fx.id === G.selfId) HUD.toast(`升级！ Lv.${fx.level}`, '#6ee7a0');
+      else if (fx.t === 'levelup' && fx.id === G.selfId) {
+        HUD.toast(`升级！ Lv.${fx.level}`, '#6ee7a0');
+        const cls = G.defs.classes[G.lastSelf ? G.lastSelf.cls : G.selectedClass];
+        if (cls) cls.skills.forEach((sk, i) => { if (sk && sk.reqLevel === fx.level) HUD.toast(`🔓 解锁技能「${sk.name}」· 按 ${i + 1}`, '#ffd23f'); });
+      }
       else if (fx.t === 'pickup' && fx.id === G.selfId) {
         const d = G.defs.items[fx.type];
         if (d) HUD.toast(`获得 ${d.name} · ${d.desc}`, d.color);
@@ -249,6 +253,8 @@
         const cls = G.defs.classes[G.lastSelf ? G.lastSelf.cls : G.selectedClass];
         const sk = cls && cls.skills[slot];
         if (!sk) return;
+        const lvl = G.lastSelf ? G.lastSelf.level : 1;
+        if (lvl < (sk.reqLevel || 1)) { HUD.toast(`「${sk.name}」需 Lv.${sk.reqLevel} 解锁`, '#ffd23f'); return; }
         Net.send({ type: 'skill', slot }); HUD.triggerCd(String(slot), sk.cd);
       },
       toggleShop: toggleShopUI,
