@@ -40,6 +40,18 @@ npm start
 
 ---
 
+## 🧪 测试
+
+权威服务端模拟（`server/world.js`）带一套**零依赖**单元测试（Node 内置 `node:test`）：
+
+```bash
+npm test
+```
+
+覆盖：战斗结算 / 出生保护 / 攻击冷却 / 升级回血 / 道具效果 / 死亡掉落与复活 / 商店校验 / AoI 视野裁剪与隐身反作弊 / 排行榜排序。
+
+---
+
 ## 🎮 操作说明
 
 | 按键 | 作用 |
@@ -126,6 +138,8 @@ server {
 │       ├── render.js   # Canvas 卡通渲染、特效、小地图
 │       ├── hud.js      # DOM 界面（面板 / 技能栏 / 排行 / 聊天 / 商店）
 │       └── main.js     # 编排、快照插值、客户端预测
+├── test/
+│   └── world.test.js   # 权威模拟单元测试（node --test，零依赖）
 ├── Dockerfile
 ├── docker-compose.yml
 └── README.md
@@ -143,5 +157,7 @@ server {
 
 ## 📡 网络协议（简表）
 
-客户端 → 服务器：`join` / `input` / `attack` / `skill` / `chat` / `buy` / `leave` / `ping`
-服务器 → 客户端：`welcome` / `state`（含 `fx` 特效事件）/ `leaderboard` / `chat` / `sys` / `shopResult` / `pong`
+客户端 → 服务器：`join` / `input` / `attack` / `skill` / `chat` / `buy` / `leave` / `ping` / `view`（视口尺寸，用于 AoI 裁剪）
+服务器 → 客户端：`defs` / `welcome` / `state`（按视野裁剪，含 `fx` 特效）/ `overview`（全图小地图光点，低频）/ `leaderboard` / `chat` / `sys` / `shopResult` / `pong`
+
+> **AoI（视野裁剪）**：每个广播帧只构建一次全量快照，再按各客户端视口切片下发，带宽随视口而非总人数增长。隐身玩家的精确坐标在服务端即被剔除（自己与持有「洞察之眼」者除外），改前端也无法透视。小地图另由低频 `overview` 通道覆盖全图。

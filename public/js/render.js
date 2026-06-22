@@ -433,17 +433,22 @@ const Renderer = (() => {
     const sxk = MW / W.width, syk = MH / W.height;
     mmx.clearRect(0, 0, MW, MH);
     mmx.fillStyle = 'rgba(10,16,40,.9)'; mmx.fillRect(0, 0, MW, MH);
+    // prefer the global overview (whole map); fall back to the local AoI view until it arrives
+    const ov = (view.overview && view.overview.players && view.overview.players.length)
+      ? view.overview
+      : { players: view.players, bosses: view.bosses, merchants: view.merchants, items: view.items };
     // obstacles
     mmx.fillStyle = 'rgba(150,160,180,.5)';
     for (const o of obstacles) { mmx.beginPath(); mmx.arc(o.x * sxk, o.y * syk, Math.max(1.5, o.r * sxk), 0, 7); mmx.fill(); }
     // items
-    for (const it of view.items) { const d = ITEMS[it.type]; mmx.fillStyle = hexA(d ? d.color : '#fff', .5); mmx.fillRect(it.x * sxk - 1, it.y * syk - 1, 2, 2); }
+    for (const it of ov.items) { const d = ITEMS[it.type]; mmx.fillStyle = hexA(d ? d.color : '#fff', .5); mmx.fillRect(it.x * sxk - 1, it.y * syk - 1, 2, 2); }
     // merchants
-    mmx.fillStyle = '#ffd23f'; for (const m of view.merchants) { mmx.beginPath(); mmx.arc(m.x * sxk, m.y * syk, 3, 0, 7); mmx.fill(); }
+    mmx.fillStyle = '#ffd23f'; for (const m of ov.merchants) { mmx.beginPath(); mmx.arc(m.x * sxk, m.y * syk, 3, 0, 7); mmx.fill(); }
     // boss
-    mmx.fillStyle = '#ff3d3d'; for (const b of view.bosses) { mmx.beginPath(); mmx.arc(b.x * sxk, b.y * syk, 4, 0, 7); mmx.fill(); }
-    // players
-    for (const p of view.players) {
+    mmx.fillStyle = '#ff3d3d'; for (const b of ov.bosses) { mmx.beginPath(); mmx.arc(b.x * sxk, b.y * syk, 4, 0, 7); mmx.fill(); }
+    // players (hide invisible enemies unless we have reveal — matches the main view)
+    for (const p of ov.players) {
+      if (p.invis && !view.hasReveal && p.id !== view.selfId) continue;
       const cls = CLASSES[p.cls] || { color: '#fff' };
       mmx.fillStyle = p.id === view.selfId ? '#9be7ff' : cls.color;
       mmx.beginPath(); mmx.arc(p.x * sxk, p.y * syk, p.id === view.selfId ? 4 : 3, 0, 7); mmx.fill();

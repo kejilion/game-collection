@@ -14,6 +14,19 @@ const leaderboard = require('./leaderboard');
 const { WORLD, TICK_RATE, BROADCAST_RATE, CLASSES, ITEM_TYPES, SHOP } = require('./config');
 
 const PORT = process.env.PORT || 3000;
+const BACKPRESSURE_BYTES = 256 * 1024;   // skip a client's state frame while its send buffer is backed up
+const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
+
+// The client renders a 1:1 (no-zoom) camera, so it only ever sees a vw×vh slice
+// of the world. Mirror that camera here and pad it so the server streams a client
+// exactly what it can see (+ a margin so things appear before reaching the edge).
+function viewRect(p, view) {
+  const vw = (view && view.w) || 1280, vh = (view && view.h) || 720;
+  const camX = clamp(p.x - vw / 2, 0, Math.max(0, WORLD.width - vw));
+  const camY = clamp(p.y - vh / 2, 0, Math.max(0, WORLD.height - vh));
+  const M = 280;
+  return { x0: camX - M, y0: camY - M, x1: camX + vw + M, y1: camY + vh + M };
+}
 
 const app = express();
 app.use(express.static(path.join(__dirname, '..', 'public')));
@@ -39,6 +52,7 @@ function broadcast(obj) {
 // ---- connection handling ---------------------------------------------------
 wss.on('connection', (ws) => {
   ws.isAlive = true;
+  ws.view = { w: 1280, h: 720 };       // updated by the client's 'view' message; sane default until then
   ws.on('pong', () => { ws.isAlive = true; });
   ws.on('error', () => {});          // ignore abrupt-disconnect errors (would otherwise crash the process)
 
@@ -58,7 +72,6 @@ wss.on('connection', (ws) => {
         if (!name) name = '无名英雄';
         const p = world.addPlayer(name, clsId);
         sockets.set(ws, p.id);
-        world.itemsDirty = true;                 // ensure this joiner's first post-join state contains the item snapshot
         send(ws, {
           type: 'welcome', id: p.id, world: WORLD,
           classes: CLASSES, items: ITEM_TYPES, shop: SHOP,
@@ -72,6 +85,9 @@ wss.on('connection', (ws) => {
       case 'skill': if (player && typeof m.slot === 'number') world.doSkill(player, m.slot); break;
       case 'chat':
         if (player && typeof m.text === 'string' && m.text.trim()) {
+          const t = Date.now();
+          if (t < player.chatReadyAt) break;             // throttle: drop messages sent too fast
+          player.chatReadyAt = t + 700;
           world.setChat(player, m.text);
           broadcast({ type: 'chat', name: player.name, text: String(m.text).trim().slice(0, 80), color: player.cls.color });
         }
@@ -82,6 +98,10 @@ wss.on('connection', (ws) => {
         break;
       }
       case 'ping': send(ws, { type: 'pong', t: m.t }); break;
+      case 'view':                                       // client viewport size, for area-of-interest culling
+        if (typeof m.w === 'number' && typeof m.h === 'number')
+          ws.view = { w: clamp(m.w | 0, 320, 4096), h: clamp(m.h | 0, 240, 4096) };
+        break;
     }
   });
 
@@ -113,9 +133,22 @@ setInterval(() => {
 }, Math.round(1000 / TICK_RATE));
 
 setInterval(() => {
-  if (wss.clients.size === 0) { world.fx.length = 0; return; }  // nobody listening
-  broadcast({ type: 'state', ...world.serialize() });
+  if (sockets.size === 0) { world.fx.length = 0; return; }      // nobody in-world; drop transient fx
+  world.prepareSnapshot();                                      // build the full snapshot once...
+  for (const [ws, pid] of sockets) {                            // ...then send each player only its slice
+    if (ws.readyState !== ws.OPEN) continue;
+    if (ws.bufferedAmount > BACKPRESSURE_BYTES) continue;       // client can't keep up — skip this frame
+    const p = world.players.get(pid);
+    if (!p) continue;
+    send(ws, { type: 'state', ...world.viewFor(viewRect(p, ws.view), p) });
+  }
 }, Math.round(1000 / BROADCAST_RATE));
+
+// low-rate global blips so the minimap shows the whole map even with AoI culling
+setInterval(() => {
+  if (wss.clients.size === 0) return;
+  broadcast({ type: 'overview', ...world.overview() });
+}, 200);
 
 setInterval(() => {
   broadcast({ type: 'leaderboard', realtime: world.realtimeLeaderboard(8), historical: leaderboard.top(8) });

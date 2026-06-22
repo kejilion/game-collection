@@ -25,6 +25,11 @@ function weightedPick(weights) {
   return Object.keys(weights)[0];
 }
 
+// fx that are global announcements (kill feed / boss kill) must reach every
+// client regardless of where it happened; all other fx are positional and only
+// sent to clients whose view contains them.
+const GLOBAL_FX = new Set(['killfeed', 'bossKill']);
+
 // ===========================================================================
 //  Entities
 // ===========================================================================
@@ -46,6 +51,7 @@ class Player {
     this.buffs = {};               // type -> expiresAt
     this.lastHitBy = null; this.lastHitAt = 0;
     this.chat = null;              // { text, until }
+    this.chatReadyAt = 0;          // server-side chat throttle (anti-spam)
     this.spawnProtectUntil = 0;
     this.online = true;
     this.killStreak = 0;          // consecutive kills without dying (连杀)
@@ -119,8 +125,6 @@ class World {
     this.obstacles = [];          // static cover; sent to clients once on join
     this.itemSpawnAt = 0;
     this.bossRespawnAt = 0;
-    this.itemsDirty = true;       // only broadcast the item list when it changes
-    this.itemsHeartbeatAt = 0;
     this.firstBlood = false;      // 一血 announced once per server lifetime
     this.genObstacles();
     for (let i = 0; i < BALANCE.merchantCount; i++) {
@@ -199,7 +203,6 @@ class World {
   addItem(type, x, y) {
     const it = new Item(type, clamp(x, 36, WORLD.width - 36), clamp(y, 36, WORLD.height - 36));
     this.items.set(it.id, it);
-    this.itemsDirty = true;
     return it;
   }
   spawnItem() {
@@ -563,15 +566,13 @@ class World {
 
     // item spawning
     if (t >= this.itemSpawnAt) { this.spawnItem(); this.itemSpawnAt = t + BALANCE.itemSpawnMs; }
-    // periodically force a full item resync (cheap self-heal for the delta channel)
-    if (t >= this.itemsHeartbeatAt) { this.itemsDirty = true; this.itemsHeartbeatAt = t + 3000; }
 
     // pickups
     for (const p of this.players.values()) {
       if (p.dead) continue;
       for (const it of this.items.values()) {
         if (dist2(p.x, p.y, it.x, it.y) <= BALANCE.pickupRadius ** 2) {
-          this.applyItem(p, it.type); this.items.delete(it.id); this.itemsDirty = true;
+          this.applyItem(p, it.type); this.items.delete(it.id);
         }
       }
     }
@@ -647,7 +648,11 @@ class World {
   }
 
   // ---- serialization ------------------------------------------------------
-  serialize() {
+  // Build the full snapshot ONCE per broadcast tick. Each connected client then
+  // gets its own culled slice via viewFor(), so per-client cost is the JSON of
+  // only what that player can see — bandwidth scales with viewport, not with the
+  // total population. Entities carry numeric x,y so viewFor() can rect-test them.
+  prepareSnapshot() {
     const t = now();
     const r = (n) => Math.round(n);
     const players = [];
@@ -670,18 +675,62 @@ class World {
       bosses.push({ id: b.id, name: b.name, x: r(b.x), y: r(b.y), hp: r(Math.max(0, b.hp)), maxHp: b.maxHp, facing: +b.facing.toFixed(2) });
     const merchants = [];
     for (const m of this.merchants.values()) merchants.push({ id: m.id, name: m.name, x: r(m.x), y: r(m.y), idle: m.state === 'idle' });
-    // items rarely change → only include the list when dirty (saves bandwidth on laggy links)
-    let items;
-    if (this.itemsDirty) {
-      items = [];
-      for (const it of this.items.values()) items.push({ id: it.id, type: it.type, x: r(it.x), y: r(it.y) });
-      this.itemsDirty = false;
-    }
+    const items = [];
+    for (const it of this.items.values()) items.push({ id: it.id, type: it.type, x: r(it.x), y: r(it.y) });
     const projectiles = [];
     for (const pr of this.projectiles.values())
       projectiles.push({ id: pr.id, x: r(pr.x), y: r(pr.y), type: pr.type, r: pr.radius, owner: pr.ownerId });
-    const fx = this.fx; this.fx = [];
-    return { t, players, bosses, merchants, items, projectiles, fx };
+    this._snap = { t, players, bosses, merchants, items, projectiles };
+    this._fx = this.fx; this.fx = [];   // capture fx once; viewFor() culls per client
+    return this._snap;
+  }
+
+  // Slice the prepared snapshot down to one client's view rectangle.
+  // (Linear scan over the snapshot; if profiling ever shows this dominating at
+  // very high player counts, back it with a spatial grid — see P3.)
+  viewFor(rect, viewer) {
+    const s = this._snap, fxAll = this._fx || [];
+    const inR = (e) => e.x >= rect.x0 && e.x <= rect.x1 && e.y >= rect.y0 && e.y <= rect.y1;
+    // Hide invisible rivals at the source (anti-cheat): a culled client never
+    // receives their exact position, so a patched client still can't see them.
+    // You always see yourself, and 洞察之眼/reveal still surfaces hidden players.
+    // (The low-rate minimap overview stays a single broadcast — its faint blip
+    // is filtered client-side, an accepted trade for keeping that one broadcast.)
+    const viewerId = viewer ? viewer.id : null;
+    const revealed = viewer ? viewer.hasBuff('reveal', s.t) : false;
+    const canSee = (p) => inR(p) && (!p.invis || p.id === viewerId || revealed);
+    const fx = [];
+    for (const f of fxAll) {
+      if (GLOBAL_FX.has(f.t) || f.x === undefined) fx.push(f);            // always-deliver announcements
+      else if (f.x >= rect.x0 && f.x <= rect.x1 && f.y >= rect.y0 && f.y <= rect.y1) fx.push(f);
+    }
+    return {
+      t: s.t,
+      players: s.players.filter(canSee),
+      bosses: s.bosses.filter(inR),
+      merchants: s.merchants.filter(inR),
+      items: s.items.filter(inR),
+      projectiles: s.projectiles.filter(inR),
+      fx
+    };
+  }
+
+  // Tiny global blip list for the minimap (all entities, minimal fields). Sent
+  // at a low rate to every client so far-away dots still show on the minimap and
+  // "洞察之眼/reveal" can surface hidden players, without the per-frame detail cost.
+  overview() {
+    const t = now();
+    const r = (n) => Math.round(n);
+    const players = [];
+    for (const p of this.players.values())
+      players.push({ id: p.id, cls: p.clsId, x: r(p.x), y: r(p.y), dead: p.dead, invis: p.hasBuff('invis', t) });
+    const bosses = [];
+    for (const b of this.bosses.values()) bosses.push({ id: b.id, x: r(b.x), y: r(b.y) });
+    const merchants = [];
+    for (const m of this.merchants.values()) merchants.push({ id: m.id, x: r(m.x), y: r(m.y), idle: m.state === 'idle' });
+    const items = [];
+    for (const it of this.items.values()) items.push({ id: it.id, type: it.type, x: r(it.x), y: r(it.y) });
+    return { players, bosses, merchants, items };
   }
 
   realtimeLeaderboard(n = 8) {

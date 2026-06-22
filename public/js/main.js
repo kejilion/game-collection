@@ -10,7 +10,8 @@
     pred: { x: 0, y: 0, ready: false }, lastSelf: null,
     selectedClass: 'warrior', screen: 'menu', nearMerchant: false,
     deadSince: 0, shopOpen: false, settingsOpen: false, merchantHinted: false,
-    obstacles: [], items: [],            // items are delta-synced; keep our own copy
+    obstacles: [], items: [],            // items: nearby set from AoI state; keep our own copy
+    overview: { players: [], bosses: [], merchants: [], items: [] },  // global minimap blips (low-rate)
     interpDelay: 120, gapEMA: 50, lastStateAt: 0,  // adaptive interpolation for jittery links
     shopCloseAt: 0, isTouch: false
   };
@@ -28,6 +29,7 @@
     Net.onClose = () => setConn('与服务器断开，正在重连…', 'bad');
     Net.onMessage = onMessage;
     Net.connect();
+    window.addEventListener('resize', () => { if (G.screen === 'game') scheduleSendView(); });
     requestAnimationFrame(loop);
   });
 
@@ -42,6 +44,7 @@
       case 'defs': onDefs(m); break;
       case 'welcome': onWelcome(m); break;
       case 'state': onState(m); break;
+      case 'overview': G.overview = m; break;
       case 'leaderboard':
         G.leaderboard = { rt: m.realtime, hist: m.historical };
         HUD.updateLeaderboard(m.realtime, m.historical, G.lastSelf ? G.lastSelf.name : '');
@@ -77,6 +80,17 @@
     HUD.buildShop(buy);
     G.pred.ready = false; G.snaps.length = 0; G.items = []; G.deadSince = 0; G.shopCloseAt = 0;
     showScreen('game');
+    sendView();                            // tell the server our viewport so it streams only what we can see
+  }
+
+  // report viewport size to the server for area-of-interest culling
+  let _viewTimer = 0;
+  function scheduleSendView() { clearTimeout(_viewTimer); _viewTimer = setTimeout(sendView, 200); }
+  function sendView() {
+    const cv = document.getElementById('canvas');
+    const w = (cv && cv.clientWidth) || window.innerWidth || 1280;
+    const h = (cv && cv.clientHeight) || window.innerHeight || 720;
+    Net.send({ type: 'view', w, h });
   }
 
   function onState(m) {
@@ -94,7 +108,7 @@
     for (const k of ['players', 'bosses', 'merchants', 'projectiles']) {
       idx[k] = new Map(); for (const e of m[k]) idx[k].set(e.id, e);
     }
-    if (m.items) G.items = m.items;        // only present when the set changed
+    if (m.items) G.items = m.items;        // AoI item set for our current view (sent each state)
     G.snaps.push({ t: recv, data: m, idx });
     while (G.snaps.length > 16) G.snaps.shift();
 
@@ -182,6 +196,8 @@
       const sp = { ...selfLatest, x: G.pred.x, y: G.pred.y };
       view.players.push(sp); view.self = sp;
     } else { view.lastX = G.pred.x; view.lastY = G.pred.y; }
+    view.overview = G.overview;           // global blips for the minimap (whole map, not just AoI slice)
+    view.hasReveal = hasReveal;
     return view;
   }
 
