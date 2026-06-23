@@ -8,6 +8,13 @@ const botPrefix = String(process.env.BOT_PREFIX || '').slice(0, 4);
 const classes = ['warrior', 'mage', 'assassin'];
 const reconnectDelayMs = clampInt(process.env.BOT_RECONNECT_MS, 2500, 500, 30000);
 const view = { w: 1280, h: 720 };
+const playStyles = [
+  { label: 'wanderer', thinkMs: 720, chaseChance: 0.18, lootChance: 0.68, retreatHp: 0.42, attackMs: [2100, 3200], skill0Ms: [21000, 30000], skill1Ms: [36000, 50000], moveMs: [900, 1500], restMs: [1700, 3000] },
+  { label: 'cautious', thinkMs: 650, chaseChance: 0.32, lootChance: 0.55, retreatHp: 0.54, attackMs: [1800, 2800], skill0Ms: [17000, 25000], skill1Ms: [30000, 43000], moveMs: [1000, 1750], restMs: [1300, 2500] },
+  { label: 'skirmisher', thinkMs: 560, chaseChance: 0.52, lootChance: 0.36, retreatHp: 0.36, attackMs: [1350, 2100], skill0Ms: [12500, 18500], skill1Ms: [23000, 34000], moveMs: [1050, 1850], restMs: [900, 1800] },
+  { label: 'scavenger', thinkMs: 700, chaseChance: 0.24, lootChance: 0.82, retreatHp: 0.46, attackMs: [2000, 3100], skill0Ms: [19000, 28000], skill1Ms: [34000, 48000], moveMs: [1100, 1900], restMs: [1200, 2400] },
+  { label: 'brawler', thinkMs: 600, chaseChance: 0.62, lootChance: 0.28, retreatHp: 0.30, attackMs: [1200, 1850], skill0Ms: [10500, 16000], skill1Ms: [20000, 30000], moveMs: [900, 1650], restMs: [900, 1700] }
+];
 const nameStarts = ['雾隐', '碎月', '霜刃', '夜航', '云岚', '逐风', '星尘', '银翼', '青柠', '洛川', '熔岩', '长街', '赤焰', '白昼', '浮光', '墨羽', '远山', '流萤', '晴空', '孤岛'];
 const nameEnds = ['旅者', '团子', '猎手', '小鹿', '骑士', '弓手', '猫咪', '星火', '短刃', '纸鸢', '渡鸦', '行者', '柚子', '飞鱼', '山雀', '影子', '风铃', '夜莺', '松果', '追光'];
 const botNames = makeBotNames(botCount);
@@ -46,14 +53,18 @@ class ArenaBot {
     this.index = index;
     this.name = botNames[index];
     this.cls = classes[index % classes.length];
+    this.style = playStyles[index % playStyles.length];
     this.ws = null;
     this.playerId = null;
     this.self = null;
     this.players = [];
+    this.items = [];
     this.roam = { x: 0, y: 0, until: 0 };
     this.moveUntil = 0;
     this.restUntil = 0;
-    this.chaseDuringMove = false;
+    this.intent = 'roam';
+    this.intentTargetId = null;
+    this.fleeBias = randomRange(-0.55, 0.55);
     this.lastInput = null;
     this.lastAttackAt = 0;
     this.lastSkillAt = [0, 0];
@@ -67,7 +78,7 @@ class ArenaBot {
       this.send({ type: 'join', name: this.name, cls: this.cls });
       this.send({ type: 'view', ...view });
       this.startThinking();
-      console.log(`[bot] ${this.name} connected as ${this.cls}`);
+      console.log(`[bot] ${this.name} connected as ${this.cls} (${this.style.label})`);
     });
     this.ws.on('message', raw => this.onMessage(raw));
     this.ws.on('error', () => {});
@@ -95,12 +106,13 @@ class ArenaBot {
     }
     if (message.type !== 'state' || !this.playerId) return;
     this.players = Array.isArray(message.players) ? message.players : [];
+    this.items = Array.isArray(message.items) ? message.items : [];
     this.self = this.players.find(player => player.id === this.playerId) || null;
   }
 
   startThinking() {
     this.stopThinking();
-    this.thinkTimer = setInterval(() => this.think(), 480 + this.index * 11);
+    this.thinkTimer = setInterval(() => this.think(), this.style.thinkMs + this.index * 11);
   }
 
   stopThinking() {
@@ -115,21 +127,31 @@ class ArenaBot {
     }
 
     const now = Date.now();
-    const target = this.nearestVisibleOpponent();
-    const moving = this.shouldMove(now, target);
+    const visibleTarget = this.nearestVisibleOpponent();
+    const target = this.lockedTarget(visibleTarget);
+    const item = this.nearestVisibleItem();
+    const moving = this.shouldMove(now, target, item, this.healthRatio());
     let moveX = 0;
     let moveY = 0;
 
-    if (moving && target && this.chaseDuringMove) {
+    if (moving && this.intent === 'retreat' && target) {
+      const dx = this.self.x - target.x;
+      const dy = this.self.y - target.y;
+      moveX = dx - dy * this.fleeBias;
+      moveY = dy + dx * this.fleeBias;
+    } else if (moving && this.intent === 'chase' && target) {
       moveX = target.x - this.self.x;
       moveY = target.y - this.self.y;
+    } else if (moving && this.intent === 'loot' && item) {
+      moveX = item.x - this.self.x;
+      moveY = item.y - this.self.y;
     } else if (moving) {
       if (now >= this.roam.until) {
         const angle = randomRange(0, Math.PI * 2);
         this.roam = {
           x: Math.cos(angle),
           y: Math.sin(angle),
-          until: now + randomRange(3200, 6200)
+          until: now + randomRange(3600, 7600)
         };
       }
       moveX = this.roam.x;
@@ -138,27 +160,69 @@ class ArenaBot {
 
     this.sendInput(moving && moveY < -8, moving && moveY > 8, moving && moveX < -8, moving && moveX > 8);
 
-    if (target && now - this.lastAttackAt > randomRange(1250, 1900)) {
+    const targetDistance = target ? this.distanceTo(target) : Infinity;
+    const fighting = target && this.intent !== 'retreat' && targetDistance < 500;
+    if (fighting && now - this.lastAttackAt > randomRange(...this.style.attackMs)) {
       this.send({ type: 'attack' });
       this.lastAttackAt = now;
     }
-    if (target && now - this.lastSkillAt[0] > randomRange(10000, 14000)) {
+    if (fighting && now - this.lastSkillAt[0] > randomRange(...this.style.skill0Ms)) {
       this.send({ type: 'skill', slot: 0 });
       this.lastSkillAt[0] = now;
     }
-    if (target && now - this.lastSkillAt[1] > randomRange(20000, 28000)) {
+    if (fighting && now - this.lastSkillAt[1] > randomRange(...this.style.skill1Ms)) {
       this.send({ type: 'skill', slot: 1 });
       this.lastSkillAt[1] = now;
     }
   }
 
-  shouldMove(now, target) {
+  shouldMove(now, target, item, hpRatio) {
     if (now >= this.restUntil) {
-      this.moveUntil = now + randomRange(850, 1550);
-      this.restUntil = this.moveUntil + randomRange(700, 1500);
-      this.chaseDuringMove = !!target && Math.random() < 0.45;
+      this.moveUntil = now + randomRange(...this.style.moveMs);
+      this.restUntil = this.moveUntil + randomRange(...this.style.restMs);
+      this.intent = 'roam';
+      this.intentTargetId = null;
+      if (target && hpRatio < this.style.retreatHp) {
+        this.intent = 'retreat';
+        this.intentTargetId = target.id;
+      } else if (item && Math.random() < this.style.lootChance) {
+        this.intent = 'loot';
+      } else if (target && Math.random() < this.style.chaseChance) {
+        this.intent = 'chase';
+        this.intentTargetId = target.id;
+      }
     }
     return now < this.moveUntil;
+  }
+
+  healthRatio() {
+    const maxHp = this.self.maxHp || 100;
+    return Math.max(0, Math.min(1, this.self.hp / maxHp));
+  }
+
+  distanceTo(entity) {
+    return Math.hypot(entity.x - this.self.x, entity.y - this.self.y);
+  }
+
+  lockedTarget(fallback) {
+    if (this.intentTargetId) {
+      const locked = this.players.find(player => player.id === this.intentTargetId && !player.dead);
+      if (locked) return locked;
+    }
+    return fallback;
+  }
+
+  nearestVisibleItem() {
+    let best = null;
+    let bestDistance = Infinity;
+    for (const item of this.items) {
+      const distance = this.distanceTo(item);
+      if (distance < bestDistance) {
+        best = item;
+        bestDistance = distance;
+      }
+    }
+    return best;
   }
 
   nearestVisibleOpponent() {
