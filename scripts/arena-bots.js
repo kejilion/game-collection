@@ -15,6 +15,10 @@ const sessionMinMs = sessionMinMinutes * 60 * 1000;
 const sessionMaxMs = sessionMaxMinutes * 60 * 1000;
 const replacementMinMs = replacementMinMinutes * 60 * 1000;
 const replacementMaxMs = replacementMaxMinutes * 60 * 1000;
+const initialFastJoinCount = clampInt(process.env.BOT_INITIAL_FAST_JOIN_COUNT, Math.min(botCount, 6), 1, botCount);
+const initialFastJoinMaxMs = clampInt(process.env.BOT_INITIAL_FAST_JOIN_MAX_SECONDS, 90, 20, 900) * 1000;
+const initialLateJoinMinMs = clampInt(process.env.BOT_INITIAL_LATE_JOIN_MIN_SECONDS, 120, 60, 1800) * 1000;
+const initialLateJoinMaxMs = Math.max(initialLateJoinMinMs, clampInt(process.env.BOT_INITIAL_LATE_JOIN_MAX_SECONDS, 600, 60, 1800) * 1000);
 const view = { w: 1280, h: 720 };
 const playStyles = [
   { label: 'wanderer', thinkMs: 720, chaseChance: 0.18, lootChance: 0.68, retreatHp: 0.42, attackMs: [2100, 3200], skill0Ms: [21000, 30000], skill1Ms: [36000, 50000], moveMs: [900, 1500], restMs: [1700, 3000] },
@@ -40,10 +44,6 @@ let stopping = false;
 function clampInt(value, fallback, min, max) {
   const number = Number.parseInt(value, 10);
   return Number.isFinite(number) ? Math.max(min, Math.min(max, number)) : fallback;
-}
-
-function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 function randomRange(min, max) {
@@ -108,6 +108,7 @@ class ArenaBot {
     this.thinkTimer = null;
     this.sessionTimer = null;
     this.returnTimer = null;
+    this.initialTimer = null;
     this.takingBreak = false;
     this.returnDelayMs = 0;
   }
@@ -149,6 +150,13 @@ class ArenaBot {
         }
       }
     });
+  }
+
+  scheduleInitialJoin(delay) {
+    this.initialTimer = setTimeout(() => {
+      this.initialTimer = null;
+      this.connect();
+    }, delay);
   }
 
   onMessage(raw) {
@@ -339,16 +347,25 @@ class ArenaBot {
     this.stopSession();
     if (this.returnTimer) clearTimeout(this.returnTimer);
     this.returnTimer = null;
+    if (this.initialTimer) clearTimeout(this.initialTimer);
+    this.initialTimer = null;
     if (this.ws) this.ws.close();
   }
+}
+
+function initialJoinDelay(index) {
+  if (index === 0) return randomRange(2000, 8000);
+  if (index < initialFastJoinCount) return randomRange(12000, initialFastJoinMaxMs);
+  return randomRange(initialLateJoinMinMs, initialLateJoinMaxMs);
 }
 
 async function main() {
   console.log(`[bots] starting ${botCount} bots against ${targetUrl}`);
   const bots = Array.from({ length: botCount }, (_, index) => new ArenaBot(index));
   for (const bot of bots) {
-    bot.connect();
-    await sleep(180);
+    const delay = initialJoinDelay(bot.index);
+    console.log(`[bots] ${bot.name} enters in ~${Math.max(1, Math.round(delay / 1000))}s`);
+    bot.scheduleInitialJoin(delay);
   }
   const stop = () => {
     if (stopping) return;
