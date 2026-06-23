@@ -103,6 +103,14 @@ test('applyItem: heal caps at max, life adds, timed buff is set', () => {
   assert.ok(p.hasBuff('speed', Date.now()), 'speed buff active');
 });
 
+test('applyItem: life pickups cap total lives at BALANCE.maxLives', () => {
+  const w = new World();
+  const p = w.addPlayer('L', 'warrior');
+  for (let i = 0; i < 12; i++) w.applyItem(p, 'life');     // spam well past the cap
+  assert.equal(p.extraLives, BALANCE.maxLives - 1, 'extra lives stop at maxLives-1');
+  assert.equal(1 + p.extraLives, BALANCE.maxLives, 'total lives (current + extra) never exceed maxLives');
+});
+
 // ---- death / respawn -------------------------------------------------------
 test('extra life revives in place instead of dying', () => {
   const { w, a } = duel();

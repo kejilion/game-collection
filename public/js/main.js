@@ -176,8 +176,8 @@
       if (G.specFree) {                          // free camera: hold to pan
         if (up) G.specKeys.up = true; if (down) G.specKeys.down = true;
         if (left) G.specKeys.left = true; if (right) G.specKeys.right = true;
-      } else if (left) specSwitchTarget(-1);     // following: ← / → cycle players
-      else if (right) specSwitchTarget(1);
+      } else if (left || up) specSwitchTarget(-1);     // following: ← → / ↑ ↓ cycle players
+      else if (right || down) specSwitchTarget(1);
     });
     window.addEventListener('keyup', (e) => {
       if (!G.spectating) return;
@@ -427,7 +427,7 @@
       view.players.push(p);
     }
     if (selfLatest) {
-      predictSelf(selfLatest, dt);
+      predictSelf(selfLatest, dt, now, b.t);
       const sp = { ...selfLatest, x: G.pred.x, y: G.pred.y };
       view.players.push(sp); view.self = sp;
     } else { view.lastX = G.pred.x; view.lastY = G.pred.y; }
@@ -452,13 +452,33 @@
     return view;
   }
 
-  function predictSelf(server, dt) {
-    if (!G.pred.ready) { G.pred.x = server.x; G.pred.y = server.y; G.pred.ready = true; return; }
-    if (server.dead) { G.pred.x = server.x; G.pred.y = server.y; return; }
+  function predictSelf(server, dt, nowT, snapT) {
+    if (!G.pred.ready) {
+      G.pred.x = server.x; G.pred.y = server.y; G.pred.ready = true;
+      G.srv = { x: server.x, y: server.y, t: snapT, rt: nowT, vx: 0, vy: 0 };
+      return;
+    }
+    // Estimate the server's own velocity from consecutive snapshots so the
+    // reconciliation target can be EXTRAPOLATED between the 20Hz packets instead
+    // of stepping. Easing toward a stepping target was the residual judder: the
+    // whole view pulsed at the packet rate while moving. Only trust the velocity
+    // for a normal walking step — a big jump (dash/blink/respawn) is a teleport,
+    // not motion, so we don't extrapolate through it.
+    if (!G.srv) G.srv = { x: server.x, y: server.y, t: snapT, rt: nowT, vx: 0, vy: 0 };
+    if (snapT !== G.srv.t) {
+      const dts = (snapT - G.srv.t) / 1000;
+      const jump = Math.hypot(server.x - G.srv.x, server.y - G.srv.y);
+      if (dts > 0 && dts < 0.5 && jump < 60) { G.srv.vx = (server.x - G.srv.x) / dts; G.srv.vy = (server.y - G.srv.y) / dts; }
+      else { G.srv.vx = 0; G.srv.vy = 0; }
+      G.srv.x = server.x; G.srv.y = server.y; G.srv.t = snapT; G.srv.rt = nowT;
+    }
+    if (server.dead) { G.pred.x = server.x; G.pred.y = server.y; G.srv.vx = 0; G.srv.vy = 0; return; }
+
     const cls = G.defs.classes[server.cls];
     let dx = (Input.keys.right ? 1 : 0) - (Input.keys.left ? 1 : 0);
     let dy = (Input.keys.down ? 1 : 0) - (Input.keys.up ? 1 : 0);
-    if (dx || dy) {
+    const moving = dx !== 0 || dy !== 0;
+    if (moving) {
       const len = Math.hypot(dx, dy); dx /= len; dy /= len;
       const sp = cls.speed * (server.buffs && server.buffs.includes('speed') ? 1.42 : 1);
       G.pred.x += dx * sp * dt; G.pred.y += dy * sp * dt;
@@ -470,10 +490,22 @@
       G.pred.x = clamp(G.pred.x, 22, G.world.width - 22);
       G.pred.y = clamp(G.pred.y, 22, G.world.height - 22);
     }
-    // gentle reconciliation toward authoritative position
-    const err = Math.hypot(server.x - G.pred.x, server.y - G.pred.y);
-    if (err > 150) { G.pred.x = server.x; G.pred.y = server.y; }
-    else { G.pred.x += (server.x - G.pred.x) * 0.16; G.pred.y += (server.y - G.pred.y) * 0.16; }
+    // Reconcile toward the EXTRAPOLATED authoritative position. While we're driving
+    // movement, advance the target by the server's measured velocity over the time
+    // since the snapshot arrived (capped at ~2 packets) so it glides smoothly; when
+    // we're not pressing anything, hold the raw snapshot so the stop settles without
+    // an overshoot. Smoothing is frame-rate independent (≈ the old 0.16/frame@60fps),
+    // so 120/144Hz screens don't over-correct.
+    const age = moving ? clamp((nowT - G.srv.rt) / 1000, 0, 0.1) : 0;
+    const tx = G.srv.x + G.srv.vx * age;
+    const ty = G.srv.y + G.srv.vy * age;
+    const err = Math.hypot(tx - G.pred.x, ty - G.pred.y);
+    if (err > 150) { G.pred.x = tx; G.pred.y = ty; }
+    else {
+      const k = 1 - Math.exp(-dt * 10.5);
+      G.pred.x += (tx - G.pred.x) * k;
+      G.pred.y += (ty - G.pred.y) * k;
+    }
   }
 
   function lerpList(amap, bmap, alpha) {

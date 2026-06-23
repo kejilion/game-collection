@@ -626,7 +626,7 @@ class World {
     const def = ITEM_TYPES[type];
     switch (type) {
       case 'heal': p.hp = Math.min(p.effMaxHp(), p.hp + p.effMaxHp() * 0.4); break;
-      case 'life': p.extraLives += 1; break;
+      case 'life': p.extraLives = Math.min(BALANCE.maxLives - 1, p.extraLives + 1); break;
       case 'exp': this.gainXp(p, BALANCE.xp.expPotion + p.level * 12); break;
       case 'gold': p.gold += randInt(BALANCE.goldChest[0], BALANCE.goldChest[1]); break;
       default: // timed buffs

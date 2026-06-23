@@ -91,42 +91,45 @@ const ITEM_WEIGHTS = {
 // can show a glyph that matches the stat (heart, sword, wing, target, glove).
 // Each cosmetic carries a `preview` (skin/trail/glow/size) the client uses to
 // draw a mini canvas preview of the effect — replacing the old uniform "✦".
+//
+// 神秘商人提价 25% — all listed prices are post-markup. Base values were
+// rounded to the nearest 25.
 const EQUIPMENT = [
-  { id: 'eq_hp1',     name: '生命宝珠·小',  price:  900, bonus: { hp: 40 },
+  { id: 'eq_hp1',     name: '生命宝珠·小',  price: 1125, bonus: { hp: 40 },
     icon: 'M12 21s-7-4.5-9.5-9C.7 8.7 2.5 5 6 5c2 0 3.5 1 4 2 0.5-1 2-2 4-2 3.5 0 5.3 3.7 3.5 7-2.5 4.5-9.5 9-9.5 9z',
     iconBg: '#ff5d73' },
-  { id: 'eq_atk1',    name: '锋利之爪·小',  price: 1100, bonus: { atk: 5 },
+  { id: 'eq_atk1',    name: '锋利之爪·小',  price: 1375, bonus: { atk: 5 },
     icon: 'M14 3l7 7-3 3-7-7 3-3zM3 21l7-7 3 3-7 7H3v-3z',
     iconBg: '#ef5b52' },
-  { id: 'eq_spd1',    name: '迅捷护腕·小',  price: 1000, bonus: { speed: 18 },
+  { id: 'eq_spd1',    name: '迅捷护腕·小',  price: 1250, bonus: { speed: 18 },
     icon: 'M2 17l4-1 1-3 6 1 4-2 4 1-2 4-6 2-4-1-3 1-4-2zM3 21l3-1 1 2H4l-1-1z',
     iconBg: '#37d67a' },
-  { id: 'eq_crit1',   name: '暴击印记·小',  price: 1400, bonus: { critChance: 0.05 },
+  { id: 'eq_crit1',   name: '暴击印记·小',  price: 1750, bonus: { critChance: 0.05 },
     icon: 'M12 2l2.5 6.5L21 9l-5 4.5L17.5 21 12 17l-5.5 4L8 13.5 3 9l6.5-0.5L12 2z',
     iconBg: '#ffb020' },
-  { id: 'eq_atkspd1', name: '疾速拳套·小',  price: 1300, bonus: { attackCdMul: 0.85 },
+  { id: 'eq_atkspd1', name: '疾速拳套·小',  price: 1625, bonus: { attackCdMul: 0.85 },
     icon: 'M13 2L4 14h7l-2 8 9-12h-7l2-8z',
     iconBg: '#5b8cff' },
 ];
 
 const COSMETICS = {
   warrior: [
-    { id: 'w_skin_crimson',  cls: 'warrior',  name: '绯红战甲',   price: 1200, skin:  'crimson', preview: 'skin' },
-    { id: 'w_trail_fire',    cls: 'warrior',  name: '烈焰拖尾',   price: 1800, trail: 'fire',   preview: 'trail' },
-    { id: 'w_glow_gold',     cls: 'warrior',  name: '黄金外发光', price: 1500, glow:  '#ffd766', preview: 'glow' },
-    { id: 'w_size_colossus', cls: 'warrior',  name: '巨人体魄',   price: 2200, size:  1.20,     preview: 'size' },
+    { id: 'w_skin_crimson',  cls: 'warrior',  name: '绯红战甲',   price: 1500, skin:  'crimson', preview: 'skin' },
+    { id: 'w_trail_fire',    cls: 'warrior',  name: '烈焰拖尾',   price: 2250, trail: 'fire',   preview: 'trail' },
+    { id: 'w_glow_gold',     cls: 'warrior',  name: '黄金外发光', price: 1875, glow:  '#ffd766', preview: 'glow' },
+    { id: 'w_size_colossus', cls: 'warrior',  name: '巨人体魄',   price: 2750, size:  1.20,     preview: 'size' },
   ],
   mage: [
-    { id: 'm_skin_arcane',   cls: 'mage',     name: '奥术长袍',   price: 1200, skin:  'arcane', preview: 'skin' },
-    { id: 'm_trail_frost',   cls: 'mage',     name: '寒霜拖尾',   price: 1800, trail: 'frost', preview: 'trail' },
-    { id: 'm_glow_blue',     cls: 'mage',     name: '蓝光灵体',   price: 1500, glow:  '#7fd8ff', preview: 'glow' },
-    { id: 'm_size_pixie',    cls: 'mage',     name: '精灵身形',   price: 2200, size:  0.80,    preview: 'size' },
+    { id: 'm_skin_arcane',   cls: 'mage',     name: '奥术长袍',   price: 1500, skin:  'arcane', preview: 'skin' },
+    { id: 'm_trail_frost',   cls: 'mage',     name: '寒霜拖尾',   price: 2250, trail: 'frost', preview: 'trail' },
+    { id: 'm_glow_blue',     cls: 'mage',     name: '蓝光灵体',   price: 1875, glow:  '#7fd8ff', preview: 'glow' },
+    { id: 'm_size_pixie',    cls: 'mage',     name: '精灵身形',   price: 2750, size:  0.80,    preview: 'size' },
   ],
   assassin: [
-    { id: 'a_skin_shadow',   cls: 'assassin', name: '暗影披风',   price: 1200, skin:  'shadow', preview: 'skin' },
-    { id: 'a_trail_smoke',   cls: 'assassin', name: '烟遁拖尾',   price: 1800, trail: 'smoke', preview: 'trail' },
-    { id: 'a_glow_purple',   cls: 'assassin', name: '紫影外发光', price: 1500, glow:  '#a368ff', preview: 'glow' },
-    { id: 'a_size_quick',    cls: 'assassin', name: '纤毫身姿',   price: 2200, size:  0.88,     preview: 'size' },
+    { id: 'a_skin_shadow',   cls: 'assassin', name: '暗影披风',   price: 1500, skin:  'shadow', preview: 'skin' },
+    { id: 'a_trail_smoke',   cls: 'assassin', name: '烟遁拖尾',   price: 2250, trail: 'smoke', preview: 'trail' },
+    { id: 'a_glow_purple',   cls: 'assassin', name: '紫影外发光', price: 1875, glow:  '#a368ff', preview: 'glow' },
+    { id: 'a_size_quick',    cls: 'assassin', name: '纤毫身姿',   price: 2750, size:  0.88,     preview: 'size' },
   ],
 };
 
@@ -137,6 +140,7 @@ const BALANCE = {
   pickupRadius: 32,
   spawnProtect: 2500,
   respawnDelay: 3000,
+  maxLives: 5,          // 总命数上限（含当前命）：复活之心最多叠到 5 条命
   itemCap: 46,
   itemSpawnMs: 1000,
   buffDur: { speed: 8000, haste: 8000, invis: 10000, defense: 15000, power: 15000, reveal: 10000 },
@@ -179,12 +183,12 @@ const BOSS_TYPES = {
   // 1) Juggernaut — the original all-rounder: tanky, stomps + radial fire nova.
   brute: {
     name: '炎魔·巴洛尔', color: '#9e2b2b', accent: '#ff6a4d', shape: 'demon',
-    hp: 1750, attack: 34, speed: 66, radius: 60, aggro: 820,
-    contactMs: 1000, contactRange: 86, bounty: 270, xp: 430,
+    hp: 2350, attack: 40, speed: 66, radius: 60, aggro: 820,
+    contactMs: 1000, contactRange: 86, bounty: 320, xp: 520,
     desc: '全能炎魔 · 践踏震地，火球弹幕封锁四方',
     abilities: [
-      { k: 'slam', cd: 4400, dmg: 48, radius: 175 },
-      { k: 'orbs', cd: 6200, count: 12, speed: 230, dmg: 24, radius: 11, mode: 'radial' }
+      { k: 'slam', cd: 4400, dmg: 58, radius: 185 },
+      { k: 'orbs', cd: 6200, count: 14, speed: 230, dmg: 28, radius: 11, mode: 'radial' }
     ],
     traits: {}
   },
@@ -192,52 +196,52 @@ const BOSS_TYPES = {
   //    No ranged tools: kite the charge and it is harmless. Enrages when low.
   charger: {
     name: '霜牙暴君', color: '#2f7fd0', accent: '#bfe6ff', shape: 'beast',
-    hp: 1500, attack: 30, speed: 98, radius: 52, aggro: 1000,
-    contactMs: 850, contactRange: 78, bounty: 300, xp: 470,
+    hp: 2050, attack: 36, speed: 98, radius: 52, aggro: 1000,
+    contactMs: 850, contactRange: 78, bounty: 350, xp: 560,
     desc: '冲锋猛兽 · 直线冲撞撕裂，落点炸开寒霜',
     abilities: [
-      { k: 'charge', cd: 5000, windup: 620, dash: 380, speed: 780, dmg: 58, hitR: 58,
-        nova: { dmg: 28, radius: 150 } }
+      { k: 'charge', cd: 4600, windup: 620, dash: 380, speed: 780, dmg: 70, hitR: 58,
+        nova: { dmg: 36, radius: 160 } }
     ],
-    traits: { enrageAt: 0.3, moveMul: 1.25, rateMul: 0.7 }
+    traits: { enrageAt: 0.35, moveMul: 1.3, rateMul: 0.7 }
   },
   // 3) Summoner — slow, very tanky, regenerates. Fires waves of homing void-eyes
   //    and blinks toward heroes to keep the seekers on top of them.
   warden: {
     name: '深渊看守者', color: '#5a3aa8', accent: '#caa8ff', shape: 'wraith',
-    hp: 2300, attack: 26, speed: 46, radius: 64, aggro: 1150,
-    contactMs: 1100, contactRange: 92, bounty: 330, xp: 540,
+    hp: 3000, attack: 32, speed: 46, radius: 64, aggro: 1150,
+    contactMs: 1100, contactRange: 92, bounty: 390, xp: 650,
     desc: '深渊召唤者 · 追踪虚空之眼，瞬移如影随形',
     abilities: [
-      { k: 'orbs', cd: 4800, count: 5, speed: 150, dmg: 22, radius: 13,
+      { k: 'orbs', cd: 4800, count: 6, speed: 150, dmg: 26, radius: 13,
         mode: 'aimed', spread: 1.0, homing: true, turn: 2.4, life: 4.8 },
-      { k: 'blink', cd: 8000, dist: 380 }
+      { k: 'blink', cd: 7000, dist: 380 }
     ],
-    traits: { regen: 5 }
+    traits: { regen: 8 }
   },
   // 4) Juggernaut-plus — enormous HP/radius, devastating shockwave + aimed boulder.
   //    Barely moves, but enrages hard below 35% and starts slamming relentlessly.
   golem: {
     name: '远古石巨人', color: '#6b7280', accent: '#d3c08a', shape: 'golem',
-    hp: 3200, attack: 46, speed: 34, radius: 80, aggro: 780,
-    contactMs: 1250, contactRange: 106, bounty: 370, xp: 640,
+    hp: 4200, attack: 54, speed: 34, radius: 80, aggro: 780,
+    contactMs: 1250, contactRange: 106, bounty: 440, xp: 780,
     desc: '重甲巨像 · 震地冲击波与飞石，残血陷入狂暴',
     abilities: [
-      { k: 'slam', cd: 5000, dmg: 74, radius: 250 },
-      { k: 'orbs', cd: 6000, count: 1, speed: 300, dmg: 60, radius: 20, mode: 'aimed', spread: 0 }
+      { k: 'slam', cd: 5000, dmg: 88, radius: 260 },
+      { k: 'orbs', cd: 6000, count: 1, speed: 300, dmg: 72, radius: 20, mode: 'aimed', spread: 0 }
     ],
-    traits: { enrageAt: 0.35, moveMul: 1.3, rateMul: 0.55 }
+    traits: { enrageAt: 0.4, moveMul: 1.3, rateMul: 0.55 }
   },
   // 5) Caster / kiter — fragile but fills the arena with a rotating spiral, snipes
   //    with a 3-shot fan, and blinks AWAY the instant a hero closes in. Corner it.
   eye: {
     name: '混沌之眼', color: '#8e44c8', accent: '#f0c6ff', shape: 'eye',
-    hp: 1450, attack: 18, speed: 74, radius: 54, aggro: 1200,
-    contactMs: 1000, contactRange: 76, bounty: 320, xp: 500,
+    hp: 1900, attack: 18, speed: 74, radius: 54, aggro: 1200,
+    contactMs: 1000, contactRange: 76, bounty: 380, xp: 600,
     desc: '混沌法师 · 螺旋弹幕铺场，近身即瞬退',
     abilities: [
-      { k: 'spiral', cd: 220, arms: 2, step: 0.42, speed: 240, dmg: 15, radius: 9 },
-      { k: 'orbs', cd: 3200, count: 3, speed: 330, dmg: 26, radius: 11, mode: 'aimed', spread: 0.34 },
+      { k: 'spiral', cd: 220, arms: 3, step: 0.42, speed: 240, dmg: 18, radius: 9 },
+      { k: 'orbs', cd: 3200, count: 3, speed: 330, dmg: 30, radius: 11, mode: 'aimed', spread: 0.34 },
       { k: 'blink', cd: 3000, dist: 300, awayIf: 230 }
     ],
     traits: {}
@@ -246,14 +250,14 @@ const BOSS_TYPES = {
   //    hero HP straight into its own. Burst it down or it claws everything back.
   revenant: {
     name: '虚空领主', color: '#2f9e6a', accent: '#9bf0c4', shape: 'revenant',
-    hp: 1950, attack: 32, speed: 74, radius: 58, aggro: 920,
-    contactMs: 900, contactRange: 84, bounty: 340, xp: 560,
+    hp: 2600, attack: 38, speed: 74, radius: 58, aggro: 920,
+    contactMs: 900, contactRange: 84, bounty: 400, xp: 680,
     desc: '噬血领主 · 吸血打击与汲取脉冲，持续自愈',
     abilities: [
-      { k: 'drain', cd: 5200, dmg: 34, radius: 200, heal: 0.8 },
-      { k: 'orbs', cd: 4200, count: 8, speed: 270, dmg: 22, radius: 10, mode: 'radial' }
+      { k: 'drain', cd: 4800, dmg: 42, radius: 210, heal: 1.0 },
+      { k: 'orbs', cd: 4200, count: 8, speed: 270, dmg: 26, radius: 10, mode: 'radial' }
     ],
-    traits: { lifesteal: 0.6, regen: 4 }
+    traits: { lifesteal: 0.7, regen: 6 }
   }
 };
 

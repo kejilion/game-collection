@@ -334,12 +334,14 @@ const HUD = (() => {
       el.appendChild(leftNode);
       const mid = document.createElement('div'); mid.className = 'pi-mid';
       const mainEl = document.createElement('div'); mainEl.className = 'pi-main';
-      const valEl = document.createElement('span'); valEl.className = 'pi-main-val'; valEl.textContent = main.val;
-      mainEl.appendChild(valEl);
+      // gold label leads (e.g. "生命 +40"), then the white value — same font
+      // size so both words read as one stat, with colour carrying the role.
       if (main.label) {
         const lblEl = document.createElement('span'); lblEl.className = 'pi-main-lbl'; lblEl.textContent = main.label;
         mainEl.appendChild(lblEl);
       }
+      const valEl = document.createElement('span'); valEl.className = 'pi-main-val'; valEl.textContent = main.val;
+      mainEl.appendChild(valEl);
       mid.appendChild(mainEl);
       el.appendChild(mid);
       const pr = document.createElement('div'); pr.className = 'pi-pr';

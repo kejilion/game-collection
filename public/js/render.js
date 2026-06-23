@@ -251,7 +251,11 @@ const Renderer = (() => {
 
   function drawPlayer(p, isSelf) {
     const r = 21 * (p.size || 1);
-    const bob = p.moving ? Math.sin(performance.now() / 90 + p.x) * 3 : Math.sin(performance.now() / 600 + p.y) * 1.2;
+    // bob phase keyed to a STABLE per-entity value (id) — NOT the live x/y. Using
+    // the moving position made the sine argument jump several radians per frame
+    // while walking, aliasing the bob into a vertical strobe (the "走路发抖" look).
+    const ph = phaseOf(p.id);
+    const bob = p.moving ? Math.sin(performance.now() / 90 + ph) * 3 : Math.sin(performance.now() / 600 + ph) * 1.2;
     const x = p.x, y = p.y + bob;
     const cls = CLASSES[p.cls] || { color: '#888', name: '?' };
     const skinColor = p.skin === 'crimson' ? '#7a1414'
@@ -440,7 +444,7 @@ const Renderer = (() => {
 
   function drawMerchant(m, self) {
     const r = 22;
-    const x = m.x, y = m.y + Math.sin(performance.now() / 420 + m.x) * 2;
+    const x = m.x, y = m.y + Math.sin(performance.now() / 420 + phaseOf(m.id)) * 2;
     shadow(x, m.y, r);
     roundBody(x, y, r, '#37b07a', '#16402c');
     // straw-hat
@@ -668,6 +672,9 @@ const Renderer = (() => {
   function roundRect(x, y, w, h, r) { r = Math.min(r, w / 2, h / 2); ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); }
   function easeOut(t) { return 1 - Math.pow(1 - t, 3); }
   function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
+  // stable 0..2π phase from an entity id, so idle-bob/float cycles stay desynced
+  // between entities WITHOUT keying off live x/y (which strobes when they move)
+  function phaseOf(id) { let h = 0; const s = '' + id; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0; return (h % 62832) / 10000; }
   function hexA(hex, a) { const c = hx(hex); return `rgba(${c[0]},${c[1]},${c[2]},${a})`; }
   function lighten(hex, amt) { const c = hx(hex); return `rgb(${cl(c[0] + amt)},${cl(c[1] + amt)},${cl(c[2] + amt)})`; }
   function darken(hex, amt) { return lighten(hex, -amt); }
