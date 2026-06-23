@@ -4,10 +4,13 @@ const WebSocket = require('ws');
 
 const targetUrl = process.env.BOT_URL || 'ws://127.0.0.1:3000';
 const botCount = clampInt(process.env.BOT_COUNT, 10, 1, 30);
-const botPrefix = String(process.env.BOT_PREFIX || '测试机器人').slice(0, 10);
+const botPrefix = String(process.env.BOT_PREFIX || '').slice(0, 4);
 const classes = ['warrior', 'mage', 'assassin'];
 const reconnectDelayMs = clampInt(process.env.BOT_RECONNECT_MS, 2500, 500, 30000);
 const view = { w: 1280, h: 720 };
+const nameStarts = ['雾隐', '碎月', '霜刃', '夜航', '云岚', '逐风', '星尘', '银翼', '青柠', '洛川', '熔岩', '长街', '赤焰', '白昼', '浮光', '墨羽', '远山', '流萤', '晴空', '孤岛'];
+const nameEnds = ['旅者', '团子', '猎手', '小鹿', '骑士', '弓手', '猫咪', '星火', '短刃', '纸鸢', '渡鸦', '行者', '柚子', '飞鱼', '山雀', '影子', '风铃', '夜莺', '松果', '追光'];
+const botNames = makeBotNames(botCount);
 
 let stopping = false;
 
@@ -24,10 +27,24 @@ function randomRange(min, max) {
   return min + Math.random() * (max - min);
 }
 
+function makeBotNames(count) {
+  const names = [];
+  const used = new Set();
+  while (names.length < count) {
+    const start = nameStarts[Math.floor(Math.random() * nameStarts.length)];
+    const end = nameEnds[Math.floor(Math.random() * nameEnds.length)];
+    const candidate = (botPrefix + start + end).slice(0, 14);
+    if (used.has(candidate)) continue;
+    used.add(candidate);
+    names.push(candidate);
+  }
+  return names;
+}
+
 class ArenaBot {
   constructor(index) {
     this.index = index;
-    this.name = `${botPrefix}${String(index + 1).padStart(2, '0')}`;
+    this.name = botNames[index];
     this.cls = classes[index % classes.length];
     this.ws = null;
     this.playerId = null;
