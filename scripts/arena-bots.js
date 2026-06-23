@@ -15,8 +15,15 @@ const playStyles = [
   { label: 'scavenger', thinkMs: 700, chaseChance: 0.24, lootChance: 0.82, retreatHp: 0.46, attackMs: [2000, 3100], skill0Ms: [19000, 28000], skill1Ms: [34000, 48000], moveMs: [1100, 1900], restMs: [1200, 2400] },
   { label: 'brawler', thinkMs: 600, chaseChance: 0.62, lootChance: 0.28, retreatHp: 0.30, attackMs: [1200, 1850], skill0Ms: [10500, 16000], skill1Ms: [20000, 30000], moveMs: [900, 1650], restMs: [900, 1700] }
 ];
-const nameStarts = ['雾隐', '碎月', '霜刃', '夜航', '云岚', '逐风', '星尘', '银翼', '青柠', '洛川', '熔岩', '长街', '赤焰', '白昼', '浮光', '墨羽', '远山', '流萤', '晴空', '孤岛'];
-const nameEnds = ['旅者', '团子', '猎手', '小鹿', '骑士', '弓手', '猫咪', '星火', '短刃', '纸鸢', '渡鸦', '行者', '柚子', '飞鱼', '山雀', '影子', '风铃', '夜莺', '松果', '追光'];
+const namePools = {
+  single: ['风', '墨', '夜', '七', '零', '川', '岚', '白', '烬', '禾', '北', '弦'],
+  chineseTwo: ['阿北', '小七', '林深', '夏木', '北辰', '晚风', '小满', '星野', '阿梨', '墨白', '言川', '南枝'],
+  chineseThree: ['小雨点', '别追我', '白月光', '风见悠', '糖醋鱼', '一只猫', '青石桥', '桃乐丝', '雾里花', '慢半拍', '小行星', '柚子茶'],
+  chineseFour: ['今晚不鸽', '一剑西来', '星河入梦', '南风知我', '秋日私语', '月下独酌', '正在加载', '借过一下', '云端散步', '小熊软糖', '别打我呀', '落日飞车'],
+  english: ['Nova', 'Luna', 'Raven', 'Milo', 'Echo', 'Nox', 'Astra', 'Kite', 'Moss', 'Iris', 'Rook', 'Sora'],
+  mixed: ['momo77', 'Neo_404', 'K9_Zero', 'RinX', 'Qing9', 'Fox_21', 'Mia2K', 'ByteCat', 'Aki_7', 'PandaX', 'Sky_66', 'Zed99']
+};
+const nameFormats = Object.keys(namePools);
 const botNames = makeBotNames(botCount);
 
 let stopping = false;
@@ -37,10 +44,17 @@ function randomRange(min, max) {
 function makeBotNames(count) {
   const names = [];
   const used = new Set();
-  while (names.length < count) {
-    const start = nameStarts[Math.floor(Math.random() * nameStarts.length)];
-    const end = nameEnds[Math.floor(Math.random() * nameEnds.length)];
-    const candidate = (botPrefix + start + end).slice(0, 14);
+  const formats = [];
+  while (formats.length < count) {
+    const round = [...nameFormats].sort(() => Math.random() - 0.5);
+    formats.push(...round);
+  }
+  for (const format of formats.slice(0, count)) {
+    const pool = namePools[format];
+    let candidate;
+    do {
+      candidate = (botPrefix + pool[Math.floor(Math.random() * pool.length)]).slice(0, 14);
+    } while (used.has(candidate));
     if (used.has(candidate)) continue;
     used.add(candidate);
     names.push(candidate);
