@@ -17,7 +17,9 @@
     spectating: false, specTarget: null, specFree: true, spectatorCount: 0,
     lastKilledBy: null, lastKilledAt: 0,   // who landed the killing blow on us (for the death notice)
     // free-cam: a spectator camera detached from any player — pan it anywhere
-    specCam: { x: 1600, y: 1100 }, specKeys: { up: false, down: false, left: false, right: false }, specDrag: null
+    specCam: { x: 1600, y: 1100 }, specKeys: { up: false, down: false, left: false, right: false }, specDrag: null,
+    specLastTarget: null   // remembered so 空格 can toggle straight back to the last followed player
+
   };
   let lastFrame = performance.now();
 
@@ -66,15 +68,41 @@
       const next = (idx + dir + alive.length) % alive.length;
       G.specTarget = alive[next].id;
     }
+    G.specLastTarget = G.specTarget;
     updateSpecUI();
   }
 
   function specSelectPlayer(id) {
-    G.specFree = false; G.specTarget = id; updateSpecUI();
+    G.specFree = false; G.specTarget = id; G.specLastTarget = id; updateSpecUI();
+  }
+
+  // free view -> resume following: re-grab the last followed player if still alive,
+  // else the top-scoring one; if nobody's on the field, stay free with a heads-up.
+  function specResumeFollow() {
+    const snap = G.snaps.length ? G.snaps[G.snaps.length - 1] : null;
+    const alive = snap ? snap.data.players.filter(p => !p.dead) : [];
+    if (alive.length === 0) { HUD.toast('暂无可跟随的玩家', '#ff7a7a'); return; }
+    let id = G.specLastTarget;
+    if (!alive.some(p => p.id === id)) id = alive.sort((a, b) => b.score - a.score)[0].id;
+    specSelectPlayer(id);
   }
 
   function specGoFree() {
-    G.specFree = true; G.specTarget = null; updateSpecUI();
+    // entering free view inherits the followed player's position — clamp it so a
+    // player parked near a map edge doesn't drop the free camera into the overshoot band.
+    G.specFree = true; G.specTarget = null; clampSpecCam(); updateSpecUI();
+  }
+
+  // Keep the free camera inside the range the screen can actually show. specCam is
+  // the camera CENTER, and the renderer pins the view to [vp/2, world-vp/2]; clamping
+  // specCam to that same band stops it from building an invisible overshoot at the
+  // edges — which previously felt like a stutter when reversing direction at the border.
+  function clampSpecCam() {
+    const cv = document.getElementById('canvas');
+    const hw = Math.min(((cv && cv.clientWidth) || 1280) / 2, G.world.width / 2);
+    const hh = Math.min(((cv && cv.clientHeight) || 720) / 2, G.world.height / 2);
+    G.specCam.x = clamp(G.specCam.x, hw, G.world.width - hw);
+    G.specCam.y = clamp(G.specCam.y, hh, G.world.height - hh);
   }
 
   // free-cam: glide the detached spectator camera from held keys (px/sec)
@@ -84,8 +112,8 @@
     if (!dx && !dy) return;
     const len = Math.hypot(dx, dy); dx /= len; dy /= len;
     const sp = 760;
-    G.specCam.x = clamp(G.specCam.x + dx * sp * dt, 0, G.world.width);
-    G.specCam.y = clamp(G.specCam.y + dy * sp * dt, 0, G.world.height);
+    G.specCam.x += dx * sp * dt; G.specCam.y += dy * sp * dt;
+    clampSpecCam();
   }
 
   function specExit() {
@@ -101,7 +129,7 @@
 
   function updateSpecUI() {
     const el = document.getElementById('specTarget');
-    if (G.specFree) { el.textContent = '\u81EA\u7531\u89C6\u89D2 \u00B7 WASD/\u62D6\u52A8 \u79FB\u52A8\u955C\u5934'; return; }
+    if (G.specFree) { el.textContent = '\u81EA\u7531\u89C6\u89D2 \u00B7 WASD/\u62D6\u52A8\u79FB\u52A8 \u00B7 \u7A7A\u683C\u8DDF\u968F'; return; }
     const snap = G.snaps.length > 0 ? G.snaps[G.snaps.length - 1] : null;
     const target = snap ? snap.data.players.find(p => p.id === G.specTarget) : null;
     el.textContent = target ? target.name : '\u81EA\u7531\u89C6\u89D2';
@@ -140,7 +168,7 @@
       if (!G.spectating) return;
       const c = e.code;
       if (c === 'Escape') { e.preventDefault(); specExit(); return; }
-      if (c === 'Space')  { e.preventDefault(); specGoFree(); return; }
+      if (c === 'Space')  { e.preventDefault(); G.specFree ? specResumeFollow() : specGoFree(); return; }   // toggle 自由 ⇄ 跟随
       const up = c==='ArrowUp'||c==='KeyW', down = c==='ArrowDown'||c==='KeyS';
       const left = c==='ArrowLeft'||c==='KeyA', right = c==='ArrowRight'||c==='KeyD';
       if (!(up||down||left||right)) return;
@@ -169,9 +197,10 @@
       });
       cv.addEventListener('pointermove', (e) => {
         if (!G.specDrag) return;
-        G.specCam.x = clamp(G.specCam.x - (e.clientX - G.specDrag.x), 0, G.world.width);
-        G.specCam.y = clamp(G.specCam.y - (e.clientY - G.specDrag.y), 0, G.world.height);
+        G.specCam.x -= (e.clientX - G.specDrag.x);
+        G.specCam.y -= (e.clientY - G.specDrag.y);
         G.specDrag.x = e.clientX; G.specDrag.y = e.clientY;
+        clampSpecCam();
       });
       const endDrag = () => { G.specDrag = null; };
       cv.addEventListener('pointerup', endDrag);
@@ -382,7 +411,7 @@
       if (!G.specFree && G.specTarget) {
         const tp = view.players.find(p => p.id === G.specTarget);
         if (tp) view.self = tp;
-        else { G.specFree = true; G.specTarget = null; updateSpecUI(); }   // followed player gone -> free
+        else { G.specFree = true; G.specTarget = null; clampSpecCam(); updateSpecUI(); }   // followed player gone -> free
       }
       if (G.specFree) {
         view.self = null;                                     // detach from every player
