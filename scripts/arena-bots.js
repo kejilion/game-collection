@@ -21,11 +21,11 @@ const initialLateJoinMinMs = clampInt(process.env.BOT_INITIAL_LATE_JOIN_MIN_SECO
 const initialLateJoinMaxMs = Math.max(initialLateJoinMinMs, clampInt(process.env.BOT_INITIAL_LATE_JOIN_MAX_SECONDS, 600, 60, 1800) * 1000);
 const view = { w: 1280, h: 720 };
 const playStyles = [
-  { label: 'wanderer', thinkMs: 720, chaseChance: 0.18, lootChance: 0.68, retreatHp: 0.42, attackMs: [2100, 3200], skill0Ms: [21000, 30000], skill1Ms: [36000, 50000], moveMs: [900, 1500], restMs: [1700, 3000] },
-  { label: 'cautious', thinkMs: 650, chaseChance: 0.32, lootChance: 0.55, retreatHp: 0.54, attackMs: [1800, 2800], skill0Ms: [17000, 25000], skill1Ms: [30000, 43000], moveMs: [1000, 1750], restMs: [1300, 2500] },
-  { label: 'skirmisher', thinkMs: 560, chaseChance: 0.52, lootChance: 0.36, retreatHp: 0.36, attackMs: [1350, 2100], skill0Ms: [12500, 18500], skill1Ms: [23000, 34000], moveMs: [1050, 1850], restMs: [900, 1800] },
-  { label: 'scavenger', thinkMs: 700, chaseChance: 0.24, lootChance: 0.82, retreatHp: 0.46, attackMs: [2000, 3100], skill0Ms: [19000, 28000], skill1Ms: [34000, 48000], moveMs: [1100, 1900], restMs: [1200, 2400] },
-  { label: 'brawler', thinkMs: 600, chaseChance: 0.62, lootChance: 0.28, retreatHp: 0.30, attackMs: [1200, 1850], skill0Ms: [10500, 16000], skill1Ms: [20000, 30000], moveMs: [900, 1650], restMs: [900, 1700] }
+  { label: 'wanderer', thinkMs: 310, chaseChance: 0.18, lootChance: 0.68, retreatHp: 0.42, attackMs: [2100, 3200], skill0Ms: [21000, 30000], skill1Ms: [36000, 50000], moveMs: [2600, 4200], restMs: [350, 750] },
+  { label: 'cautious', thinkMs: 270, chaseChance: 0.32, lootChance: 0.55, retreatHp: 0.54, attackMs: [1800, 2800], skill0Ms: [17000, 25000], skill1Ms: [30000, 43000], moveMs: [2300, 3800], restMs: [220, 550] },
+  { label: 'skirmisher', thinkMs: 210, chaseChance: 0.52, lootChance: 0.36, retreatHp: 0.36, attackMs: [1350, 2100], skill0Ms: [12500, 18500], skill1Ms: [23000, 34000], moveMs: [2000, 3400], restMs: [140, 380] },
+  { label: 'scavenger', thinkMs: 300, chaseChance: 0.24, lootChance: 0.82, retreatHp: 0.46, attackMs: [2000, 3100], skill0Ms: [19000, 28000], skill1Ms: [34000, 48000], moveMs: [2500, 4200], restMs: [220, 550] },
+  { label: 'brawler', thinkMs: 230, chaseChance: 0.62, lootChance: 0.28, retreatHp: 0.30, attackMs: [1200, 1850], skill0Ms: [10500, 16000], skill1Ms: [20000, 30000], moveMs: [2100, 3300], restMs: [120, 320] }
 ];
 const combatProfiles = {
   warrior: { minDistance: 0, maxDistance: 150, attackDistance: 175, skillDistance: 225, crowdLimit: 3 },
@@ -322,7 +322,7 @@ class ArenaBot {
         this.intent = 'loot';
       }
     }
-    return now < this.moveUntil;
+    return this.intent !== 'roam' || now < this.moveUntil;
   }
 
   healthRatio() {
