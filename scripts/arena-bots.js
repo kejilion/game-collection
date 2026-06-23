@@ -34,6 +34,9 @@ class ArenaBot {
     this.self = null;
     this.players = [];
     this.roam = { x: 0, y: 0, until: 0 };
+    this.moveUntil = 0;
+    this.restUntil = 0;
+    this.chaseDuringMove = false;
     this.lastInput = null;
     this.lastAttackAt = 0;
     this.lastSkillAt = [0, 0];
@@ -80,7 +83,7 @@ class ArenaBot {
 
   startThinking() {
     this.stopThinking();
-    this.thinkTimer = setInterval(() => this.think(), 240 + this.index * 7);
+    this.thinkTimer = setInterval(() => this.think(), 480 + this.index * 11);
   }
 
   stopThinking() {
@@ -96,39 +99,49 @@ class ArenaBot {
 
     const now = Date.now();
     const target = this.nearestVisibleOpponent();
+    const moving = this.shouldMove(now, target);
     let moveX = 0;
     let moveY = 0;
 
-    if (target) {
+    if (moving && target && this.chaseDuringMove) {
       moveX = target.x - this.self.x;
       moveY = target.y - this.self.y;
-    } else {
+    } else if (moving) {
       if (now >= this.roam.until) {
         const angle = randomRange(0, Math.PI * 2);
         this.roam = {
           x: Math.cos(angle),
           y: Math.sin(angle),
-          until: now + randomRange(1800, 4800)
+          until: now + randomRange(3200, 6200)
         };
       }
       moveX = this.roam.x;
       moveY = this.roam.y;
     }
 
-    this.sendInput(moveY < -8, moveY > 8, moveX < -8, moveX > 8);
+    this.sendInput(moving && moveY < -8, moving && moveY > 8, moving && moveX < -8, moving && moveX > 8);
 
-    if (now - this.lastAttackAt > randomRange(440, 700)) {
+    if (target && now - this.lastAttackAt > randomRange(1250, 1900)) {
       this.send({ type: 'attack' });
       this.lastAttackAt = now;
     }
-    if (now - this.lastSkillAt[0] > randomRange(5200, 6800)) {
+    if (target && now - this.lastSkillAt[0] > randomRange(10000, 14000)) {
       this.send({ type: 'skill', slot: 0 });
       this.lastSkillAt[0] = now;
     }
-    if (now - this.lastSkillAt[1] > randomRange(9800, 12600)) {
+    if (target && now - this.lastSkillAt[1] > randomRange(20000, 28000)) {
       this.send({ type: 'skill', slot: 1 });
       this.lastSkillAt[1] = now;
     }
+  }
+
+  shouldMove(now, target) {
+    if (now >= this.restUntil) {
+      this.moveUntil = now + randomRange(850, 1550);
+      this.restUntil = this.moveUntil + randomRange(700, 1500);
+      this.chaseDuringMove = !!target && Math.random() < 0.45;
+    }
+    return now < this.moveUntil;
   }
 
   nearestVisibleOpponent() {
