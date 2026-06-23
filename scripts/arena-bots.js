@@ -27,6 +27,11 @@ const playStyles = [
   { label: 'scavenger', thinkMs: 700, chaseChance: 0.24, lootChance: 0.82, retreatHp: 0.46, attackMs: [2000, 3100], skill0Ms: [19000, 28000], skill1Ms: [34000, 48000], moveMs: [1100, 1900], restMs: [1200, 2400] },
   { label: 'brawler', thinkMs: 600, chaseChance: 0.62, lootChance: 0.28, retreatHp: 0.30, attackMs: [1200, 1850], skill0Ms: [10500, 16000], skill1Ms: [20000, 30000], moveMs: [900, 1650], restMs: [900, 1700] }
 ];
+const combatProfiles = {
+  warrior: { minDistance: 0, maxDistance: 150, attackDistance: 175, skillDistance: 225, crowdLimit: 3 },
+  mage: { minDistance: 270, maxDistance: 520, attackDistance: 600, skillDistance: 600, crowdLimit: 1 },
+  assassin: { minDistance: 0, maxDistance: 120, attackDistance: 125, skillDistance: 360, crowdLimit: 1 }
+};
 const namePools = {
   single: ['风', '墨', '夜', '七', '零', '川', '岚', '白', '烬', '禾', '北', '弦'],
   chineseTwo: ['阿北', '小七', '林深', '夏木', '北辰', '晚风', '小满', '星野', '阿梨', '墨白', '言川', '南枝'],
@@ -96,11 +101,16 @@ class ArenaBot {
     this.self = null;
     this.players = [];
     this.items = [];
+    this.merchants = [];
+    this.shopEquipment = [];
+    this.purchasedEquipment = new Set();
     this.roam = { x: 0, y: 0, until: 0 };
     this.moveUntil = 0;
     this.restUntil = 0;
     this.intent = 'roam';
     this.intentTargetId = null;
+    this.intentShopId = null;
+    this.intentShopItemId = null;
     this.fleeBias = randomRange(-0.55, 0.55);
     this.lastInput = null;
     this.lastAttackAt = 0;
@@ -111,6 +121,8 @@ class ArenaBot {
     this.initialTimer = null;
     this.takingBreak = false;
     this.returnDelayMs = 0;
+    this.shopReadyAt = 0;
+    this.pendingBuyId = null;
   }
 
   connect() {
@@ -132,6 +144,10 @@ class ArenaBot {
       this.playerId = null;
       this.self = null;
       this.lastInput = null;
+      this.purchasedEquipment.clear();
+      this.pendingBuyId = null;
+      this.intentShopId = null;
+      this.intentShopItemId = null;
       this.ws = null;
       if (!stopping) {
         if (this.takingBreak) {
@@ -170,9 +186,19 @@ class ArenaBot {
       this.playerId = message.id;
       return;
     }
+    if (message.type === 'defs') {
+      this.shopEquipment = Array.isArray(message.permanentShop?.equipment) ? message.permanentShop.equipment : [];
+      return;
+    }
+    if (message.type === 'shopResult') {
+      if (message.ok && this.pendingBuyId) this.purchasedEquipment.add(this.pendingBuyId);
+      this.pendingBuyId = null;
+      return;
+    }
     if (message.type !== 'state' || !this.playerId) return;
     this.players = Array.isArray(message.players) ? message.players : [];
     this.items = Array.isArray(message.items) ? message.items : [];
+    this.merchants = Array.isArray(message.merchants) ? message.merchants : [];
     this.self = this.players.find(player => player.id === this.playerId) || null;
   }
 
@@ -214,24 +240,27 @@ class ArenaBot {
     }
 
     const now = Date.now();
-    const visibleTarget = this.nearestVisibleOpponent();
+    const visibleTarget = this.bestVisibleOpponent();
     const target = this.lockedTarget(visibleTarget);
-    const item = this.nearestVisibleItem();
-    const moving = this.shouldMove(now, target, item, this.healthRatio());
+    const hpRatio = this.healthRatio();
+    const item = this.bestVisibleItem(hpRatio);
+    const shop = this.shopPlan();
+    const pressure = this.nearbyOpponentCount(360);
+    const moving = this.shouldMove(now, target, item, shop, hpRatio, pressure);
     let moveX = 0;
     let moveY = 0;
+    const shopMerchant = this.intent === 'shop' ? this.merchantById(this.intentShopId) : null;
 
     if (moving && this.intent === 'retreat' && target) {
-      const dx = this.self.x - target.x;
-      const dy = this.self.y - target.y;
-      moveX = dx - dy * this.fleeBias;
-      moveY = dy + dx * this.fleeBias;
+      ({ x: moveX, y: moveY } = this.retreatVector(target));
     } else if (moving && this.intent === 'chase' && target) {
-      moveX = target.x - this.self.x;
-      moveY = target.y - this.self.y;
+      ({ x: moveX, y: moveY } = this.combatVector(target));
     } else if (moving && this.intent === 'loot' && item) {
       moveX = item.x - this.self.x;
       moveY = item.y - this.self.y;
+    } else if (moving && this.intent === 'shop' && shopMerchant) {
+      moveX = shopMerchant.x - this.self.x;
+      moveY = shopMerchant.y - this.self.y;
     } else if (moving) {
       if (now >= this.roam.until) {
         const angle = randomRange(0, Math.PI * 2);
@@ -246,37 +275,51 @@ class ArenaBot {
     }
 
     this.sendInput(moving && moveY < -8, moving && moveY > 8, moving && moveX < -8, moving && moveX > 8);
+    this.tryPurchase(now, shopMerchant);
 
     const targetDistance = target ? this.distanceTo(target) : Infinity;
-    const fighting = target && this.intent !== 'retreat' && targetDistance < 500;
+    const profile = this.combatProfile();
+    const fighting = target && this.intent !== 'retreat' && targetDistance < profile.attackDistance;
     if (fighting && now - this.lastAttackAt > randomRange(...this.style.attackMs)) {
       this.send({ type: 'attack' });
       this.lastAttackAt = now;
     }
-    if (fighting && now - this.lastSkillAt[0] > randomRange(...this.style.skill0Ms)) {
+    if (target && this.intent !== 'retreat' && targetDistance < profile.skillDistance && now - this.lastSkillAt[0] > randomRange(...this.style.skill0Ms)) {
       this.send({ type: 'skill', slot: 0 });
       this.lastSkillAt[0] = now;
     }
-    if (fighting && now - this.lastSkillAt[1] > randomRange(...this.style.skill1Ms)) {
+    if (this.self.level >= 3 && target && this.intent !== 'retreat' && targetDistance < profile.skillDistance && now - this.lastSkillAt[1] > randomRange(...this.style.skill1Ms)) {
       this.send({ type: 'skill', slot: 1 });
       this.lastSkillAt[1] = now;
     }
   }
 
-  shouldMove(now, target, item, hpRatio) {
+  shouldMove(now, target, item, shop, hpRatio, pressure) {
     if (now >= this.restUntil) {
       this.moveUntil = now + randomRange(...this.style.moveMs);
       this.restUntil = this.moveUntil + randomRange(...this.style.restMs);
       this.intent = 'roam';
       this.intentTargetId = null;
-      if (target && hpRatio < this.style.retreatHp) {
+      this.intentShopId = null;
+      this.intentShopItemId = null;
+      const profile = this.combatProfile();
+      const targetDistance = target ? this.distanceTo(target) : Infinity;
+      const outnumbered = pressure > profile.crowdLimit && hpRatio < 0.78;
+      const urgentHeal = item?.type === 'heal' && hpRatio < 0.72;
+      if (target && (hpRatio < this.style.retreatHp || outnumbered)) {
         this.intent = 'retreat';
+        this.intentTargetId = target.id;
+      } else if (urgentHeal) {
+        this.intent = 'loot';
+      } else if (shop && (!target || targetDistance > profile.maxDistance + 100) && Math.random() < 0.7) {
+        this.intent = 'shop';
+        this.intentShopId = shop.merchant.id;
+        this.intentShopItemId = shop.item.id;
+      } else if (target && this.shouldEngage(target, hpRatio, pressure)) {
+        this.intent = 'chase';
         this.intentTargetId = target.id;
       } else if (item && Math.random() < this.style.lootChance) {
         this.intent = 'loot';
-      } else if (target && Math.random() < this.style.chaseChance) {
-        this.intent = 'chase';
-        this.intentTargetId = target.id;
       }
     }
     return now < this.moveUntil;
@@ -287,8 +330,55 @@ class ArenaBot {
     return Math.max(0, Math.min(1, this.self.hp / maxHp));
   }
 
+  entityHealthRatio(entity) {
+    const maxHp = entity.maxHp || 100;
+    return Math.max(0, Math.min(1, entity.hp / maxHp));
+  }
+
+  combatProfile() {
+    return combatProfiles[this.cls] || combatProfiles.warrior;
+  }
+
   distanceTo(entity) {
     return Math.hypot(entity.x - this.self.x, entity.y - this.self.y);
+  }
+
+  nearbyOpponentCount(radius) {
+    let count = 0;
+    for (const player of this.players) {
+      if (player.id === this.playerId || player.dead) continue;
+      if (this.distanceTo(player) <= radius) count += 1;
+    }
+    return count;
+  }
+
+  shouldEngage(target, hpRatio, pressure) {
+    const profile = this.combatProfile();
+    if (target.prot || hpRatio < Math.max(0.54, this.style.retreatHp + 0.1)) return false;
+    if (pressure > profile.crowdLimit) return false;
+    return this.entityHealthRatio(target) < 0.58 || Math.random() < this.style.chaseChance;
+  }
+
+  retreatVector(target) {
+    const dx = this.self.x - target.x;
+    const dy = this.self.y - target.y;
+    return { x: dx - dy * this.fleeBias, y: dy + dx * this.fleeBias };
+  }
+
+  combatVector(target) {
+    const dx = target.x - this.self.x;
+    const dy = target.y - this.self.y;
+    const distance = Math.hypot(dx, dy) || 1;
+    const profile = this.combatProfile();
+    const side = this.fleeBias >= 0 ? 1 : -1;
+    if (this.cls === 'mage') {
+      if (distance < profile.minDistance) return { x: -dx - dy * 0.35 * side, y: -dy + dx * 0.35 * side };
+      if (distance > profile.maxDistance) return { x: dx, y: dy };
+      return { x: -dy * 0.55 * side, y: dx * 0.55 * side };
+    }
+    if (this.cls === 'assassin' && distance < 58) return { x: -dy * 0.35 * side, y: dx * 0.35 * side };
+    if (this.cls === 'warrior' && distance < 95) return { x: -dy * 0.18 * side, y: dx * 0.18 * side };
+    return { x: dx, y: dy };
   }
 
   lockedTarget(fallback) {
@@ -299,33 +389,73 @@ class ArenaBot {
     return fallback;
   }
 
-  nearestVisibleItem() {
+  bestVisibleItem(hpRatio) {
     let best = null;
-    let bestDistance = Infinity;
+    let bestScore = Infinity;
+    const value = {
+      life: 520, heal: hpRatio < 0.72 ? 500 : 65, power: 280, defense: 250,
+      haste: 220, speed: 205, reveal: 150, exp: 145, gold: 125, invis: 110
+    };
     for (const item of this.items) {
-      const distance = this.distanceTo(item);
-      if (distance < bestDistance) {
+      const score = this.distanceTo(item) - (value[item.type] || 80);
+      if (score < bestScore) {
         best = item;
-        bestDistance = distance;
+        bestScore = score;
       }
     }
     return best;
   }
 
-  nearestVisibleOpponent() {
+  bestVisibleOpponent() {
     let best = null;
-    let bestDistance = Infinity;
+    let bestScore = Infinity;
     for (const player of this.players) {
-      if (player.id === this.playerId || player.dead) continue;
-      const dx = player.x - this.self.x;
-      const dy = player.y - this.self.y;
-      const distance = dx * dx + dy * dy;
-      if (distance < bestDistance) {
+      if (player.id === this.playerId || player.dead || player.prot) continue;
+      const distance = this.distanceTo(player);
+      const hpRatio = this.entityHealthRatio(player);
+      const levelGap = Math.max(0, (player.level || 1) - (this.self.level || 1));
+      let nearbyAllies = 0;
+      for (const other of this.players) {
+        if (other.id === this.playerId || other.id === player.id || other.dead) continue;
+        if (Math.hypot(other.x - player.x, other.y - player.y) < 220) nearbyAllies += 1;
+      }
+      const score = distance + hpRatio * 160 + levelGap * 55 + nearbyAllies * 90 - (1 - hpRatio) * 300;
+      if (score < bestScore) {
         best = player;
-        bestDistance = distance;
+        bestScore = score;
       }
     }
     return best;
+  }
+
+  merchantById(id) {
+    return this.merchants.find(merchant => merchant.id === id && merchant.hp > 0) || null;
+  }
+
+  shopPlan() {
+    if (!this.self || !this.shopEquipment.length) return null;
+    const item = this.shopEquipment.find(entry => this.self.gold >= entry.price && !this.purchasedEquipment.has(entry.id));
+    if (!item) return null;
+    let merchant = null;
+    let bestDistance = Infinity;
+    for (const candidate of this.merchants) {
+      if (candidate.hp <= 0) continue;
+      const distance = this.distanceTo(candidate);
+      if (distance < bestDistance) {
+        merchant = candidate;
+        bestDistance = distance;
+      }
+    }
+    return merchant ? { merchant, item } : null;
+  }
+
+  tryPurchase(now, merchant) {
+    if (this.intent !== 'shop' || !merchant || !this.intentShopItemId || this.pendingBuyId || now < this.shopReadyAt) return;
+    const item = this.shopEquipment.find(entry => entry.id === this.intentShopItemId);
+    if (!item || this.self.gold < item.price || this.distanceTo(merchant) > 130) return;
+    this.pendingBuyId = item.id;
+    this.shopReadyAt = now + 5000;
+    this.send({ type: 'shopPermanentBuy', item: item.id });
   }
 
   sendInput(up, down, left, right) {
