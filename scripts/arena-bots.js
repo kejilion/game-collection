@@ -7,6 +7,14 @@ const botCount = clampInt(process.env.BOT_COUNT, 10, 1, 30);
 const botPrefix = String(process.env.BOT_PREFIX || '').slice(0, 4);
 const classes = ['warrior', 'mage', 'assassin'];
 const reconnectDelayMs = clampInt(process.env.BOT_RECONNECT_MS, 2500, 500, 30000);
+const sessionMinMinutes = clampInt(process.env.BOT_SESSION_MIN_MINUTES, 30, 10, 240);
+const sessionMaxMinutes = Math.max(sessionMinMinutes, clampInt(process.env.BOT_SESSION_MAX_MINUTES, 60, sessionMinMinutes, 240));
+const replacementMinMinutes = clampInt(process.env.BOT_REPLACEMENT_MIN_MINUTES, 5, 1, 60);
+const replacementMaxMinutes = Math.max(replacementMinMinutes, clampInt(process.env.BOT_REPLACEMENT_MAX_MINUTES, 10, replacementMinMinutes, 60));
+const sessionMinMs = sessionMinMinutes * 60 * 1000;
+const sessionMaxMs = sessionMaxMinutes * 60 * 1000;
+const replacementMinMs = replacementMinMinutes * 60 * 1000;
+const replacementMaxMs = replacementMaxMinutes * 60 * 1000;
 const view = { w: 1280, h: 720 };
 const playStyles = [
   { label: 'wanderer', thinkMs: 720, chaseChance: 0.18, lootChance: 0.68, retreatHp: 0.42, attackMs: [2100, 3200], skill0Ms: [21000, 30000], skill1Ms: [36000, 50000], moveMs: [900, 1500], restMs: [1700, 3000] },
@@ -25,6 +33,7 @@ const namePools = {
 };
 const nameFormats = Object.keys(namePools);
 const botNames = makeBotNames(botCount);
+const reservedBotNames = new Set(botNames);
 
 let stopping = false;
 
@@ -41,6 +50,11 @@ function randomRange(min, max) {
   return min + Math.random() * (max - min);
 }
 
+function drawBotName(format = nameFormats[Math.floor(Math.random() * nameFormats.length)]) {
+  const pool = namePools[format];
+  return (botPrefix + pool[Math.floor(Math.random() * pool.length)]).slice(0, 14);
+}
+
 function makeBotNames(count) {
   const names = [];
   const used = new Set();
@@ -50,16 +64,25 @@ function makeBotNames(count) {
     formats.push(...round);
   }
   for (const format of formats.slice(0, count)) {
-    const pool = namePools[format];
     let candidate;
     do {
-      candidate = (botPrefix + pool[Math.floor(Math.random() * pool.length)]).slice(0, 14);
+      candidate = drawBotName(format);
     } while (used.has(candidate));
-    if (used.has(candidate)) continue;
     used.add(candidate);
     names.push(candidate);
   }
   return names;
+}
+
+function replacementName(previousName) {
+  reservedBotNames.delete(previousName);
+  let candidate = previousName;
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    candidate = drawBotName();
+    if (!reservedBotNames.has(candidate)) break;
+  }
+  reservedBotNames.add(candidate);
+  return candidate;
 }
 
 class ArenaBot {
@@ -83,26 +106,47 @@ class ArenaBot {
     this.lastAttackAt = 0;
     this.lastSkillAt = [0, 0];
     this.thinkTimer = null;
+    this.sessionTimer = null;
+    this.returnTimer = null;
+    this.takingBreak = false;
+    this.returnDelayMs = 0;
   }
 
   connect() {
-    if (stopping) return;
+    if (stopping || this.ws) return;
     this.ws = new WebSocket(targetUrl);
     this.ws.on('open', () => {
+      this.lastInput = null;
       this.send({ type: 'join', name: this.name, cls: this.cls });
       this.send({ type: 'view', ...view });
       this.startThinking();
-      console.log(`[bot] ${this.name} connected as ${this.cls} (${this.style.label})`);
+      const duration = this.startSession();
+      console.log(`[bot] ${this.name} connected as ${this.cls} (${this.style.label}); session ~${Math.round(duration / 60000)}m`);
     });
     this.ws.on('message', raw => this.onMessage(raw));
     this.ws.on('error', () => {});
     this.ws.on('close', () => {
       this.stopThinking();
+      this.stopSession();
       this.playerId = null;
       this.self = null;
+      this.lastInput = null;
+      this.ws = null;
       if (!stopping) {
-        console.log(`[bot] ${this.name} reconnecting in ${reconnectDelayMs}ms`);
-        setTimeout(() => this.connect(), reconnectDelayMs);
+        if (this.takingBreak) {
+          const delay = this.returnDelayMs || randomRange(replacementMinMs, replacementMaxMs);
+          console.log(`[bot] ${this.name} signed off; replacement in ~${Math.round(delay / 60000)}m`);
+          this.returnTimer = setTimeout(() => {
+            this.returnTimer = null;
+            if (stopping) return;
+            this.takingBreak = false;
+            this.name = replacementName(this.name);
+            this.connect();
+          }, delay);
+        } else {
+          console.log(`[bot] ${this.name} reconnecting in ${reconnectDelayMs}ms`);
+          setTimeout(() => this.connect(), reconnectDelayMs);
+        }
       }
     });
   }
@@ -132,6 +176,27 @@ class ArenaBot {
   stopThinking() {
     if (this.thinkTimer) clearInterval(this.thinkTimer);
     this.thinkTimer = null;
+  }
+
+  startSession() {
+    this.stopSession();
+    const duration = randomRange(sessionMinMs, sessionMaxMs);
+    this.sessionTimer = setTimeout(() => this.takeBreak(), duration);
+    return duration;
+  }
+
+  stopSession() {
+    if (this.sessionTimer) clearTimeout(this.sessionTimer);
+    this.sessionTimer = null;
+  }
+
+  takeBreak() {
+    if (stopping || this.takingBreak) return;
+    this.takingBreak = true;
+    this.returnDelayMs = randomRange(replacementMinMs, replacementMaxMs);
+    this.stopSession();
+    this.sendInput(false, false, false, false);
+    if (this.ws) this.ws.close();
   }
 
   think() {
@@ -271,6 +336,9 @@ class ArenaBot {
 
   close() {
     this.stopThinking();
+    this.stopSession();
+    if (this.returnTimer) clearTimeout(this.returnTimer);
+    this.returnTimer = null;
     if (this.ws) this.ws.close();
   }
 }
