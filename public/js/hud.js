@@ -20,7 +20,7 @@ const HUD = (() => {
       ppGold: id('ppGold'), ppKd: id('ppKd'), ppLives: id('ppLives'), buffRow: id('buffRow'),
       skillbar: id('skillbar'), boardRt: id('boardRt'), boardHist: id('boardHist'),
       chatLog: id('chatLog'), toastWrap: id('toastWrap'),
-      permGoldEl: id('permShopGold'), permEquipGrid: id('permEquipGrid'), permCosGrid: id('permCosGrid'),
+      permGoldEl: id('permShopGold'), permShopGrid: id('permShopGrid'),
       menuHistory: id('menuHistory'),
       killFeed: id('killFeed'), killBanner: id('killBanner'), killCue: id('killCue')
     };
@@ -30,14 +30,6 @@ const HUD = (() => {
       t.classList.add('active');
       const rt = t.dataset.tab === 'rt';
       $.boardRt.classList.toggle('show', rt); $.boardHist.classList.toggle('show', !rt);
-    }));
-    // permanent shop tabs (装备 / 外观)
-    document.querySelectorAll('#permanentShopPanel .perm-tab').forEach(t => t.addEventListener('click', () => {
-      document.querySelectorAll('#permanentShopPanel .perm-tab').forEach(x => x.classList.remove('active'));
-      t.classList.add('active');
-      const tab = t.dataset.tab;
-      if ($.permEquipGrid) $.permEquipGrid.hidden = (tab !== 'equipment');
-      if ($.permCosGrid)   $.permCosGrid.hidden   = (tab !== 'cosmetics');
     }));
   }
 
@@ -170,8 +162,15 @@ const HUD = (() => {
   function killFeed(fx, selfId) {
     // scrolling feed entry: killer ⚔ victim
     const row = document.createElement('div');
+    // killerKind === 'boss' means a BOSS finished a player off (no real killer id).
+    // Treat that as NOT being the local player so we don't fire "I killed them"
+    // feedback, and tag the row so CSS can give it a distinct look.
+    const killerIsBoss = fx.killerKind === 'boss' || fx.kcls === 'boss';
     const isSelf = !!fx.killerId && fx.killerId === selfId;
-    row.className = 'kf-row' + (isSelf ? ' kf-me' : '') + (fx.boss ? ' kf-boss' : '');
+    row.className = 'kf-row'
+      + (isSelf ? ' kf-me' : '')
+      + (fx.boss ? ' kf-boss' : '')
+      + (killerIsBoss ? ' kf-boss-killer' : '');
     const vName = fx.boss ? ('👑' + fx.victim) : fx.victim;
     row.innerHTML =
       `<span class="kf-k" style="color:${clsColor(fx.kcls)}">${escapeHtml(fx.killer)}</span>` +
@@ -252,35 +251,128 @@ const HUD = (() => {
   function setPermShop(catalog) { PERM_SHOP = catalog; }
   function buildPermanentShop(clsId, onBuy, owned) {
     if (!PERM_SHOP) return;
-    const eqGrid = $.permEquipGrid, cosGrid = $.permCosGrid;
-    if (!eqGrid || !cosGrid) return;
-    eqGrid.innerHTML = ''; cosGrid.innerHTML = '';
+    const grid = $.permShopGrid;
+    if (!grid) return;
+    grid.innerHTML = '';
     const ownedEq = new Set((owned && owned.equipment) || []);
     const ownedCos = {
       warrior: new Set(((owned && owned.cosmetics && owned.cosmetics.warrior) || [])),
       mage:    new Set(((owned && owned.cosmetics && owned.cosmetics.mage) || [])),
       assassin: new Set(((owned && owned.cosmetics && owned.cosmetics.assassin) || []))
     };
-    const paint = (parent, item, ownedNow, iconColor, icon, tag) => {
+    // Build an SVG icon element from a path string + bg color. The shop card
+    // uses these to convey what stat the equipment boosts at a glance — heart
+    // for HP, sword for ATK, shoe for SPEED, star for CRIT, lightning for
+    // ATTACK SPEED — instead of every item showing the same gear glyph.
+    const svgIcon = (path, bg) => {
+      const wrap = document.createElement('div');
+      wrap.className = 'pi-ic';
+      wrap.style.background = bg;
+      wrap.innerHTML =
+        `<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+           <path d="${path}" fill="#fff" stroke="#1a1208" stroke-width="1" stroke-linejoin="round"/>
+         </svg>`;
+      return wrap;
+    };
+    // stat label + format helpers — one canonical place so the card always
+    // shows "+40 生命" not raw keys like "hp+40".
+    const STAT_LABEL = { hp: '生命', atk: '攻击', speed: '移速', critChance: '暴击', attackCdMul: '攻速' };
+    const fmtBonus = (b) => {
+      const k = Object.keys(b)[0], v = b[k];
+      // attackCdMul < 1 means attacks come faster → display "-15%"
+      if (k === 'attackCdMul') return { val: '-' + Math.round((1 - v) * 100) + '%', label: STAT_LABEL[k] };
+      if (k === 'critChance') return { val: '+' + (v * 100).toFixed(0) + '%', label: STAT_LABEL[k] };
+      return { val: '+' + v, label: STAT_LABEL[k] };
+    };
+    // canvas preview for cosmetics — small 40x40 mini-art of the actual
+    // effect so the player sees what they're buying (skin recolor, trail
+    // streak, glow halo, size change) rather than a flat icon.
+    const previewCanvas = (kind, item) => {
+      const cv = document.createElement('canvas');
+      cv.className = 'pi-pv'; cv.width = 40; cv.height = 40;
+      const c = cv.getContext('2d');
+      c.fillStyle = '#0d1117'; c.fillRect(0, 0, 40, 40);
+      const cls = (PERM_SHOP.cosmetics && CLASSES[item.cls]) || CLASSES.warrior;
+      if (kind === 'skin') {
+        const tint = item.skin === 'crimson' ? '#ff3b3b' : item.skin === 'arcane' ? '#7c4dff' : item.skin === 'shadow' ? '#2a2238' : cls.color;
+        c.fillStyle = tint; c.beginPath(); c.arc(20, 22, 11, 0, Math.PI * 2); c.fill();
+        c.fillStyle = '#1a1208'; c.fillRect(15, 20, 2, 4); c.fillRect(23, 20, 2, 4);
+        c.fillRect(17, 27, 6, 2);
+      } else if (kind === 'trail') {
+        const trailColors = { fire: ['#ff7a3d','#ffd23f'], frost: ['#7fd8ff','#e0f7ff'], smoke: ['#9aa3b2','#5b6271'] };
+        const [a, b] = trailColors[item.trail] || ['#fff','#fff'];
+        for (let i = 0; i < 6; i++) {
+          c.fillStyle = a; c.globalAlpha = 1 - i * 0.15;
+          c.beginPath(); c.arc(20 - i * 3, 28, 4 + i * 0.3, 0, Math.PI * 2); c.fill();
+        }
+        c.globalAlpha = 1; c.fillStyle = cls.color; c.beginPath(); c.arc(20, 22, 9, 0, Math.PI * 2); c.fill();
+        c.fillStyle = '#1a1208'; c.fillRect(16, 20, 2, 4); c.fillRect(22, 20, 2, 4);
+        c.fillStyle = b; c.fillRect(15, 26, 10, 1);
+      } else if (kind === 'glow') {
+        c.fillStyle = item.glow; c.globalAlpha = 0.22; c.beginPath(); c.arc(20, 22, 17, 0, Math.PI * 2); c.fill();
+        c.globalAlpha = 0.45; c.beginPath(); c.arc(20, 22, 12, 0, Math.PI * 2); c.fill();
+        c.globalAlpha = 1; c.fillStyle = item.glow; c.beginPath(); c.arc(20, 22, 9, 0, Math.PI * 2); c.fill();
+        c.fillStyle = '#1a1208'; c.fillRect(16, 20, 2, 4); c.fillRect(22, 20, 2, 4);
+      } else if (kind === 'size') {
+        const isUp = item.size >= 1;
+        c.fillStyle = cls.color; c.globalAlpha = 0.5; c.beginPath(); c.arc(12, 28, isUp ? 9 : 5, 0, Math.PI * 2); c.fill();
+        c.globalAlpha = 1; c.beginPath(); c.arc(28, 18, isUp ? 11 : 4, 0, Math.PI * 2); c.fill();
+        c.fillStyle = '#fff'; c.font = '800 12px sans-serif'; c.textAlign = 'center';
+        c.fillText(isUp ? '↑' : '↓', 32, 22);
+      }
+      return cv;
+    };
+    // paint() takes a pre-rendered left-side node (SVG icon for equipment,
+    // canvas preview for cosmetics) and a `main` object describing what to
+    // print big in the card. The item name is intentionally NOT shown — the
+    // player only needs the bonus / effect to decide what to buy, and the
+    // card is narrow enough that the name would push layout into a column.
+    const paint = (item, ownedNow, leftNode, main) => {
       const el = document.createElement('div');
       el.className = 'perm-item' + (ownedNow ? ' owned' : ''); el.dataset.item = item.id; el.dataset.price = item.price;
-      el.innerHTML =
-        `<div class="pi-ic" style="background:${iconColor}">${icon}</div>
-         <div style="flex:1;min-width:0"><div class="pi-nm">${item.name}</div><div class="pi-ds">${tag}</div></div>
-         <div class="pi-pr">${ownedNow ? '已拥有' : '💰' + item.price}</div>`;
+      el.title = item.name;     // hover tooltip so the flavor name isn't lost
+      el.appendChild(leftNode);
+      const mid = document.createElement('div'); mid.className = 'pi-mid';
+      const mainEl = document.createElement('div'); mainEl.className = 'pi-main';
+      const valEl = document.createElement('span'); valEl.className = 'pi-main-val'; valEl.textContent = main.val;
+      mainEl.appendChild(valEl);
+      if (main.label) {
+        const lblEl = document.createElement('span'); lblEl.className = 'pi-main-lbl'; lblEl.textContent = main.label;
+        mainEl.appendChild(lblEl);
+      }
+      mid.appendChild(mainEl);
+      el.appendChild(mid);
+      const pr = document.createElement('div'); pr.className = 'pi-pr';
+      pr.textContent = ownedNow ? '已拥有' : '💰' + item.price;
+      el.appendChild(pr);
       if (!ownedNow) el.addEventListener('click', () => onBuy(item.id));
-      parent.appendChild(el);
+      grid.appendChild(el);
     };
-    // equipment cards
+    const section = (label) => {
+      const h = document.createElement('div');
+      h.className = 'perm-section-title';
+      h.textContent = label;
+      grid.appendChild(h);
+    };
+    // equipment — left is a unique SVG icon per item, main is "+40 生命"
+    // (the actual bonus number). Item name is kept only as a hover tooltip
+    // (see paint()) so it never competes for space in the card.
+    section('⚙ 装备');
     (PERM_SHOP.equipment || []).forEach(eq => {
-      const desc = Object.entries(eq.bonus || {}).map(([k, v]) => k + (v < 1 && v > 0 ? '+' + (v * 100).toFixed(0) + '%' : (v < 1 ? '×' + v : '+' + v))).join(' · ');
-      paint(eqGrid, eq, ownedEq.has(eq.id), '#7eaaff', '⚙', desc);
+      const bonus = fmtBonus(eq.bonus || {});
+      const left = svgIcon(eq.icon || 'M12 2l2.5 6.5L21 9l-5 4.5L17.5 21 12 17l-5.5 4L8 13.5 3 9l6.5-0.5L12 2z', eq.iconBg || '#7eaaff');
+      paint(eq, ownedEq.has(eq.id), left, bonus);
     });
-    // cosmetics for this class
-    (PERM_SHOP.cosmetics && PERM_SHOP.cosmetics[clsId] ? PERM_SHOP.cosmetics[clsId] : []).forEach(cs => {
-      const tag = cs.skin ? '外观 · 皮肤' : cs.trail ? '外观 · 拖尾' : cs.glow ? '外观 · 外发光' : cs.size ? '外观 · 体格' : '外观';
-      paint(cosGrid, cs, ownedCos[clsId].has(cs.id), '#c08bff', '✦', tag);
-    });
+    const cosList = (PERM_SHOP.cosmetics && PERM_SHOP.cosmetics[clsId]) || [];
+    if (cosList.length) {
+      section('✦ 外观');
+      cosList.forEach(cs => {
+        const kind = cs.preview || (cs.skin ? 'skin' : cs.trail ? 'trail' : cs.glow ? 'glow' : 'size');
+        const preview = previewCanvas(kind, cs);
+        const main = { val: cs.skin ? '皮肤' : cs.trail ? '拖尾' : cs.glow ? '外发光' : cs.size ? (cs.size >= 1 ? '体格↑' : '体格↓') : '外观', label: '' };
+        paint(cs, ownedCos[clsId].has(cs.id), preview, main);
+      });
+    }
   }
   function updatePermShopGold(gold) {
     if ($.permGoldEl) $.permGoldEl.textContent = gold;

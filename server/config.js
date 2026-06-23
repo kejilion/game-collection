@@ -31,7 +31,7 @@ const CLASSES = {
   mage: {
     id: 'mage', name: '法师', color: '#5b8cff', accent: '#cfe0ff',
     maxHp: 98, speed: 162, attack: 16, defense: 2,
-    attackCd: 520, critChance: 0.08, critMult: 1.75,
+    attackCd: 550, critChance: 0.08, critMult: 1.75,
     attackType: 'projectile', attackRange: 640, projSpeed: 470, projRadius: 9,
     skills: [
       { id: 'fireball', name: '火球术', reqLevel: 1, cd: 5200, mult: 2.25, radius: 115,
@@ -86,32 +86,47 @@ const ITEM_WEIGHTS = {
 // Equipment: stat-boost pieces, all classes can buy, stack within the match.
 // Cosmetics: per-class visual items (skin / trail / glow / size), one-of-each
 // per cosmetic slot — buying a new skin replaces the old skin, etc.
+//
+// Each equipment item carries an `icon` (svg path) + `iconBg` so the shop card
+// can show a glyph that matches the stat (heart, sword, wing, target, glove).
+// Each cosmetic carries a `preview` (skin/trail/glow/size) the client uses to
+// draw a mini canvas preview of the effect — replacing the old uniform "✦".
 const EQUIPMENT = [
-  { id: 'eq_hp1',     name: '生命宝珠·小',   price:  900, bonus: { hp: 40 } },
-  { id: 'eq_atk1',    name: '锋利之爪·小',   price: 1100, bonus: { atk: 5 } },
-  { id: 'eq_spd1',    name: '迅捷护腕·小',   price: 1000, bonus: { speed: 18 } },
-  { id: 'eq_crit1',   name: '暴击印记·小',   price: 1400, bonus: { critChance: 0.05 } },
-  { id: 'eq_atkspd1', name: '疾速拳套·小',   price: 1300, bonus: { attackCdMul: 0.85 } },
+  { id: 'eq_hp1',     name: '生命宝珠·小',  price:  900, bonus: { hp: 40 },
+    icon: 'M12 21s-7-4.5-9.5-9C.7 8.7 2.5 5 6 5c2 0 3.5 1 4 2 0.5-1 2-2 4-2 3.5 0 5.3 3.7 3.5 7-2.5 4.5-9.5 9-9.5 9z',
+    iconBg: '#ff5d73' },
+  { id: 'eq_atk1',    name: '锋利之爪·小',  price: 1100, bonus: { atk: 5 },
+    icon: 'M14 3l7 7-3 3-7-7 3-3zM3 21l7-7 3 3-7 7H3v-3z',
+    iconBg: '#ef5b52' },
+  { id: 'eq_spd1',    name: '迅捷护腕·小',  price: 1000, bonus: { speed: 18 },
+    icon: 'M2 17l4-1 1-3 6 1 4-2 4 1-2 4-6 2-4-1-3 1-4-2zM3 21l3-1 1 2H4l-1-1z',
+    iconBg: '#37d67a' },
+  { id: 'eq_crit1',   name: '暴击印记·小',  price: 1400, bonus: { critChance: 0.05 },
+    icon: 'M12 2l2.5 6.5L21 9l-5 4.5L17.5 21 12 17l-5.5 4L8 13.5 3 9l6.5-0.5L12 2z',
+    iconBg: '#ffb020' },
+  { id: 'eq_atkspd1', name: '疾速拳套·小',  price: 1300, bonus: { attackCdMul: 0.85 },
+    icon: 'M13 2L4 14h7l-2 8 9-12h-7l2-8z',
+    iconBg: '#5b8cff' },
 ];
 
 const COSMETICS = {
   warrior: [
-    { id: 'w_skin_crimson',  cls: 'warrior',  name: '绯红战甲',   price: 1200, skin:  'crimson' },
-    { id: 'w_trail_fire',    cls: 'warrior',  name: '烈焰拖尾',   price: 1800, trail: 'fire' },
-    { id: 'w_glow_gold',     cls: 'warrior',  name: '黄金外发光', price: 1500, glow:  '#ffd766' },
-    { id: 'w_size_colossus', cls: 'warrior',  name: '巨人体魄',   price: 2200, size:  1.20 },
+    { id: 'w_skin_crimson',  cls: 'warrior',  name: '绯红战甲',   price: 1200, skin:  'crimson', preview: 'skin' },
+    { id: 'w_trail_fire',    cls: 'warrior',  name: '烈焰拖尾',   price: 1800, trail: 'fire',   preview: 'trail' },
+    { id: 'w_glow_gold',     cls: 'warrior',  name: '黄金外发光', price: 1500, glow:  '#ffd766', preview: 'glow' },
+    { id: 'w_size_colossus', cls: 'warrior',  name: '巨人体魄',   price: 2200, size:  1.20,     preview: 'size' },
   ],
   mage: [
-    { id: 'm_skin_arcane',   cls: 'mage',     name: '奥术长袍',   price: 1200, skin:  'arcane' },
-    { id: 'm_trail_frost',   cls: 'mage',     name: '寒霜拖尾',   price: 1800, trail: 'frost' },
-    { id: 'm_glow_blue',     cls: 'mage',     name: '蓝光灵体',   price: 1500, glow:  '#7fd8ff' },
-    { id: 'm_size_pixie',    cls: 'mage',     name: '精灵身形',   price: 2200, size:  0.80 },
+    { id: 'm_skin_arcane',   cls: 'mage',     name: '奥术长袍',   price: 1200, skin:  'arcane', preview: 'skin' },
+    { id: 'm_trail_frost',   cls: 'mage',     name: '寒霜拖尾',   price: 1800, trail: 'frost', preview: 'trail' },
+    { id: 'm_glow_blue',     cls: 'mage',     name: '蓝光灵体',   price: 1500, glow:  '#7fd8ff', preview: 'glow' },
+    { id: 'm_size_pixie',    cls: 'mage',     name: '精灵身形',   price: 2200, size:  0.80,    preview: 'size' },
   ],
   assassin: [
-    { id: 'a_skin_shadow',   cls: 'assassin', name: '暗影披风',   price: 1200, skin:  'shadow' },
-    { id: 'a_trail_smoke',   cls: 'assassin', name: '烟遁拖尾',   price: 1800, trail: 'smoke' },
-    { id: 'a_glow_purple',   cls: 'assassin', name: '紫影外发光', price: 1500, glow:  '#a368ff' },
-    { id: 'a_size_quick',    cls: 'assassin', name: '纤毫身姿',   price: 2200, size:  0.88 },
+    { id: 'a_skin_shadow',   cls: 'assassin', name: '暗影披风',   price: 1200, skin:  'shadow', preview: 'skin' },
+    { id: 'a_trail_smoke',   cls: 'assassin', name: '烟遁拖尾',   price: 1800, trail: 'smoke', preview: 'trail' },
+    { id: 'a_glow_purple',   cls: 'assassin', name: '紫影外发光', price: 1500, glow:  '#a368ff', preview: 'glow' },
+    { id: 'a_size_quick',    cls: 'assassin', name: '纤毫身姿',   price: 2200, size:  0.88,     preview: 'size' },
   ],
 };
 

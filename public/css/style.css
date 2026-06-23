@@ -161,17 +161,26 @@ body.chat-open .chat-form input{opacity:1;font-size:16px;padding:12px 14px}
 .skill .cd-num{z-index:4}
 
 /* overlay panels (shop/settings) */
+/* overlay panels (shop/settings) — glassy like menu-card, with a soft
+   warm halo behind the title to tie shop / settings / respawn together. */
 .overlay-panel{position:absolute;z-index:20;top:50%;left:50%;transform:translate(-50%,-50%) scale(.92);
-  width:min(440px,92vw);padding:22px;border-radius:22px;background:var(--panel-solid);
-  border:1px solid var(--line);box-shadow:0 30px 80px rgba(0,0,0,.6);display:none;opacity:0;transition:.18s}
+  width:min(520px,94vw);padding:24px 24px 20px;border-radius:24px;background:var(--panel);
+  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+  border:1px solid var(--line);box-shadow:0 30px 80px rgba(0,0,0,.55),inset 0 1px 0 rgba(255,255,255,.08);
+  display:none;opacity:0;transition:.18s}
+.overlay-panel::before{content:"";position:absolute;inset:-1px;border-radius:24px;pointer-events:none;
+  background:radial-gradient(60% 60% at 18% 0%,rgba(255,210,63,.18),transparent 70%);opacity:.85}
 .overlay-panel.show{display:block;opacity:1;transform:translate(-50%,-50%) scale(1)}
-.op-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
-.op-head h3{font-size:20px}
-.op-close{font-size:18px;width:34px;height:34px;border-radius:10px;background:rgba(255,255,255,.08)}
-.op-close:hover{background:rgba(255,255,255,.16)}
-.op-sub{font-size:13px;color:var(--dim);margin-bottom:14px}
+.op-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;position:relative}
+.op-head h3{font:800 21px/1 "Baloo 2","Noto Sans SC",sans-serif;letter-spacing:.5px;
+  background:linear-gradient(90deg,#ffd23f,#ff8a5b);-webkit-background-clip:text;background-clip:text;color:transparent;
+  text-shadow:0 4px 18px rgba(255,160,40,.25)}
+.op-close{font-size:16px;width:34px;height:34px;border-radius:12px;background:rgba(255,255,255,.08);
+  border:1px solid var(--line);transition:.14s}
+.op-close:hover{background:rgba(255,93,115,.22);border-color:rgba(255,93,115,.55);transform:rotate(90deg)}
+.op-sub{font-size:13px;color:var(--dim);margin-bottom:14px;position:relative}
 .op-sub.center{text-align:center;margin-top:14px;margin-bottom:0}
-.op-sub b{color:var(--gold)}
+.op-sub b{color:var(--gold);font-weight:800}
 .shop-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;max-height:46vh;overflow:auto}
 .shop-item{display:flex;gap:10px;align-items:center;padding:10px;border-radius:14px;background:rgba(0,0,0,.25);border:1px solid var(--line);cursor:pointer;transition:.14s}
 .shop-item:hover{transform:translateY(-2px);border-color:var(--gold)}
@@ -180,21 +189,50 @@ body.chat-open .chat-form input{opacity:1;font-size:16px;padding:12px 14px}
 .shop-item .si-ds{font-size:10.5px;color:var(--dim);line-height:1.2}
 .shop-item .si-pr{font-weight:800;color:var(--gold);font-size:13px;white-space:nowrap}
 .shop-item.cant{opacity:.5}
-/* permanent shop — tabs + grid + cards */
-.perm-tabs{display:flex;gap:8px;margin-bottom:10px}
-.perm-tab{flex:1;padding:9px;border-radius:12px;background:rgba(255,255,255,.06);font-size:14px;font-weight:700;color:var(--dim);transition:.14s}
-.perm-tab.active{background:rgba(255,210,63,.18);color:var(--gold)}
-.perm-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;max-height:46vh;overflow:auto}
-.perm-item{display:flex;gap:10px;align-items:center;padding:10px;border-radius:14px;background:rgba(0,0,0,.25);border:1px solid var(--line);cursor:pointer;transition:.14s}
-.perm-item:hover{transform:translateY(-2px);border-color:var(--gold)}
-.perm-item .pi-ic{width:40px;height:40px;border-radius:10px;display:grid;place-items:center;font-size:20px;color:#fff;flex:none}
-.perm-item .pi-nm{font-weight:800;font-size:13px}
-.perm-item .pi-ds{font-size:10.5px;color:var(--dim);line-height:1.2}
-.perm-item .pi-pr{font-weight:800;color:var(--gold);font-size:13px;white-space:nowrap}
-.perm-item.cant{opacity:.5}
-.perm-item.owned{cursor:default;border-color:rgba(110,231,160,.4);background:rgba(110,231,160,.08)}
-.perm-item.owned:hover{transform:none;border-color:rgba(110,231,160,.4)}
-.perm-item.owned .pi-pr{color:#6ee7a0}
+/* permanent shop — single page, sections separated by title.
+   Cards share the menu-card glassy language: layered translucency, top
+   highlight, glow on hover, and a small price badge so gold coins feel
+   like a coin rather than plain text. */
+.perm-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;max-height:56vh;overflow:auto;padding:2px 4px 2px 2px;position:relative}
+.perm-grid::-webkit-scrollbar-thumb{background:rgba(255,210,63,.32)}
+.perm-section-title{grid-column:1/-1;display:flex;align-items:center;gap:8px;font:800 12px/1 "Baloo 2","Noto Sans SC",sans-serif;
+  color:var(--gold);letter-spacing:1.5px;padding:8px 4px 4px;margin-top:6px;
+  text-transform:uppercase}
+.perm-section-title::after{content:"";flex:1;height:1px;background:linear-gradient(90deg,rgba(255,210,63,.55),transparent)}
+.perm-section-title:first-child{margin-top:0;padding-top:2px}
+.perm-item{position:relative;display:flex;gap:10px;align-items:center;padding:10px 10px 10px 12px;border-radius:16px;
+  background:linear-gradient(180deg,rgba(255,255,255,.06),rgba(0,0,0,.22));
+  border:1px solid rgba(255,255,255,.1);box-shadow:inset 0 1px 0 rgba(255,255,255,.08),0 4px 12px rgba(0,0,0,.28);
+  cursor:pointer;transition:.16s;overflow:hidden;min-width:0;max-width:100%}
+.perm-item::after{content:"";position:absolute;inset:0;border-radius:16px;pointer-events:none;
+  background:radial-gradient(80% 60% at 0% 0%,rgba(255,210,63,.12),transparent 60%);opacity:0;transition:.16s}
+.perm-item:hover{transform:translateY(-2px);border-color:rgba(255,210,63,.55);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.14),0 10px 24px rgba(0,0,0,.42),0 0 0 1px rgba(255,210,63,.18)}
+.perm-item:hover::after{opacity:1}
+.perm-item .pi-ic{width:40px;height:40px;border-radius:10px;display:grid;place-items:center;font-size:20px;color:#fff;
+  flex:none;box-shadow:inset 0 0 0 1px rgba(255,255,255,.18),inset 0 -8px 14px rgba(0,0,0,.32),0 4px 12px rgba(0,0,0,.35)}
+.perm-item .pi-pv{width:40px;height:40px;border-radius:10px;flex:none;display:block;
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.14),inset 0 -8px 14px rgba(0,0,0,.3),0 4px 12px rgba(0,0,0,.35);background:#0a0f24}
+.perm-item .pi-mid{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px;position:relative;z-index:1}
+.perm-item .pi-main{display:flex;align-items:baseline;gap:6px;line-height:1;flex-wrap:nowrap;white-space:nowrap}
+.perm-item .pi-main-val{font:800 18px/1 "Baloo 2","Noto Sans SC",sans-serif;color:#fff;letter-spacing:.3px;
+  text-shadow:0 2px 6px rgba(0,0,0,.4)}
+.perm-item .pi-main-lbl{font:700 11px/1 "Baloo 2","Noto Sans SC",sans-serif;color:var(--gold);
+  text-transform:uppercase;letter-spacing:1px}
+.perm-item .pi-pr{font:800 11px/1 "Baloo 2","Noto Sans SC",sans-serif;color:#2a1500;
+  background:linear-gradient(180deg,#ffe066,#ffb43a);padding:5px 7px;border-radius:9px;
+  white-space:nowrap;align-self:flex-start;box-shadow:inset 0 1px 0 rgba(255,255,255,.55),0 3px 8px rgba(255,160,40,.32);
+  text-shadow:0 1px 0 rgba(255,255,255,.4);position:relative;z-index:1;flex:none}
+.perm-item.cant{opacity:.45;filter:saturate(.6)}
+.perm-item.cant:hover{transform:none;border-color:rgba(255,255,255,.1);box-shadow:inset 0 1px 0 rgba(255,255,255,.08),0 4px 12px rgba(0,0,0,.28)}
+.perm-item.owned{cursor:default;border-color:rgba(110,231,160,.45);
+  background:linear-gradient(180deg,rgba(110,231,160,.12),rgba(0,0,0,.22));
+  box-shadow:inset 0 1px 0 rgba(110,231,160,.18),0 4px 12px rgba(0,0,0,.28)}
+.perm-item.owned::after{opacity:0}
+.perm-item.owned:hover{transform:none;border-color:rgba(110,231,160,.45);
+  box-shadow:inset 0 1px 0 rgba(110,231,160,.18),0 4px 12px rgba(0,0,0,.28)}
+.perm-item.owned .pi-pr{background:linear-gradient(180deg,#7df0b0,#3cc688);color:#0a2415;box-shadow:inset 0 1px 0 rgba(255,255,255,.45),0 3px 8px rgba(60,198,136,.32)}
+.perm-item.owned .pi-main-val{color:#aaf5cf;text-shadow:0 2px 6px rgba(0,0,0,.4),0 0 14px rgba(110,231,160,.3)}
 .set-btn{display:block;width:100%;padding:13px;margin-bottom:10px;border-radius:14px;font-size:15px;font-weight:800;
   background:rgba(255,255,255,.08);transition:.14s}
 .set-btn:hover{background:rgba(255,255,255,.16);transform:translateY(-1px)}
@@ -220,6 +258,7 @@ body.chat-open .chat-form input{opacity:1;font-size:16px;padding:12px 14px}
   animation:kfIn .25s ease, kfOut .5s ease 5s forwards}
 .kf-row.kf-me{box-shadow:0 0 0 1.5px rgba(255,210,63,.7),0 4px 14px rgba(0,0,0,.4)}
 .kf-row.kf-boss{border-color:rgba(255,210,63,.65);background:linear-gradient(90deg,rgba(76,42,18,.9),rgba(10,14,34,.8))}
+.kf-row.kf-boss-killer{box-shadow:inset 3px 0 0 #ff4d4d,0 0 0 1.5px rgba(255,77,77,.45),0 4px 14px rgba(0,0,0,.4)}
 .kf-x{color:#ff5d5d;font-size:14px}
 .kf-v{opacity:.92;overflow:hidden;text-overflow:ellipsis}
 @keyframes kfIn{from{opacity:0;transform:translateX(-16px)}}

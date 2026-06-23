@@ -375,7 +375,7 @@
       G.nearMerchant = near;
       if (near) {
         G.shopCloseAt = 0;                 // back in range — cancel any pending auto-close
-        if (!G.merchantHinted) { HUD.toast('靠近商人，按 E（或点击🛒）打开永久商店', '#6ee7a0'); G.merchantHinted = true; }
+        if (!G.merchantHinted) { HUD.toast('靠近商人，按 E（或点击🛒）打开商店', '#6ee7a0'); G.merchantHinted = true; }
       } else {
         G.merchantHinted = false;
         if (G.shopOpen && !G.shopCloseAt) G.shopCloseAt = recv + 4000;  // grace period before it closes

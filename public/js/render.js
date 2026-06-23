@@ -161,7 +161,7 @@ const Renderer = (() => {
     for (const it of view.items) drawItem(it);
     drawRings(dt, false);
     for (const pr of view.projectiles) drawProjectile(pr, dt);
-    for (const m of view.merchants) drawMerchant(m);
+    for (const m of view.merchants) drawMerchant(m, self);
     for (const b of view.bosses) drawBoss(b);
     drawSlashes(dt);
     drawDashes(dt);
@@ -438,7 +438,7 @@ const Renderer = (() => {
     ctx.lineWidth = 3; for (let i = -2; i <= 2; i++) { ctx.beginPath(); ctx.moveTo(x + i * r * 0.16, y + r * 0.27); ctx.lineTo(x + i * r * 0.16, y + r * 0.43); ctx.stroke(); }
   }
 
-  function drawMerchant(m) {
+  function drawMerchant(m, self) {
     const r = 22;
     const x = m.x, y = m.y + Math.sin(performance.now() / 420 + m.x) * 2;
     shadow(x, m.y, r);
@@ -447,23 +447,51 @@ const Renderer = (() => {
     ctx.fillStyle = '#d9a441'; ctx.beginPath(); ctx.ellipse(x, y - r * 0.7, r * 1.05, r * 0.35, 0, 0, 7); ctx.fill();
     ctx.beginPath(); ctx.ellipse(x, y - r * 0.95, r * 0.5, r * 0.4, 0, 0, 7); ctx.fill();
     eyes(x, y, r, 0, 0.9);
-    // floating coin
-    const cy = y - r - 16 + Math.sin(performance.now() / 300) * 3;
-    ctx.fillStyle = '#ffd23f'; ctx.shadowColor = '#ffd23f'; ctx.shadowBlur = 10;
-    ctx.beginPath(); ctx.arc(x, cy, 7, 0, 7); ctx.fill(); ctx.shadowBlur = 0;
-    ctx.fillStyle = '#a8780a'; ctx.font = '800 10px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('$', x, cy + 3.5);
-    ctx.font = '700 12px "Noto Sans SC"'; ctx.fillStyle = '#bfe8cf'; ctx.fillText('神秘商人', x, m.y - r - 26);
+    // floating coin removed — the HP bar now lives in this slot (right under
+    // the status line), which reads more naturally than a gold coin on top.
+    ctx.font = '700 12px "Noto Sans SC"'; ctx.fillStyle = '#bfe8cf'; ctx.fillText('神秘商人', x, m.y - r - 44);
     ctx.font = '800 11px "Noto Sans SC"';
     ctx.fillStyle = m.idle ? '#6ee7a0' : '#9aa3b2';
-    ctx.fillText(m.idle ? '● 营业中' : '… 赶路中', x, m.y - r - 12);
-    // hp bar (shown when damaged) so players see they're whittling it down
-    if (m.maxHp && m.hp != null && m.hp < m.maxHp) {
-      const bw = 44, bh = 4;
-      const bx = x - bw / 2, by = m.y - r - 38;
-      ctx.fillStyle = 'rgba(0,0,0,.4)'; ctx.fillRect(bx, by, bw, bh);
-      ctx.fillStyle = m.hp / m.maxHp > 0.5 ? '#6ee7a0' : m.hp / m.maxHp > 0.2 ? '#ffd23f' : '#ff5d73';
-      ctx.fillRect(bx, by, bw * Math.max(0, m.hp / m.maxHp), bh);
-      ctx.strokeStyle = 'rgba(255,255,255,.18)'; ctx.lineWidth = 1; ctx.strokeRect(bx - 0.5, by - 0.5, bw + 1, bh + 1);
+    ctx.fillText(m.idle ? '● 营业中' : '… 赶路中', x, m.y - r - 30);
+    // "Press E" speech bubble when the local player is within shopping range
+    // and the merchant is alive — a steady hint, not a fading toast.
+    if (self && m.hp != null && m.hp > 0) {
+      const dx = self.x - m.x, dy = self.y - m.y;
+      if (dx * dx + dy * dy <= 140 * 140) {
+        const bob = Math.sin(performance.now() / 320) * 2;
+        const by = m.y - r - 70 + bob;
+        const padX = 9, padY = 5;
+        ctx.font = '800 13px "Noto Sans SC"';
+        const label = '按 E 购买';
+        const tw = ctx.measureText(label).width;
+        const bw = tw + padX * 2, bh = 22;
+        const bx = x - bw / 2;
+        // pill background
+        ctx.fillStyle = 'rgba(0,0,0,.55)';
+        roundRect(bx, by, bw, bh, 11);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(255,210,63,.65)'; ctx.lineWidth = 1.5;
+        roundRect(bx, by, bw, bh, 11);
+        ctx.stroke();
+        // keycap "E"
+        const kc = 18, kcX = bx + 6, kcY = by + (bh - kc) / 2;
+        ctx.fillStyle = '#ffd23f';
+        roundRect(kcX, kcY, kc, kc, 4);
+        ctx.fill();
+        ctx.fillStyle = '#1a1208'; ctx.font = '800 13px sans-serif'; ctx.textAlign = 'center';
+        ctx.fillText('E', kcX + kc / 2, kcY + 13);
+        // text
+        ctx.fillStyle = '#fff'; ctx.textAlign = 'left';
+        ctx.fillText(label, kcX + kc + 5, by + 15);
+        ctx.textAlign = 'center';
+      }
+    }
+    // HP bar — same red pill as players so the three entity types share one
+    // visual language for "is this thing hurt?". Placed directly under the
+    // "营业中" status line so the stack reads top→bottom:
+    //   神秘商人  →  ● 营业中  →  ━━ HP ━━  →  商人身体
+    if (m.maxHp && m.hp != null) {
+      bar(x - 26, m.y - r - 17, 52, 6, m.hp / m.maxHp, '#ff4d63', '#3a0c14');
     }
   }
 

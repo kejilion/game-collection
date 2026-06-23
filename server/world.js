@@ -15,6 +15,18 @@ const rand = (a, b) => a + Math.random() * (b - a);
 const randInt = (a, b) => Math.floor(rand(a, b + 1));
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 const dist2 = (ax, ay, bx, by) => { const dx = ax - bx, dy = ay - by; return dx * dx + dy * dy; };
+// segment-vs-circle hit test: closest point on segment (x1,y1)→(x2,y2) to
+// circle centre (cx,cy), squared distance vs r².  Used by the projectile
+// step so a fast-moving bolt can hit targets it would otherwise tunnel past.
+function segHitsCircle(x1, y1, x2, y2, cx, cy, r) {
+  const dx = x2 - x1, dy = y2 - y1;
+  const ll = dx * dx + dy * dy;
+  let t = ll > 0 ? ((cx - x1) * dx + (cy - y1) * dy) / ll : 0;
+  if (t < 0) t = 0; else if (t > 1) t = 1;
+  const px = x1 + dx * t, py = y1 + dy * t;
+  const ex = px - cx, ey = py - cy;
+  return ex * ex + ey * ey <= r * r;
+}
 const now = () => Date.now();
 function angDiff(a, b) { let d = a - b; while (d > Math.PI) d -= Math.PI * 2; while (d < -Math.PI) d += Math.PI * 2; return d; }
 function xpForLevel(level) { return Math.floor(100 * Math.pow(1.34, level - 1)); }
@@ -125,6 +137,10 @@ class Projectile {
   constructor(o) {
     this.id = uid('R'); this.kind = 'proj';
     this.x = o.x; this.y = o.y; this.vx = o.vx; this.vy = o.vy;
+    // previous-frame position — used for swept-circle hit tests so a fast
+    // bolt doesn't tunnel through a target whose radius is smaller than the
+    // per-tick travel distance.
+    this.px = o.x; this.py = o.y;
     this.ownerId = o.ownerId; this.ownerKind = o.ownerKind; // 'player' | 'boss'
     this.damage = o.damage; this.radius = o.radius; this.type = o.type; // 'bolt'|'fireball'|'frostnova'|'orb'
     this.aoe = o.aoe || 0; this.aoeMult = o.aoeMult || 1; this.crit = !!o.crit;
@@ -291,6 +307,11 @@ class World {
       out.push(o);
     }
     for (const b of this.bosses.values()) out.push(b);
+    // include living merchants as attack targets — they have an HP bar and
+    // respawn after death (see handleDeath), so players can knock them out
+    // to temporarily lock the shop.  No XP / gold is awarded (damageEntity
+    // checks target.kind !== 'merchant').
+    for (const m of this.merchants.values()) if (m.state !== 'dead') out.push(m);
     return out;
   }
   enemiesOfPlayerId(ownerId, opts) {
@@ -346,14 +367,25 @@ class World {
       target.input = { up: false, down: false, left: false, right: false };
       this.pushFx({ t: 'death', x: target.x, y: target.y, color: target.cls.color, name: target.name });
       this.dropLoot(target.x, target.y, randInt(DROP.playerMin, DROP.playerMax));
-      const killer = attacker && attacker.kind === 'player' ? attacker
-        : (target.lastHitBy && this.players.get(target.lastHitBy));
-      if (killer && killer !== target) {
+      // killer must be the actual current-frame attacker — `target.lastHitBy`
+      // means "last player to hit me" and would falsely credit whoever I most
+      // recently fought (a BOSS kill could then look like "I killed myself"
+      // or a random PK).  BOSS kills take a separate path below.
+      const killer = (attacker && attacker.kind === 'player' && attacker !== target) ? attacker : null;
+      if (killer) {
         killer.kills += 1;
         const bounty = randInt(BALANCE.killBounty[0], BALANCE.killBounty[1]) + target.level * 3;
         killer.gold += bounty;
         this.gainXp(killer, BALANCE.xp.killBase + target.level * BALANCE.xp.killPerLevel);
         this.recordKill(killer, target.name, target.clsId, false, victimStreak, target.id);
+      } else if (attacker && attacker.kind === 'boss' && attacker.def) {
+        // BOSS finished a player off — surface it on the kill feed so the
+        // victim sees "BOSS · X 击败了我" instead of a phantom self-kill.
+        this.pushFx({
+          t: 'killfeed',
+          killer: 'BOSS · ' + attacker.name, killerId: null, kcls: 'boss', killerKind: 'boss',
+          victim: target.name, vcls: target.clsId, victimId: target.id, boss: true,
+        });
       }
     } else if (target.kind === 'boss') {
       this.bosses.delete(target.id);
@@ -675,6 +707,9 @@ class World {
     // projectiles
     for (const pr of this.projectiles.values()) {
       pr.life -= dt;
+      // remember the start-of-tick position so the swept-circle test below
+      // has a valid segment even when the bolt travels >target-radius.
+      pr.px = pr.x; pr.py = pr.y;
       // homing seekers (boss "void-eyes") bend toward the nearest hero, capped turn rate
       if (pr.homing) {
         let best = null, bd = 1e18;
@@ -693,6 +728,12 @@ class World {
         else if (pr.type === 'frostnova') this.frostExplode(pr);
         this.projectiles.delete(pr.id); continue;
       }
+      // swept-circle hit test: a fast projectile can travel further per tick
+      // than the target's combined radius (classic "tunneling"), so we test
+      // the segment from the previous position to the current one against
+      // each target's collision circle.  First-tick (px=NaN) falls through
+      // to a point test via the second dist check.
+      const segX1 = pr.px, segY1 = pr.py, segX2 = pr.x, segY2 = pr.y;
       // obstacles block shots (cover)
       let blocked = false;
       for (const o of this.obstacles)
@@ -708,7 +749,8 @@ class World {
         : this.enemiesOfPlayerId(pr.ownerId);
       let hit = null;
       for (const e of targets) {
-        if (dist2(pr.x, pr.y, e.x, e.y) <= (pr.radius + this.radiusOf(e)) ** 2) { hit = e; break; }
+        const rr = pr.radius + this.radiusOf(e);
+        if (segHitsCircle(segX1, segY1, segX2, segY2, e.x, e.y, rr)) { hit = e; break; }
       }
       if (hit) {
         if (pr.type === 'fireball') { this.explode(pr); }
@@ -746,8 +788,27 @@ class World {
       this.merchantRespawns = still;
     }
 
-    // merchants: short hop, then stand still a while so players can shop
+    // merchants: short hop, then stand still a while so players can shop.
+    // If any player is within "notice" range (a bit beyond shop range) the
+    // merchant freezes — moving targets make projectile/melee hits unreliable
+    // AND make the HP bar (drawn over the sprite) jittery.  Once everyone
+    // walks away it resumes its wander.
+    const NOTICE_R2 = 220 * 220;
     for (const m of this.merchants.values()) {
+      let noticed = false;
+      for (const p of this.players.values()) {
+        if (p.dead) continue;
+        const dxp = p.x - m.x, dyp = p.y - m.y;
+        if (dxp * dxp + dyp * dyp <= NOTICE_R2) { noticed = true; break; }
+      }
+      if (noticed) {
+        // snap to idle so the merchant feels interactable; reset rest timer
+        // so a player arriving mid-move doesn't see a half-second slide.
+        m.tx = m.x; m.ty = m.y;
+        m.state = 'idle';
+        m.stateUntil = t + 500;
+        continue;
+      }
       if (m.state === 'idle') {
         if (t >= m.stateUntil) {                 // done resting -> pick a nearby spot and walk there
           const ang = Math.random() * Math.PI * 2;
@@ -782,13 +843,9 @@ class World {
     }
   }
 
-  enemiesOfPlayerId(ownerId) {
-    const owner = this.players.get(ownerId);
-    const out = [];
-    for (const o of this.players.values()) if (o.id !== ownerId && !o.dead) out.push(o);
-    for (const b of this.bosses.values()) out.push(b);
-    return out;
-  }
+  // Projectile AoE explosions (fireball, frostnova) reuse the central
+  // `enemiesOfPlayerId` defined above — it now also returns living merchants,
+  // so this dedup call picks them up automatically.  No second copy here.
 
   explode(pr) {
     this.pushFx({ t: 'explosion', x: pr.x, y: pr.y, radius: pr.aoe });
