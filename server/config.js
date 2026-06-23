@@ -82,15 +82,40 @@ const ITEM_WEIGHTS = {
 };
 
 // ---- Merchant shop ---------------------------------------------------------
-const SHOP = [
-  { id: 'heal',    price: 55  },
-  { id: 'power',   price: 130 },
-  { id: 'defense', price: 120 },
-  { id: 'speed',   price: 95  },
-  { id: 'haste',   price: 110 },
-  { id: 'invis',   price: 150 },
-  { id: 'life',    price: 260 }
+// Permanent in-match shop — replaced the old consumable SHOP array.
+// Equipment: stat-boost pieces, all classes can buy, stack within the match.
+// Cosmetics: per-class visual items (skin / trail / glow / size), one-of-each
+// per cosmetic slot — buying a new skin replaces the old skin, etc.
+const EQUIPMENT = [
+  { id: 'eq_hp1',     name: '生命宝珠·小',   price:  900, bonus: { hp: 40 } },
+  { id: 'eq_atk1',    name: '锋利之爪·小',   price: 1100, bonus: { atk: 5 } },
+  { id: 'eq_spd1',    name: '迅捷护腕·小',   price: 1000, bonus: { speed: 18 } },
+  { id: 'eq_crit1',   name: '暴击印记·小',   price: 1400, bonus: { critChance: 0.05 } },
+  { id: 'eq_atkspd1', name: '疾速拳套·小',   price: 1300, bonus: { attackCdMul: 0.85 } },
 ];
+
+const COSMETICS = {
+  warrior: [
+    { id: 'w_skin_crimson',  cls: 'warrior',  name: '绯红战甲',   price: 1200, skin:  'crimson' },
+    { id: 'w_trail_fire',    cls: 'warrior',  name: '烈焰拖尾',   price: 1800, trail: 'fire' },
+    { id: 'w_glow_gold',     cls: 'warrior',  name: '黄金外发光', price: 1500, glow:  '#ffd766' },
+    { id: 'w_size_colossus', cls: 'warrior',  name: '巨人体魄',   price: 2200, size:  1.20 },
+  ],
+  mage: [
+    { id: 'm_skin_arcane',   cls: 'mage',     name: '奥术长袍',   price: 1200, skin:  'arcane' },
+    { id: 'm_trail_frost',   cls: 'mage',     name: '寒霜拖尾',   price: 1800, trail: 'frost' },
+    { id: 'm_glow_blue',     cls: 'mage',     name: '蓝光灵体',   price: 1500, glow:  '#7fd8ff' },
+    { id: 'm_size_pixie',    cls: 'mage',     name: '精灵身形',   price: 2200, size:  0.80 },
+  ],
+  assassin: [
+    { id: 'a_skin_shadow',   cls: 'assassin', name: '暗影披风',   price: 1200, skin:  'shadow' },
+    { id: 'a_trail_smoke',   cls: 'assassin', name: '烟遁拖尾',   price: 1800, trail: 'smoke' },
+    { id: 'a_glow_purple',   cls: 'assassin', name: '紫影外发光', price: 1500, glow:  '#a368ff' },
+    { id: 'a_size_quick',    cls: 'assassin', name: '纤毫身姿',   price: 2200, size:  0.88 },
+  ],
+};
+
+const PERMANENT_SHOP_CATALOG = { equipment: EQUIPMENT, cosmetics: COSMETICS };
 
 // ---- Balance knobs ---------------------------------------------------------
 const BALANCE = {
@@ -115,7 +140,9 @@ const BALANCE = {
   merchantCount: 2, merchantSpeed: 70,
   merchantPauseMs: [4500, 8500],   // how long it stands still ("营业中")
   merchantRoamDist: [170, 420],    // distance of each short hop
-  merchantMoveMaxMs: 9000          // safety cap on a single hop
+  merchantMoveMaxMs: 9000,         // safety cap on a single hop
+  merchant: { maxHp: 220, respawnMs: 30000 },   // 商人可被打 + 30s 复活
+  maxLevel: 25                                      // 等级上限（满级后不升级、不转经验）
 };
 
 // ---- Boss archetypes -------------------------------------------------------
@@ -231,5 +258,5 @@ const KILL = { multiWindowMs: 10000 };   // consecutive kills within this window
 
 module.exports = {
   WORLD, TICK_RATE, BROADCAST_RATE,
-  CLASSES, ITEM_TYPES, ITEM_WEIGHTS, SHOP, BALANCE, BOSS_TYPES, BOSS_DEFS, OBSTACLES, DROP, KILL
+  CLASSES, ITEM_TYPES, ITEM_WEIGHTS, PERMANENT_SHOP_CATALOG, BALANCE, BOSS_TYPES, BOSS_DEFS, OBSTACLES, DROP, KILL
 };

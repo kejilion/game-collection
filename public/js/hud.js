@@ -4,7 +4,8 @@
 // ============================================================================
 const HUD = (() => {
   let $ = {};
-  let CLASSES = {}, ITEMS = {}, SHOP = [];
+  let CLASSES = {}, ITEMS = {};
+  let PERM_SHOP = null;           // { equipment: [...], cosmetics: { warrior: [...], mage: [...], assassin: [...] } }
   let selfCls = 'warrior';
   let selfLevel = 1;              // tracked so the bar can relight a skill the moment it unlocks
   const cd = {};                  // slot key -> { until, total }
@@ -18,8 +19,9 @@ const HUD = (() => {
       ppHp: id('ppHp'), ppHpTxt: id('ppHpTxt'), ppXp: id('ppXp'), ppXpTxt: id('ppXpTxt'),
       ppGold: id('ppGold'), ppKd: id('ppKd'), ppLives: id('ppLives'), buffRow: id('buffRow'),
       skillbar: id('skillbar'), boardRt: id('boardRt'), boardHist: id('boardHist'),
-      chatLog: id('chatLog'), toastWrap: id('toastWrap'), shopGrid: id('shopGrid'),
-      shopGold: id('shopGold'), menuHistory: id('menuHistory'),
+      chatLog: id('chatLog'), toastWrap: id('toastWrap'),
+      permGoldEl: id('permShopGold'), permEquipGrid: id('permEquipGrid'), permCosGrid: id('permCosGrid'),
+      menuHistory: id('menuHistory'),
       killFeed: id('killFeed'), killBanner: id('killBanner'), killCue: id('killCue')
     };
     // leaderboard tabs
@@ -29,9 +31,17 @@ const HUD = (() => {
       const rt = t.dataset.tab === 'rt';
       $.boardRt.classList.toggle('show', rt); $.boardHist.classList.toggle('show', !rt);
     }));
+    // permanent shop tabs (装备 / 外观)
+    document.querySelectorAll('#permanentShopPanel .perm-tab').forEach(t => t.addEventListener('click', () => {
+      document.querySelectorAll('#permanentShopPanel .perm-tab').forEach(x => x.classList.remove('active'));
+      t.classList.add('active');
+      const tab = t.dataset.tab;
+      if ($.permEquipGrid) $.permEquipGrid.hidden = (tab !== 'equipment');
+      if ($.permCosGrid)   $.permCosGrid.hidden   = (tab !== 'cosmetics');
+    }));
   }
 
-  function setDefs(classes, items, shop) { CLASSES = classes; ITEMS = items; SHOP = shop; }
+  function setDefs(classes, items, permShop) { CLASSES = classes; ITEMS = items; PERM_SHOP = permShop || null; }
 
   // ---- menu class picker --------------------------------------------------
   function buildClassPicker(onSelect) {
@@ -238,23 +248,51 @@ const HUD = (() => {
     while ($.toastWrap.children.length > 4) $.toastWrap.removeChild($.toastWrap.firstChild);
   }
 
-  // ---- shop ---------------------------------------------------------------
-  function buildShop(onBuy) {
-    $.shopGrid.innerHTML = '';
-    SHOP.forEach(s => {
-      const d = ITEMS[s.id];
-      const el = document.createElement('div'); el.className = 'shop-item'; el.dataset.price = s.price; el.dataset.item = s.id;
+  // ---- permanent shop (in-match upgrades: equipment + per-class cosmetics) -
+  function setPermShop(catalog) { PERM_SHOP = catalog; }
+  function buildPermanentShop(clsId, onBuy, owned) {
+    if (!PERM_SHOP) return;
+    const eqGrid = $.permEquipGrid, cosGrid = $.permCosGrid;
+    if (!eqGrid || !cosGrid) return;
+    eqGrid.innerHTML = ''; cosGrid.innerHTML = '';
+    const ownedEq = new Set((owned && owned.equipment) || []);
+    const ownedCos = {
+      warrior: new Set(((owned && owned.cosmetics && owned.cosmetics.warrior) || [])),
+      mage:    new Set(((owned && owned.cosmetics && owned.cosmetics.mage) || [])),
+      assassin: new Set(((owned && owned.cosmetics && owned.cosmetics.assassin) || []))
+    };
+    const paint = (parent, item, ownedNow, iconColor, icon, tag) => {
+      const el = document.createElement('div');
+      el.className = 'perm-item' + (ownedNow ? ' owned' : ''); el.dataset.item = item.id; el.dataset.price = item.price;
       el.innerHTML =
-        `<div class="si-ic" style="background:${d.color}">${d.icon}</div>
-         <div style="flex:1;min-width:0"><div class="si-nm">${d.name}</div><div class="si-ds">${d.desc}</div></div>
-         <div class="si-pr">💰${s.price}</div>`;
-      el.addEventListener('click', () => onBuy(s.id));
-      $.shopGrid.appendChild(el);
+        `<div class="pi-ic" style="background:${iconColor}">${icon}</div>
+         <div style="flex:1;min-width:0"><div class="pi-nm">${item.name}</div><div class="pi-ds">${tag}</div></div>
+         <div class="pi-pr">${ownedNow ? '已拥有' : '💰' + item.price}</div>`;
+      if (!ownedNow) el.addEventListener('click', () => onBuy(item.id));
+      parent.appendChild(el);
+    };
+    // equipment cards
+    (PERM_SHOP.equipment || []).forEach(eq => {
+      const desc = Object.entries(eq.bonus || {}).map(([k, v]) => k + (v < 1 && v > 0 ? '+' + (v * 100).toFixed(0) + '%' : (v < 1 ? '×' + v : '+' + v))).join(' · ');
+      paint(eqGrid, eq, ownedEq.has(eq.id), '#7eaaff', '⚙', desc);
+    });
+    // cosmetics for this class
+    (PERM_SHOP.cosmetics && PERM_SHOP.cosmetics[clsId] ? PERM_SHOP.cosmetics[clsId] : []).forEach(cs => {
+      const tag = cs.skin ? '外观 · 皮肤' : cs.trail ? '外观 · 拖尾' : cs.glow ? '外观 · 外发光' : cs.size ? '外观 · 体格' : '外观';
+      paint(cosGrid, cs, ownedCos[clsId].has(cs.id), '#c08bff', '✦', tag);
     });
   }
-  function updateShopGold(gold) {
-    $.shopGold.textContent = gold;
-    $.shopGrid.querySelectorAll('.shop-item').forEach(el => el.classList.toggle('cant', gold < +el.dataset.price));
+  function updatePermShopGold(gold) {
+    if ($.permGoldEl) $.permGoldEl.textContent = gold;
+    document.querySelectorAll('#permanentShopPanel .perm-item').forEach(el =>
+      el.classList.toggle('cant', gold < +el.dataset.price));
+  }
+  function markPermanentOwned(itemId) {
+    const el = document.querySelector(`#permanentShopPanel .perm-item[data-item="${itemId}"]`);
+    if (!el) return;
+    el.classList.add('owned');
+    el.querySelector('.pi-pr').textContent = '已拥有';
+    el.style.cursor = 'default';
   }
 
   // ---- util ---------------------------------------------------------------
@@ -264,6 +302,7 @@ const HUD = (() => {
   return {
     init, setDefs, buildClassPicker, buildSkillbar, triggerCd, renderSkillbar,
     updatePlayer, updateLeaderboard, updateMenuHistory, addChat, toast,
-    buildShop, updateShopGold, killFeed
+    setPermShop, buildPermanentShop, updatePermShopGold, markPermanentOwned,
+    killFeed
   };
 })();

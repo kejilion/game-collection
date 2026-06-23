@@ -49,7 +49,7 @@ const Input = (() => {
 
     if (code === 'KeyA') { e.preventDefault(); if (!attackHeld) { attackHeld = true; startAttackLoop(); } return; }
     if (/^Digit[1-5]$/.test(code)) { e.preventDefault(); handlers.skill && handlers.skill(+code.slice(5) - 1); return; }
-    if (code === 'KeyB') { e.preventDefault(); handlers.toggleShop && handlers.toggleShop(); return; }
+    if (code === 'KeyE') { e.preventDefault(); handlers.toggleShop && handlers.toggleShop(); return; }
     if (code === 'Escape') { e.preventDefault(); handlers.escape && handlers.escape(); return; }
     if (code === 'Enter') { e.preventDefault(); handlers.chat && handlers.chat(); return; }
     if (code === 'Space') { e.preventDefault(); handlers.skill && handlers.skill(0); return; }

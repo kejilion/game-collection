@@ -11,6 +11,8 @@ const Renderer = (() => {
   let decor = [];
   let obstacles = [];
   const particles = [], floaters = [], rings = [], slashes = [], dashes = [];
+  // hexA(hex, alpha) -> 'rgba(r,g,b,a)'. Defined near the bottom of this file
+  // (alongside `hx`); the cosmetic trail below reuses it.
   const projPrev = new Map();
   const itemSeen = new Map();      // item id -> first-seen time, for pop-in animation
   let shake = 0;
@@ -248,17 +250,31 @@ const Renderer = (() => {
   }
 
   function drawPlayer(p, isSelf) {
-    const r = 21;
+    const r = 21 * (p.size || 1);
     const bob = p.moving ? Math.sin(performance.now() / 90 + p.x) * 3 : Math.sin(performance.now() / 600 + p.y) * 1.2;
     const x = p.x, y = p.y + bob;
     const cls = CLASSES[p.cls] || { color: '#888', name: '?' };
+    const skinColor = p.skin === 'crimson' ? '#7a1414'
+                    : p.skin === 'arcane'  ? '#2a3a8a'
+                    : p.skin === 'shadow'  ? '#1a1a2a'
+                    : cls.color;
     const ghost = p.invis ? 0.4 : 1;
     ctx.globalAlpha = ghost;
     shadow(x, p.y, r);
 
+    // outer glow ring (cosmetic) — additive ring around the body
+    if (p.glow) {
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.fillStyle = p.glow;
+      ctx.globalAlpha = ghost * (0.28 + 0.12 * Math.sin(performance.now() / 220));
+      ctx.beginPath(); ctx.arc(x, y, r + 4, 0, 7); ctx.fill();
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.globalAlpha = ghost;
+    }
+
     // weapon behind for some facings
     drawWeapon(x, y, r, p.facing, p.cls, cls.color);
-    roundBody(x, y, r, cls.color, '#1c2140');
+    roundBody(x, y, r, skinColor, '#1c2140');
     // class hat/hood
     drawHeadgear(x, y, r, p.cls, cls);
     eyes(x, y, r, p.facing);
@@ -269,6 +285,15 @@ const Renderer = (() => {
       ctx.beginPath(); ctx.arc(x, y, r + 6 + Math.sin(performance.now() / 120) * 2, 0, 7); ctx.stroke();
     }
     ctx.globalAlpha = 1;
+
+    // trail (cosmetic) — push a fading dash segment to the existing dashes array
+    if (p.moving && p.trail) {
+      const tc = p.trail === 'fire' ? '#ff7a3d'
+               : p.trail === 'frost' ? '#7fd8ff'
+               :                       '#9aa3b2';
+      const fwd = p.facing || 0;
+      dashes.push({ x1: p.x - Math.cos(fwd) * 14, y1: p.y - Math.sin(fwd) * 14, x2: p.x, y2: p.y, color: hexA(tc, 0.6), life: 0.3, max: 0.3 });
+    }
 
     // nameplate + bars
     nameplate(x, p.y - r, p, isSelf, cls);
@@ -431,6 +456,15 @@ const Renderer = (() => {
     ctx.font = '800 11px "Noto Sans SC"';
     ctx.fillStyle = m.idle ? '#6ee7a0' : '#9aa3b2';
     ctx.fillText(m.idle ? '● 营业中' : '… 赶路中', x, m.y - r - 12);
+    // hp bar (shown when damaged) so players see they're whittling it down
+    if (m.maxHp && m.hp != null && m.hp < m.maxHp) {
+      const bw = 44, bh = 4;
+      const bx = x - bw / 2, by = m.y - r - 38;
+      ctx.fillStyle = 'rgba(0,0,0,.4)'; ctx.fillRect(bx, by, bw, bh);
+      ctx.fillStyle = m.hp / m.maxHp > 0.5 ? '#6ee7a0' : m.hp / m.maxHp > 0.2 ? '#ffd23f' : '#ff5d73';
+      ctx.fillRect(bx, by, bw * Math.max(0, m.hp / m.maxHp), bh);
+      ctx.strokeStyle = 'rgba(255,255,255,.18)'; ctx.lineWidth = 1; ctx.strokeRect(bx - 0.5, by - 0.5, bw + 1, bh + 1);
+    }
   }
 
   function drawItem(it) {
@@ -592,7 +626,7 @@ const Renderer = (() => {
     for (const b of ov.bosses) { mmx.fillStyle = (BOSS[b.type] && BOSS[b.type].accent) || '#ff3d3d'; mmx.beginPath(); mmx.arc(b.x * sxk, b.y * syk, 4, 0, 7); mmx.fill(); }
     // players (hide invisible enemies unless we have reveal — matches the main view)
     for (const p of ov.players) {
-      if (p.invis && !view.hasReveal && p.id !== view.selfId) continue;
+      if (p.invis && !view.hasReveal && p.id !== view.selfId && !view.spectating) continue;
       const cls = CLASSES[p.cls] || { color: '#fff' };
       mmx.fillStyle = p.id === view.selfId ? '#9be7ff' : cls.color;
       mmx.beginPath(); mmx.arc(p.x * sxk, p.y * syk, p.id === view.selfId ? 4 : 3, 0, 7); mmx.fill();

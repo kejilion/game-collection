@@ -24,7 +24,7 @@
 
     <button id="playBtn" class="play-btn">进入大乱斗 ⚔</button>
     <button id="spectateBtn" class="spectate-btn">&#128065; 观战模式</button>
-    <p class="hint">方向键移动 · <b>A</b> 普通攻击 · <b>1</b> 技能 · <b>Enter</b> 聊天 · <b>B</b> 商店 · <b>Esc</b> 设置</p>
+    <p class="hint">方向键移动 · <b>A</b> 普通攻击 · <b>1</b> 技能 · <b>Enter</b> 聊天 · <b>E</b> 永久商店 · <b>Esc</b> 设置</p>
 
     <p class="mobile-hint">手机操作：左下摇杆移动，右下按钮攻击和施放技能</p>
 
@@ -103,12 +103,17 @@
     </div>
   </div>
 
-  <!-- shop panel -->
-  <div class="overlay-panel shop" id="shopPanel">
-    <div class="op-head"><h3>🛒 神秘商人</h3><button class="op-close" data-close="shop">✕</button></div>
-    <p class="op-sub">靠近商人时可购买 · 你的金币 <b id="shopGold">0</b></p>
-    <div class="shop-grid" id="shopGrid"></div>
-  </div>
+  <!-- permanent shop panel (replaces the old consumable merchant shop) -->
+  <section id="permanentShopPanel" class="overlay-panel shop">
+    <div class="op-head"><h3>🏪 永久商店</h3><button class="op-close" data-close="permanentShop">✕</button></div>
+    <p class="op-sub">靠近商人时可购买 · 你的金币 <b id="permShopGold">0</b></p>
+    <div class="perm-tabs">
+      <button class="perm-tab active" data-tab="equipment">装备</button>
+      <button class="perm-tab" data-tab="cosmetics">外观</button>
+    </div>
+    <div class="perm-grid" id="permEquipGrid"></div>
+    <div class="perm-grid" id="permCosGrid" hidden></div>
+  </section>
 
   <!-- settings menu -->
   <div class="overlay-panel settings" id="settingsPanel">
@@ -117,7 +122,7 @@
     <button class="set-btn" id="btnFullscreen">⛶ 全屏切换</button>
     <button class="set-btn" id="btnReselect">↩ 重新选择角色</button>
     <button class="set-btn danger" id="btnQuit">⏻ 退出游戏</button>
-    <p class="op-sub center">提示：方向键移动 · A 攻击 · 1 技能 · B 商店</p>
+    <p class="op-sub center">提示：方向键移动 · A 攻击 · 1 技能 · E 永久商店</p>
   </div>
 
 

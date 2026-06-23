@@ -30,11 +30,11 @@
     G.world = m.world;
     G.specCam = { x: m.world.width / 2, y: m.world.height / 2 };   // free camera starts centered
     G.specKeys = { up: false, down: false, left: false, right: false };
-    G.defs = { classes: m.classes, items: m.items, shop: m.shop, bosses: m.bosses || {} };
+    G.defs = { classes: m.classes, items: m.items, permanentShop: m.permanentShop, bosses: m.bosses || {} };
     G.obstacles = m.obstacles || [];
     Renderer.setWorld(m.world, m.classes, m.items, m.bosses);
     Renderer.setObstacles(G.obstacles);
-    HUD.setDefs(m.classes, m.items, m.shop);
+    HUD.setDefs(m.classes, m.items, m.permanentShop);
     G.snaps.length = 0; G.items = []; G.deadSince = 0;
     showScreen('game');
     document.getElementById('spectatorBar').classList.add('show');
@@ -252,26 +252,52 @@
         break;
       case 'shopResult':
         HUD.toast(m.msg, m.ok ? '#6ee7a0' : '#ff7a7a');
+        if (m.ok) {
+          // track the just-bought item on the client so re-opening the panel
+          // shows it as "已拥有" without a round-trip to the server.
+          const id = m.item || G._lastBoughtItem;
+          if (id) {
+            HUD.markPermanentOwned(id);
+            if (!G.owned) G.owned = { equipment: [], cosmetics: { warrior: [], mage: [], assassin: [] } };
+            if (id.startsWith('eq_')) {
+              if (!G.owned.equipment.includes(id)) G.owned.equipment.push(id);
+            } else {
+              // cosmetic: figure out which class it belongs to from m.permanentShop (cached on defs)
+              const ps = G.defs && G.defs.permanentShop;
+              if (ps && ps.cosmetics) {
+                for (const cls of ['warrior', 'mage', 'assassin']) {
+                  if ((ps.cosmetics[cls] || []).some(c => c.id === id)) {
+                    if (!G.owned.cosmetics[cls].includes(id)) G.owned.cosmetics[cls].push(id);
+                    break;
+                  }
+                }
+              }
+            }
+          }
+        }
         break;
     }
   }
 
   function onDefs(m) {
-    G.defs = { classes: m.classes, items: m.items, shop: m.shop, bosses: m.bosses || {} };
-    HUD.setDefs(m.classes, m.items, m.shop);
+    G.defs = { classes: m.classes, items: m.items, permanentShop: m.permanentShop, bosses: m.bosses || {} };
+    HUD.setDefs(m.classes, m.items, m.permanentShop);
+    HUD.setPermShop(m.permanentShop);
     HUD.buildClassPicker((cls) => { G.selectedClass = cls; });
-    HUD.buildShop(buy);
   }
 
   function onWelcome(m) {
     G.selfId = m.id; G.world = m.world;
-    G.defs = { classes: m.classes, items: m.items, shop: m.shop, bosses: m.bosses || {} };
+    G.defs = { classes: m.classes, items: m.items, permanentShop: m.permanentShop, bosses: m.bosses || {} };
     G.obstacles = m.obstacles || [];
     Renderer.setWorld(m.world, m.classes, m.items, m.bosses);
     Renderer.setObstacles(G.obstacles);
-    HUD.setDefs(m.classes, m.items, m.shop);
+    HUD.setDefs(m.classes, m.items, m.permanentShop);
+    HUD.setPermShop(m.permanentShop);
     HUD.buildSkillbar(G.selectedClass);
-    HUD.buildShop(buy);
+    G.owned = m.owned || { equipment: [], cosmetics: { warrior: [], mage: [], assassin: [] } };
+    HUD.buildPermanentShop(G.selectedClass, permBuy, G.owned);
+    if (typeof m.gold === 'number') HUD.updatePermShopGold(m.gold);
     G.pred.ready = false; G.snaps.length = 0; G.items = []; G.deadSince = 0; G.shopCloseAt = 0;
     showScreen('game');
     sendView();                            // tell the server our viewport so it streams only what we can see
@@ -334,7 +360,7 @@
     if (self) {
       G.lastSelf = self;
       HUD.updatePlayer(self);
-      HUD.updateShopGold(self.gold);
+      HUD.updatePermShopGold(self.gold);
       // death / respawn overlay (+ an explicit toast so the death is never missed)
       if (self.dead && !G.deadSince) {
         G.deadSince = recv;
@@ -349,7 +375,7 @@
       G.nearMerchant = near;
       if (near) {
         G.shopCloseAt = 0;                 // back in range — cancel any pending auto-close
-        if (!G.merchantHinted) { HUD.toast('靠近商人，按 B（或点击🛒）购买道具', '#6ee7a0'); G.merchantHinted = true; }
+        if (!G.merchantHinted) { HUD.toast('靠近商人，按 E（或点击🛒）打开永久商店', '#6ee7a0'); G.merchantHinted = true; }
       } else {
         G.merchantHinted = false;
         if (G.shopOpen && !G.shopCloseAt) G.shopCloseAt = recv + 4000;  // grace period before it closes
@@ -407,6 +433,7 @@
     } else { view.lastX = G.pred.x; view.lastY = G.pred.y; }
     view.overview = G.overview;           // global blips for the minimap (whole map, not just AoI slice)
     view.hasReveal = hasReveal;
+    view.spectating = G.spectating;       // spectators see stealthed players on the minimap too
     if (G.spectating) {
       if (!G.specFree && G.specTarget) {
         const tp = view.players.find(p => p.id === G.specTarget);
@@ -507,7 +534,7 @@
   // ---- in-game UI wiring --------------------------------------------------
   function wireGameUI() {
     document.querySelectorAll('.op-close').forEach(b => b.addEventListener('click', () => {
-      if (b.dataset.close === 'shop') closeShop(); else closeSettings();
+      if (b.dataset.close === 'permanentShop' || b.dataset.close === 'shop') closeShop(); else closeSettings();
     }));
     document.getElementById('btnResume').addEventListener('click', closeSettings);
     document.getElementById('btnReselect').addEventListener('click', reselect);
@@ -539,9 +566,19 @@
   }
 
   function buy(itemId) { Net.send({ type: 'buy', item: itemId }); }
+  function permBuy(itemId) { G._lastBoughtItem = itemId; Net.send({ type: 'shopPermanentBuy', item: itemId }); }
 
-  function openShop() { G.shopOpen = true; G.shopCloseAt = 0; document.getElementById('shopPanel').classList.add('show'); if (G.lastSelf) HUD.updateShopGold(G.lastSelf.gold); }
-  function closeShop() { G.shopOpen = false; G.shopCloseAt = 0; document.getElementById('shopPanel').classList.remove('show'); }
+  function openShop() {
+    G.shopOpen = true; G.shopCloseAt = 0;
+    // re-paint the panel so any items bought since the last open show as 已拥有
+    if (G.selectedClass) HUD.buildPermanentShop(G.selectedClass, permBuy, G.owned);
+    document.getElementById('permanentShopPanel').classList.add('show');
+    if (G.lastSelf) HUD.updatePermShopGold(G.lastSelf.gold);
+  }
+  function closeShop() {
+    G.shopOpen = false; G.shopCloseAt = 0;
+    document.getElementById('permanentShopPanel').classList.remove('show');
+  }
   function toggleShopUI() { if (G.shopOpen) closeShop(); else if (G.nearMerchant) openShop(); else HUD.toast('附近没有商人', '#ff7a7a'); }
 
   function toggleFullscreen() {

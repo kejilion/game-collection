@@ -5,7 +5,7 @@
 // ============================================================================
 
 const {
-  WORLD, CLASSES, ITEM_TYPES, ITEM_WEIGHTS, SHOP, BALANCE, BOSS_TYPES, OBSTACLES, DROP, KILL
+  WORLD, CLASSES, ITEM_TYPES, ITEM_WEIGHTS, PERMANENT_SHOP_CATALOG, BALANCE, BOSS_TYPES, OBSTACLES, DROP, KILL
 } = require('./config');
 
 // ---- small helpers ---------------------------------------------------------
@@ -58,24 +58,30 @@ class Player {
     this.killStreak = 0;          // consecutive kills without dying (连杀)
     this.multiKill = 0;           // kills within the multi-kill window (双杀/三杀…)
     this.lastKillAt = 0;
+    // permanent-shop state (resets each match; not persisted)
+    this.equip = { hp: 0, atk: 0, speed: 0, critChance: 0, attackCdMul: 1 };
+    this.cosmetic = { skin: null, trail: null, glow: null, size: null };
+    this.boughtEquipment = new Set();                        // ids of equipment pieces purchased this match
+    this.boughtCosmetics = { warrior: new Set(), mage: new Set(), assassin: new Set() };   // per-class
   }
   get cls() { return CLASSES[this.clsId]; }
   hasBuff(t, t2) { return this.buffs[t] && this.buffs[t] > t2; }
 
-  effMaxHp() { return this.cls.maxHp + (this.level - 1) * BALANCE.hp.perLevel; }
+  effMaxHp() { return this.cls.maxHp + (this.level - 1) * BALANCE.hp.perLevel + (this.equip.hp || 0); }
   effSpeed(t) {
     const slow = this.slowUntil > t ? this.slowMul : 1;
-    return this.cls.speed * (this.hasBuff('speed', t) ? BALANCE.buff.speedMul : 1) * slow;
+    return (this.cls.speed + (this.equip.speed || 0)) * (this.hasBuff('speed', t) ? BALANCE.buff.speedMul : 1) * slow;
   }
   effAttack(t) {
-    const a = this.cls.attack + (this.level - 1) * BALANCE.attackPerLevel;
+    const a = this.cls.attack + (this.level - 1) * BALANCE.attackPerLevel + (this.equip.atk || 0);
     return a * (this.hasBuff('power', t) ? BALANCE.buff.powerMul : 1);
   }
   effDefense(t) {
     return this.cls.defense + (this.level - 1) * BALANCE.defensePerLevel +
       (this.hasBuff('defense', t) ? BALANCE.buff.defenseAdd : 0);
   }
-  effAttackCd(t) { return this.cls.attackCd * (this.hasBuff('haste', t) ? BALANCE.buff.hasteMul : 1); }
+  effAttackCd(t) { return this.cls.attackCd * (this.equip.attackCdMul || 1) * (this.hasBuff('haste', t) ? BALANCE.buff.hasteMul : 1); }
+  effCritChance() { return this.cls.critChance + (this.equip.critChance || 0); }
   get score() { return this.kills * 100 + this.bossKills * 400 + (this.level - 1) * 80; }
 }
 
@@ -104,8 +110,10 @@ class Merchant {
   constructor(x, y) {
     this.id = uid('M'); this.kind = 'merchant'; this.name = '神秘商人';
     this.x = x; this.y = y; this.tx = x; this.ty = y;
-    this.state = 'idle';          // 'idle' (营业中) | 'move'
+    this.state = 'idle';          // 'idle' (营业中) | 'move' | 'dead'
     this.stateUntil = 0;
+    this.maxHp = BALANCE.merchant.maxHp;
+    this.hp = this.maxHp;
   }
 }
 
@@ -141,6 +149,7 @@ class World {
     this.obstacles = [];          // static cover; sent to clients once on join
     this.itemSpawnAt = 0;
     this.bossRespawnAt = 0;
+    this.merchantRespawns = [];   // dead merchants waiting to respawn (30s)
     this.firstBlood = false;      // 一血 announced once per server lifetime
     this.genObstacles();
     for (let i = 0; i < BALANCE.merchantCount; i++) {
@@ -231,12 +240,27 @@ class World {
     const p = this.freePoint(80);
     this.addItem(weightedPick(ITEM_WEIGHTS), p.x, p.y);
   }
-  // scatter 1-N random items around a death location
+  // true if (x,y) is inside any obstacle (or outside the world margin)
+  pointInObstacle(x, y) {
+    if (x < 36 || y < 36 || x > WORLD.width - 36 || y > WORLD.height - 36) return true;
+    for (const o of this.obstacles) if (dist2(x, y, o.x, o.y) < (o.r + 18) ** 2) return true;
+    return false;
+  }
+  // scatter 1-N random items around a death location, nudging each out of
+  // obstacles (a 12px-radial push, up to 6 tries — drop the item if it still
+  // won't fit, rather than letting it spawn *inside* cover where players can't see)
   dropLoot(x, y, count) {
     for (let i = 0; i < count; i++) {
       const ang = Math.random() * Math.PI * 2;
       const d = rand(18, DROP.scatter);
-      this.addItem(weightedPick(ITEM_WEIGHTS), x + Math.cos(ang) * d, y + Math.sin(ang) * d);
+      let nx = x + Math.cos(ang) * d, ny = y + Math.sin(ang) * d;
+      let placed = false;
+      for (let k = 0; k < 6; k++) {
+        if (!this.pointInObstacle(nx, ny)) { placed = true; break; }
+        nx += Math.cos(ang) * 12; ny += Math.sin(ang) * 12;
+      }
+      if (!placed) continue;
+      this.addItem(weightedPick(ITEM_WEIGHTS), nx, ny);
     }
     this.pushFx({ t: 'loot', x, y, count });
   }
@@ -254,11 +278,23 @@ class World {
   }
 
   // ---- combat helpers -----------------------------------------------------
-  enemiesOfPlayer(p) {
+  // Invisible players are skipped from auto-targeting AND from AOE/projectile
+  // damage: they are truly hidden (also hidden at the wire, world.js viewFor).
+  // The viewer can still bypass with `canSeeInvis: true` (e.g. world admin tools).
+  enemiesOfPlayer(p, opts = {}) {
+    const t = now();
+    const seeInvis = !!opts.canSeeInvis || !!(p && p.hasBuff('reveal', t));
     const out = [];
-    for (const o of this.players.values()) if (o !== p && !o.dead) out.push(o);
+    for (const o of this.players.values()) {
+      if (o === p || o.dead) continue;
+      if (!seeInvis && o.hasBuff('invis', t)) continue;
+      out.push(o);
+    }
     for (const b of this.bosses.values()) out.push(b);
     return out;
+  }
+  enemiesOfPlayerId(ownerId, opts) {
+    return this.enemiesOfPlayer(this.players.get(ownerId), opts);
   }
   nearestEnemy(p, maxRange) {
     let best = null, bestD = maxRange * maxRange;
@@ -268,20 +304,27 @@ class World {
     }
     return best;
   }
-  radiusOf(e) { return e.kind === 'boss' ? e.r : e.kind === 'player' ? 22 : 16; }
+  radiusOf(e) {
+    if (e.kind === 'boss') return e.r;
+    if (e.kind === 'player') return 22;
+    if (e.kind === 'merchant') return 18;
+    return 16;
+  }
 
   damageEntity(target, amount, attacker, opts = {}) {
     const t = now();
     if (target.kind === 'player') {
       if (target.dead || target.spawnProtectUntil > t) return;
       if (target.hasBuff('guard', t)) amount *= BALANCE.skill.guardMul;   // 铁壁战吼 减伤
+    } else if (target.kind === 'merchant') {
+      if (target.state === 'dead') return;
     }
     amount = Math.max(1, Math.round(amount));
     target.hp -= amount;
     if (attacker && attacker.kind === 'player') { target.lastHitBy = attacker.id; target.lastHitAt = t; }
     this.pushFx({ t: 'dmg', x: target.x, y: target.y - this.radiusOf(target) - 6, v: amount, crit: !!opts.crit });
-    // attacker earns xp proportional to damage dealt
-    if (attacker && attacker.kind === 'player' && !attacker.dead) {
+    // attacker earns xp proportional to damage dealt (skip when damaging a merchant — no xp/gold for hitting the shop)
+    if (attacker && attacker.kind === 'player' && !attacker.dead && target.kind !== 'merchant') {
       this.gainXp(attacker, amount * BALANCE.xp.perDamage);
     }
     if (target.hp <= 0) this.handleDeath(target, attacker);
@@ -327,6 +370,13 @@ class World {
       } else {
         this.pushFx({ t: 'bossKill', x: target.x, y: target.y, name: '', boss: target.name });
       }
+    } else if (target.kind === 'merchant') {
+      // 商人被打死：30 秒后从随机点复活，期间的商人从地图消失
+      this.merchants.delete(target.id);
+      target.state = 'dead';
+      target.respawnAt = t + BALANCE.merchant.respawnMs;
+      this.merchantRespawns.push(target);
+      this.pushFx({ t: 'merchantDeath', x: target.x, y: target.y });
     }
   }
 
@@ -348,9 +398,10 @@ class World {
 
   gainXp(p, amount) {
     if (!p || p.dead) return;
+    if (p.level >= BALANCE.maxLevel) return;       // 满级后不再升级、也不转金币
     p.xp += amount;
     let leveled = false;
-    while (p.xp >= p.xpNext) {
+    while (p.xp >= p.xpNext && p.level < BALANCE.maxLevel) {
       p.xp -= p.xpNext; p.level += 1; p.xpNext = xpForLevel(p.level); leveled = true;
     }
     if (leveled) {
@@ -367,7 +418,7 @@ class World {
     if (!p || p.dead || t < p.attackReadyAt) return;
     p.attackReadyAt = t + p.effAttackCd(t);
     const cls = p.cls;
-    const crit = Math.random() < cls.critChance;
+    const crit = Math.random() < p.effCritChance();
     const base = p.effAttack(t) * (crit ? cls.critMult : 1);
 
     if (cls.attackType === 'projectile') {
@@ -552,6 +603,44 @@ class World {
     this.pushFx({ t: 'pickup', x: p.x, y: p.y, color: def.color, icon: def.icon, type, id: p.id });
   }
 
+  // Permanent shop purchase (in-match, not persisted): the merchant's new
+  // catalog of equipment (stat bonuses) and cosmetics (skin/trail/glow/size).
+  // Must be near a living merchant and not be dead. Equipment is rejected on
+  // re-buy; cosmetics replace same-slot fields (one skin, one trail, one glow,
+  // one size — buying a new skin overwrites the old skin, etc.).
+  permanentBuy(p, itemId) {
+    const t = now();
+    if (!p || p.dead) return { ok: false, msg: '已阵亡' };
+    let near = false;
+    for (const m of this.merchants.values())
+      if (m.state !== 'dead' && dist2(p.x, p.y, m.x, m.y) <= BALANCE.merchantRange ** 2) { near = true; break; }
+    if (!near) return { ok: false, msg: '附近没有商人' };
+    // equipment first
+    const eq = PERMANENT_SHOP_CATALOG.equipment.find(e => e.id === itemId);
+    if (eq) {
+      if (p.boughtEquipment.has(itemId)) return { ok: false, msg: '已拥有该装备' };
+      if (p.gold < eq.price) return { ok: false, msg: '金币不足' };
+      p.gold -= eq.price;
+      p.boughtEquipment.add(itemId);
+      for (const k in eq.bonus) p.equip[k] = (p.equip[k] || 0) + eq.bonus[k];
+      this.pushFx({ t: 'buy', x: p.x, y: p.y });
+      return { ok: true, msg: `永久解锁 ${eq.name}` };
+    }
+    // then cosmetics — must match current class
+    const cs = (PERMANENT_SHOP_CATALOG.cosmetics[p.clsId] || []).find(c => c.id === itemId);
+    if (!cs) return { ok: false, msg: '没有该商品' };
+    if (p.boughtCosmetics[p.clsId].has(itemId)) return { ok: false, msg: '已拥有该外观' };
+    if (p.gold < cs.price) return { ok: false, msg: '金币不足' };
+    p.gold -= cs.price;
+    p.boughtCosmetics[p.clsId].add(itemId);
+    if (cs.skin  != null) p.cosmetic.skin  = cs.skin;
+    if (cs.trail != null) p.cosmetic.trail = cs.trail;
+    if (cs.glow  != null) p.cosmetic.glow  = cs.glow;
+    if (cs.size  != null) p.cosmetic.size  = cs.size;
+    this.pushFx({ t: 'buy', x: p.x, y: p.y });
+    return { ok: true, msg: `永久解锁 ${cs.name}` };
+  }
+
   // ---- main update --------------------------------------------------------
   update(dt) {
     const t = now();
@@ -640,6 +729,21 @@ class World {
     }
     if (this.bosses.size < BALANCE.boss.count && t >= this.bossRespawnAt && this.bossRespawnAt !== 0) {
       this.spawnBoss(); this.bossRespawnAt = 0;
+    }
+
+    // dead merchants: respawn 30s after death at a fresh random point
+    if (this.merchantRespawns.length) {
+      const still = [];
+      for (const m of this.merchantRespawns) {
+        if (t < m.respawnAt) { still.push(m); continue; }
+        const p = this.randomPoint(200);
+        m.x = p.x; m.y = p.y; m.tx = p.x; m.ty = p.y;
+        m.hp = m.maxHp;
+        m.state = 'idle'; m.stateUntil = t + 2000;   // 短暂停顿表示"刚回来"
+        this.merchants.set(m.id, m);
+        this.pushFx({ t: 'merchantSpawn', x: m.x, y: m.y });
+      }
+      this.merchantRespawns = still;
     }
 
     // merchants: short hop, then stand still a while so players can shop
@@ -902,14 +1006,16 @@ class World {
         score: p.score, xp: r(p.xp), xpNext: p.xpNext, extraLives: p.extraLives,
         invis: p.hasBuff('invis', t), buffs,
         prot: p.spawnProtectUntil > t,
-        chat: p.chat ? p.chat.text : null
+        chat: p.chat ? p.chat.text : null,
+        // permanent-shop cosmetic state (drives the client-side skin/glow/trail/size rendering)
+        skin: p.cosmetic.skin, trail: p.cosmetic.trail, glow: p.cosmetic.glow, size: p.cosmetic.size
       });
     }
     const bosses = [];
     for (const b of this.bosses.values())
       bosses.push({ id: b.id, name: b.name, type: b.type, x: r(b.x), y: r(b.y), hp: r(Math.max(0, b.hp)), maxHp: b.maxHp, facing: +b.facing.toFixed(2), r: b.r, enraged: !!b.enraged });
     const merchants = [];
-    for (const m of this.merchants.values()) merchants.push({ id: m.id, name: m.name, x: r(m.x), y: r(m.y), idle: m.state === 'idle' });
+    for (const m of this.merchants.values()) merchants.push({ id: m.id, name: m.name, x: r(m.x), y: r(m.y), idle: m.state === 'idle', hp: r(Math.max(0, m.hp)), maxHp: m.maxHp });
     const items = [];
     for (const it of this.items.values()) items.push({ id: it.id, type: it.type, x: r(it.x), y: r(it.y) });
     const projectiles = [];
@@ -923,17 +1029,18 @@ class World {
   // Slice the prepared snapshot down to one client's view rectangle.
   // (Linear scan over the snapshot; if profiling ever shows this dominating at
   // very high player counts, back it with a spatial grid — see P3.)
-  viewFor(rect, viewer) {
+  viewFor(rect, viewer, spectator = false) {
     const s = this._snap, fxAll = this._fx || [];
     const inR = (e) => e.x >= rect.x0 && e.x <= rect.x1 && e.y >= rect.y0 && e.y <= rect.y1;
     // Hide invisible rivals at the source (anti-cheat): a culled client never
     // receives their exact position, so a patched client still can't see them.
     // You always see yourself, and 洞察之眼/reveal still surfaces hidden players.
-    // (The low-rate minimap overview stays a single broadcast — its faint blip
-    // is filtered client-side, an accepted trade for keeping that one broadcast.)
+    // Spectators are neutral observers (not rivals), so they see everyone — including
+    // stealthed players — which also stops "follow" from dropping its target the
+    // instant that player cloaks.
     const viewerId = viewer ? viewer.id : null;
     const revealed = viewer ? viewer.hasBuff('reveal', s.t) : false;
-    const canSee = (p) => inR(p) && (!p.invis || p.id === viewerId || revealed);
+    const canSee = (p) => inR(p) && (spectator || !p.invis || p.id === viewerId || revealed);
     const fx = [];
     for (const f of fxAll) {
       if (GLOBAL_FX.has(f.t) || f.x === undefined) fx.push(f);            // always-deliver announcements

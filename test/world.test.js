@@ -179,18 +179,32 @@ test('shadow veil (assassin skill 2) blinks the held direction and cloaks', () =
   assert.ok(a.hasBuff('invis', Date.now()), 'cloaked while escaping');
 });
 
-// ---- shop ------------------------------------------------------------------
-test('buy() validates merchant proximity and gold', () => {
+// ---- permanent shop --------------------------------------------------------
+test('permanentBuy() validates merchant proximity, gold, and ownership', () => {
   const w = new World();
   const p = w.addPlayer('Buyer', 'warrior');
   for (const m of w.merchants.values()) { m.x = 1; m.y = 1; }   // merchants far away
   p.x = WORLD.width - 1; p.y = WORLD.height - 1;
-  assert.equal(w.buy(p, 'heal').ok, false, 'rejected: no merchant nearby');
-  const m = [...w.merchants.values()][0]; m.x = p.x; m.y = p.y; // bring one adjacent
+  // far from merchant
+  assert.equal(w.permanentBuy(p, 'eq_hp1').ok, false, 'rejected: no merchant nearby');
+  // bring a merchant adjacent, no gold
+  const m = [...w.merchants.values()][0]; m.x = p.x; m.y = p.y;
   p.gold = 0;
-  assert.equal(w.buy(p, 'heal').ok, false, 'rejected: not enough gold');
+  assert.equal(w.permanentBuy(p, 'eq_hp1').ok, false, 'rejected: not enough gold');
+  // pay up — equipment piece applies bonus and tracks ownership
   p.gold = 9999;
-  assert.equal(w.buy(p, 'heal').ok, true, 'succeeds near a merchant with gold');
+  const r = w.permanentBuy(p, 'eq_hp1');
+  assert.equal(r.ok, true, 'succeeds near a merchant with gold');
+  assert.equal(p.equip.hp, 40, 'eq_hp1 raises equip.hp by 40');
+  assert.equal(p.boughtEquipment.has('eq_hp1'), true, 'owned set tracks purchase');
+  // re-buy is rejected
+  assert.equal(w.permanentBuy(p, 'eq_hp1').ok, false, 'rejected: already owned');
+  // cosmetic must match class
+  const cos = w.permanentBuy(p, 'm_skin_arcane');   // mage skin
+  assert.equal(cos.ok, false, 'rejected: cosmetic not for current class');
+  const wcos = w.permanentBuy(p, 'w_skin_crimson'); // warrior skin
+  assert.equal(wcos.ok, true, 'succeeds: warrior skin for a warrior');
+  assert.equal(p.cosmetic.skin, 'crimson', 'skin applied to cosmetic state');
 });
 
 // ---- area-of-interest serialization ---------------------------------------

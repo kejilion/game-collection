@@ -11,7 +11,7 @@ const { WebSocketServer } = require('ws');
 
 const { World } = require('./world');
 const leaderboard = require('./leaderboard');
-const { WORLD, TICK_RATE, BROADCAST_RATE, CLASSES, ITEM_TYPES, SHOP, BOSS_DEFS } = require('./config');
+const { WORLD, TICK_RATE, BROADCAST_RATE, CLASSES, ITEM_TYPES, PERMANENT_SHOP_CATALOG, BOSS_DEFS } = require('./config');
 
 const PORT = process.env.PORT || 3000;
 const BACKPRESSURE_BYTES = 256 * 1024;   // skip a client's state frame while its send buffer is backed up
@@ -58,7 +58,7 @@ wss.on('connection', (ws) => {
   ws.on('error', () => {});          // ignore abrupt-disconnect errors (would otherwise crash the process)
 
   // send static definitions right away so the menu can render class cards
-  send(ws, { type: 'defs', classes: CLASSES, items: ITEM_TYPES, shop: SHOP, bosses: BOSS_DEFS });
+  send(ws, { type: 'defs', classes: CLASSES, items: ITEM_TYPES, permanentShop: PERMANENT_SHOP_CATALOG, bosses: BOSS_DEFS });
   send(ws, { type: 'spectatorCount', count: spectators.size });
 
   ws.on('message', (raw) => {
@@ -77,8 +77,16 @@ wss.on('connection', (ws) => {
         sockets.set(ws, p.id);
         send(ws, {
           type: 'welcome', id: p.id, world: WORLD,
-          classes: CLASSES, items: ITEM_TYPES, shop: SHOP, bosses: BOSS_DEFS,
-          obstacles: world.getObstacles(), tickRate: TICK_RATE
+          classes: CLASSES, items: ITEM_TYPES, permanentShop: PERMANENT_SHOP_CATALOG, bosses: BOSS_DEFS,
+          obstacles: world.getObstacles(), tickRate: TICK_RATE,
+          gold: p.gold,
+          // permanent-shop "already bought" state for THIS match (so the shop
+          // panel can render owned items as such). Resets every match because
+          // the Player instance is fresh.
+          owned: {
+            equipment: [...p.boughtEquipment],
+            cosmetics: { warrior: [...p.boughtCosmetics.warrior], mage: [...p.boughtCosmetics.mage], assassin: [...p.boughtCosmetics.assassin] }
+          }
         });
         broadcast({ type: 'sys', text: `${name} 加入了大乱斗！`, color: p.cls.color });
         break;
@@ -96,6 +104,7 @@ wss.on('connection', (ws) => {
         }
         break;
       case 'buy': if (player) { const r = world.buy(player, m.item); send(ws, { type: 'shopResult', ...r }); } break;
+      case 'shopPermanentBuy': if (player) { const r = world.permanentBuy(player, m.item); send(ws, { type: 'shopResult', ...r }); } break;
       case 'leave': {                                    // return to character select
         if (player) { leaderboard.record(player); world.removePlayer(player.id); sockets.delete(ws); }
         break;
@@ -110,7 +119,7 @@ wss.on('connection', (ws) => {
         spectators.add(ws);
         send(ws, {
           type: 'spectateWelcome', world: WORLD,
-          classes: CLASSES, items: ITEM_TYPES, shop: SHOP, bosses: BOSS_DEFS,
+          classes: CLASSES, items: ITEM_TYPES, permanentShop: PERMANENT_SHOP_CATALOG, bosses: BOSS_DEFS,
           obstacles: world.getObstacles(), tickRate: TICK_RATE
         });
         broadcast({ type: 'spectatorCount', count: spectators.size });
@@ -171,7 +180,7 @@ setInterval(() => {
     if (ws.readyState !== ws.OPEN) continue;
     if (ws.bufferedAmount > BACKPRESSURE_BYTES) continue;
     const full = { x0: -9999, y0: -9999, x1: WORLD.width + 9999, y1: WORLD.height + 9999 };
-    send(ws, { type: 'state', ...world.viewFor(full, null) });
+    send(ws, { type: 'state', ...world.viewFor(full, null, true) });   // spectators see everyone, incl. stealthed
   }
 }, Math.round(1000 / BROADCAST_RATE));
 
