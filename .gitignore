@@ -1,6 +1,9 @@
-node_modules/
+﻿node_modules/
 data/
 .claude/
 .env
 .env.*
 *.log
+
+# local runtime process id
+.devpid.txt
