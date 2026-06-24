@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
 <title>大乱斗 · Arena Brawl</title>
-<link rel="stylesheet" href="css/style.css?v=20260623" />
+<link rel="stylesheet" href="css/style.css?v=20260629" />
 </head>
 <body>
 
@@ -40,6 +40,15 @@
 <!-- ============================ GAME ============================ -->
 <section id="game" class="screen">
   <canvas id="canvas"></canvas>
+
+  <!-- top-center day/night state -->
+  <div class="hud day-night-status" id="dayNightStatus" data-phase="day" aria-live="polite">
+    <div class="dns-viewport"><div class="dns-reel">
+      <span class="dns-phase" data-phase="day">☀ 白昼</span><span class="dns-phase" data-phase="dusk">🌇 黄昏</span><span class="dns-phase" data-phase="night">🌙 夜晚</span><span class="dns-phase" data-phase="dawn">🌤 黎明</span>
+      <span class="dns-phase" data-phase="day">☀ 白昼</span><span class="dns-phase" data-phase="dusk">🌇 黄昏</span><span class="dns-phase" data-phase="night">🌙 夜晚</span><span class="dns-phase" data-phase="dawn">🌤 黎明</span>
+      <span class="dns-phase" data-phase="day">☀ 白昼</span><span class="dns-phase" data-phase="dusk">🌇 黄昏</span><span class="dns-phase" data-phase="night">🌙 夜晚</span><span class="dns-phase" data-phase="dawn">🌤 黎明</span>
+    </div></div>
+  </div>
 
   <!-- top-left player panel -->
   <div class="hud panel-player" id="playerPanel">
@@ -161,8 +170,8 @@
 
 <script src="js/net.js?v=20260623"></script>
 <script src="js/input.js?v=20260623"></script>
-<script src="js/render.js?v=20260623"></script>
+<script src="js/render.js?v=20260627"></script>
 <script src="js/hud.js?v=20260623"></script>
-<script src="js/main.js?v=20260623"></script>
+<script src="js/main.js?v=20260629"></script>
 </body>
 </html>

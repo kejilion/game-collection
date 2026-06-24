@@ -6,6 +6,33 @@
 
 const WORLD = { width: 3200, height: 2200 };
 
+// ---- shared day / night timeline ------------------------------------------
+// The World owns the start timestamp; this module keeps the timeline pure so
+// simulation, snapshots and tests always agree on the same phase.
+const DAY_NIGHT = {
+  dayMs: 150000,
+  duskMs: 30000,
+  nightMs: 90000,
+  dawnMs: 30000,
+  nightVisibility: 0.5
+};
+
+function dayNightLightAt(elapsedMs) {
+  const cycleMs = DAY_NIGHT.dayMs + DAY_NIGHT.duskMs + DAY_NIGHT.nightMs + DAY_NIGHT.dawnMs;
+  let t = ((elapsedMs % cycleMs) + cycleMs) % cycleMs;
+  if (t < DAY_NIGHT.dayMs) return { phase: 'day', visibility: 1, phaseProgress: t / DAY_NIGHT.dayMs };
+  t -= DAY_NIGHT.dayMs;
+  if (t < DAY_NIGHT.duskMs) {
+    const progress = t / DAY_NIGHT.duskMs;
+    return { phase: 'dusk', visibility: 1 + (DAY_NIGHT.nightVisibility - 1) * progress, phaseProgress: progress };
+  }
+  t -= DAY_NIGHT.duskMs;
+  if (t < DAY_NIGHT.nightMs) return { phase: 'night', visibility: DAY_NIGHT.nightVisibility, phaseProgress: t / DAY_NIGHT.nightMs };
+  t -= DAY_NIGHT.nightMs;
+  const progress = t / DAY_NIGHT.dawnMs;
+  return { phase: 'dawn', visibility: DAY_NIGHT.nightVisibility + (1 - DAY_NIGHT.nightVisibility) * progress, phaseProgress: progress };
+}
+
 const TICK_RATE = 30;        // server simulation steps / second
 const BROADCAST_RATE = 20;   // state snapshots / second
 
@@ -277,5 +304,6 @@ const KILL = { multiWindowMs: 10000 };   // consecutive kills within this window
 
 module.exports = {
   WORLD, TICK_RATE, BROADCAST_RATE,
+  DAY_NIGHT, dayNightLightAt,
   CLASSES, ITEM_TYPES, ITEM_WEIGHTS, PERMANENT_SHOP_CATALOG, BALANCE, BOSS_TYPES, BOSS_DEFS, OBSTACLES, DROP, KILL
 };

@@ -6,7 +6,7 @@ author: "Codex"
 tags: [deploy, ops, docker, test-server, arena-brawl]
 params: [project_dir, version, primary_server, secondary_server, ssh_key, known_hosts, app_dir, port]
 created: "2026-06-23T07:01:32+08:00"
-updated: "2026-06-23T07:01:32+08:00"
+updated: "2026-06-23T17:35:00+08:00"
 ---
 
 # Deploy Arena Test Servers
@@ -14,6 +14,88 @@ updated: "2026-06-23T07:01:32+08:00"
 ## Purpose
 
 Safely deploy the latest Arena Brawl test build to two Docker-based test servers. The workflow protects rollback points first, deploys the primary server from the local project, then transfers the same release and Docker image from the primary server to the secondary server.
+
+## Step 0. Ensure SSH access to both servers
+
+The workflow assumes ${{ssh_key}} can log in as root to ${{primary_server}} and ${{secondary_server}} in BatchMode (no interactive password prompt). If it cannot, generate a dedicated keypair and have the operator add the public key to root's authorized_keys on each server, then write the matching config.
+
+### 0.1 Generate a dedicated ed25519 keypair (one-time, per workstation)
+
+~~~powershell
+$sshDir = Join-Path $env:USERPROFILE ".ssh"
+New-Item -ItemType Directory -Force -Path $sshDir | Out-Null
+$keyPath = Join-Path $sshDir "deploy-arena_ed25519"
+if (-not (Test-Path $keyPath)) {
+  ssh-keygen -t ed25519 -C "arena-deploy@kejilion" -f $keyPath -N '""'
+}
+Get-Content "$keyPath.pub"
+~~~
+
+Expected output: a single `ssh-ed25519 AAAA... arena-deploy@kejilion` line. This key is the value used for `${{ssh_key}}` below.
+
+### 0.2 Pin both servers to the dedicated key in the SSH config
+
+Edit `$env:USERPROFILE\.ssh\config` and add (merge with any existing entries; do not duplicate the `Host` lines):
+
+~~~
+Host arena-110 arena-secondary
+    HostName 110.42.101.214
+    User root
+    Port 22
+    IdentityFile C:/Users/Administrator/.ssh/deploy-arena_ed25519
+    IdentitiesOnly yes
+    BatchMode yes
+    StrictHostKeyChecking yes
+
+Host arena-154 arena-primary
+    HostName 154.36.153.9
+    User root
+    Port 22
+    IdentityFile C:/Users/Administrator/.ssh/deploy-arena_ed25519
+    IdentitiesOnly yes
+    BatchMode yes
+    StrictHostKeyChecking yes
+~~~
+
+`IdentitiesOnly yes` ensures only the named key is offered (avoids "Permission denied" from key ordering). `StrictHostKeyChecking yes` requires an entry in `${{known_hosts}}`.
+
+### 0.3 Seed known_hosts with both server fingerprints
+
+~~~powershell
+$kh = Join-Path $env:USERPROFILE ".ssh/known_hosts"
+foreach ($h in @("110.42.101.214","154.36.153.9")) {
+  if (-not (ssh-keygen -F $h -f $kh 2>$null)) {
+    ssh-keyscan -H $h | Tee-Object -Append -FilePath $kh | Out-Null
+  }
+}
+~~~
+
+Expected output: each host appears in `${{known_hosts}}` (one ed25519 line per host).
+
+### 0.4 Operator: add the public key to root on each server
+
+On a workstation that can already reach ${{primary_server}} and ${{secondary_server}} (or via the hosting console), run as root on **each** server:
+
+~~~bash
+mkdir -p /root/.ssh
+chmod 700 /root/.ssh
+echo 'ssh-ed25519 <paste contents of deploy-arena_ed25519.pub>' >> /root/.ssh/authorized_keys
+chmod 600 /root/.ssh/authorized_keys
+~~~
+
+The public key string is the same `ssh-ed25519 AAAA... arena-deploy@kejilion` line printed in 0.1.
+
+### 0.5 Verify BatchMode login before continuing
+
+~~~powershell
+foreach ($h in @("arena-110","arena-154")) {
+  ssh -o BatchMode=yes $h "echo OK; hostname; uname -a"
+}
+~~~
+
+Expected output: `OK`, a hostname, and `uname -a` for each server. If either host prints `Permission denied (publickey)`, stop and repeat 0.4 on that server; do not continue with deployment.
+
+The same `${{ssh_key}}` value (`C:/Users/Administrator/.ssh/deploy-arena_ed25519`) is then used in steps 2-8 below in place of the legacy `prod-server_ed25519`.
 
 ## Prerequisites
 

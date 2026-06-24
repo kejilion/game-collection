@@ -10,7 +10,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { World } = require('../server/world');
-const { BALANCE, WORLD } = require('../server/config');
+const { BALANCE, WORLD, DAY_NIGHT, dayNightLightAt } = require('../server/config');
 
 // two un-protected players in an otherwise empty world, A at (500,500), B at (560,500)
 function duel(clsA = 'warrior', clsB = 'mage') {
@@ -34,6 +34,28 @@ test('world seeds bosses, merchants, items and obstacles', () => {
   assert.equal(w.merchants.size, BALANCE.merchantCount);
   assert.ok(w.items.size > 0, 'items seeded');
   assert.ok(w.obstacles.length > 0, 'obstacles generated');
+});
+
+test('day-night cycle moves smoothly through all four phases and repeats', () => {
+  const { dayMs, duskMs, nightMs, dawnMs, nightVisibility } = DAY_NIGHT;
+  assert.deepEqual(dayNightLightAt(0), { phase: 'day', visibility: 1, phaseProgress: 0 });
+  assert.deepEqual(dayNightLightAt(dayMs), { phase: 'dusk', visibility: 1, phaseProgress: 0 });
+  assert.equal(dayNightLightAt(dayMs + duskMs / 2).visibility, 0.75, 'dusk reaches the midpoint smoothly');
+  assert.equal(dayNightLightAt(dayMs + duskMs / 2).phaseProgress, 0.5, 'dusk scroll is halfway to night');
+  assert.deepEqual(dayNightLightAt(dayMs + duskMs), { phase: 'night', visibility: nightVisibility, phaseProgress: 0 });
+  assert.equal(dayNightLightAt(dayMs + duskMs + nightMs + dawnMs / 2).visibility, 0.75, 'dawn restores sight smoothly');
+  assert.equal(dayNightLightAt(dayMs + duskMs + nightMs + dawnMs / 2).phaseProgress, 0.5, 'dawn scroll is halfway to day');
+  assert.deepEqual(dayNightLightAt(dayMs + duskMs + nightMs + dawnMs), { phase: 'day', visibility: 1, phaseProgress: 0 });
+});
+
+test('world snapshots include the shared day-night light state', () => {
+  const w = new World();
+  const p = w.addPlayer('Light', 'warrior');
+  w.prepareSnapshot();
+  const state = w.viewFor({ x0: -1, y0: -1, x1: WORLD.width + 1, y1: WORLD.height + 1 }, p);
+  assert.equal(state.light.phase, 'day');
+  assert.equal(state.light.visibility, 1);
+  assert.ok(state.light.phaseProgress >= 0 && state.light.phaseProgress < 1);
 });
 
 test('addPlayer / removePlayer track population and class', () => {

@@ -9,6 +9,9 @@ const Renderer = (() => {
   let vw = 0, vh = 0, dpr = 1;
   let camX = 0, camY = 0;
   let decor = [];
+  let ambientMotes = [];
+  let atmosphereClock = 0;
+  let nightMaskRadius = null;
   let obstacles = [];
   const particles = [], floaters = [], rings = [], slashes = [], dashes = [];
   // hexA(hex, alpha) -> 'rgba(r,g,b,a)'. Defined near the bottom of this file
@@ -31,10 +34,22 @@ const Renderer = (() => {
   function setWorld(dims, classes, items, bosses) {
     W = dims; CLASSES = classes; ITEMS = items; BOSS = bosses || {};
     decor = [];
+    ambientMotes = [];
+    nightMaskRadius = null;
     const n = Math.floor((W.width * W.height) / 90000);
     for (let i = 0; i < n; i++) {
       decor.push({ x: Math.random() * W.width, y: Math.random() * W.height,
         r: 40 + Math.random() * 120, h: Math.random() * 360, a: 0.04 + Math.random() * 0.05 });
+    }
+    // Fixed world-space motes make the arena feel inhabited: they drift with
+    // the camera instead of looking like a flat screen filter.
+    const motes = Math.floor((W.width * W.height) / 52000);
+    for (let i = 0; i < motes; i++) {
+      ambientMotes.push({
+        x: Math.random() * W.width, y: Math.random() * W.height,
+        r: 1.2 + Math.random() * 2.4, phase: Math.random() * Math.PI * 2,
+        sway: 5 + Math.random() * 14, hue: Math.random() < 0.58 ? 54 : 192
+      });
     }
   }
   function setObstacles(list) { obstacles = list || []; }
@@ -143,6 +158,7 @@ const Renderer = (() => {
   function draw(view, dt) {
     // self-heal: if layout size drifted (e.g. after a display:none→block switch), re-measure
     if (cv.clientWidth && (cv.clientWidth !== vw || cv.clientHeight !== vh)) resize();
+    atmosphereClock += dt;
     const self = view.self;
     const tx = self ? self.x : (view.lastX || W.width / 2);
     const ty = self ? self.y : (view.lastY || W.height / 2);
@@ -155,7 +171,8 @@ const Renderer = (() => {
     ctx.save();
     ctx.translate(-camX + sx, -camY + sy);
 
-    drawGround();
+    drawGround(view.light);
+    drawAmbientMotes(view.light);
     drawObstacles();
     // depth order: items < projectiles < merchants < boss < players
     for (const it of view.items) drawItem(it);
@@ -173,19 +190,22 @@ const Renderer = (() => {
     drawFloaters(dt);
 
     ctx.restore();
+    drawCelestialAtmosphere(view.light);
+    drawNightVision(view, dt);
     drawMinimap(view);
   }
 
   // ---- ground -------------------------------------------------------------
-  function drawGround() {
+  function drawGround(light) {
     const x0 = camX, y0 = camY;
+    const palette = groundPalette(light);
     const g = ctx.createLinearGradient(0, y0, 0, y0 + vh);
-    g.addColorStop(0, '#16204a'); g.addColorStop(1, '#0d1430');
+    g.addColorStop(0, palette.top); g.addColorStop(1, palette.bottom);
     ctx.fillStyle = g; ctx.fillRect(x0, y0, vw, vh);
     // soft decorative blobs
     for (const d of decor) {
       if (d.x < x0 - d.r || d.x > x0 + vw + d.r || d.y < y0 - d.r || d.y > y0 + vh + d.r) continue;
-      ctx.fillStyle = `hsla(${d.h},70%,60%,${d.a})`;
+      ctx.fillStyle = `hsla(${d.h},70%,${palette.decorLight}%,${d.a * palette.decorAlpha})`;
       ctx.beginPath(); ctx.arc(d.x, d.y, d.r, 0, 7); ctx.fill();
     }
     // grid
@@ -200,6 +220,174 @@ const Renderer = (() => {
     ctx.shadowColor = 'rgba(120,170,255,.6)'; ctx.shadowBlur = 18;
     ctx.strokeRect(3, 3, W.width - 6, W.height - 6);
     ctx.shadowBlur = 0;
+  }
+
+  // The mask is a soft circle, never an ellipse. It starts beyond the whole
+  // screen at dusk, contracts inward, then expands beyond the screen again at
+  // dawn; that keeps both transitions gentle even when a snapshot arrives.
+  function drawNightVision(view, dt) {
+    if (view.spectating || !view.self) return;
+    const light = normalLight(view.light);
+    const nightness = clamp((1 - light.visibility) / 0.5, 0, 1);
+    const cx = view.self.x - camX;
+    const cy = view.self.y - camY;
+    const farthestCorner = Math.hypot(Math.max(cx, vw - cx), Math.max(cy, vh - cy));
+    const edgeWidth = Math.max(155, Math.min(vw, vh) * 0.25);
+    const outsideScreen = farthestCorner + edgeWidth + 110;
+    const nightRadius = Math.max(150, Math.min(vw, vh) * 0.25);
+    const easedNightness = 0.5 - Math.cos(Math.PI * nightness) * 0.5;
+    const desiredRadius = outsideScreen + (nightRadius - outsideScreen) * easedNightness;
+
+    // A short renderer-side response absorbs packet cadence and also lets a
+    // player joining mid-night see the veil drift in from off-screen.
+    if (nightMaskRadius == null) nightMaskRadius = outsideScreen;
+    const response = 1 - Math.exp(-Math.max(0, dt) * 2.4);
+    nightMaskRadius += (desiredRadius - nightMaskRadius) * response;
+    if (nightness <= 0.001 && nightMaskRadius >= outsideScreen - 1) return;
+
+    const presence = clamp((outsideScreen - nightMaskRadius) / (outsideScreen - nightRadius), 0, 1);
+    const outerRadius = nightMaskRadius + edgeWidth;
+    const coreStop = clamp(nightMaskRadius / outerRadius, 0, 1);
+    const midStop = coreStop + (1 - coreStop) * 0.56;
+    // Beyond this radius the arena is intentionally unreadable. It is close
+    // enough that the far half of a wide display is truly black at night,
+    // while the preceding two fog bands keep the falloff natural.
+    const blackoutRadius = nightMaskRadius + edgeWidth * 2.55;
+    const deepRadius = blackoutRadius + edgeWidth * 0.72;
+    const deepStart = clamp((nightMaskRadius + edgeWidth * 0.24) / deepRadius, 0, 1);
+    const deepEdge = clamp(outerRadius / deepRadius, deepStart, 1);
+    const blackStop = clamp(blackoutRadius / deepRadius, deepEdge, 1);
+    const deepMid = deepEdge + (blackStop - deepEdge) * 0.34;
+    const deepLate = deepEdge + (blackStop - deepEdge) * 0.72;
+    const pulse = 0.5 + Math.sin(atmosphereClock * 1.2) * 0.5;
+
+    ctx.save();
+    const shade = ctx.createRadialGradient(cx, cy, 0, cx, cy, outerRadius);
+    const coreTint = presence * (0.018 + pulse * 0.012);
+    shade.addColorStop(0, `rgba(24,34,76,${coreTint})`);
+    shade.addColorStop(coreStop, `rgba(18,27,65,${coreTint})`);
+    shade.addColorStop(midStop, `rgba(10,18,52,${presence * 0.25})`);
+    shade.addColorStop(1, `rgba(5,11,34,${presence * 0.36})`);
+    ctx.fillStyle = shade;
+    ctx.fillRect(0, 0, vw, vh);
+
+    // A second, much larger veil gives the unseen area real depth: the first
+    // ring only softens silhouettes; the farther a point is from the player,
+    // the more the deep fog erases it.
+    const deepFog = ctx.createRadialGradient(cx, cy, 0, cx, cy, deepRadius);
+    deepFog.addColorStop(0, 'rgba(4,9,31,0)');
+    deepFog.addColorStop(deepStart, 'rgba(4,9,31,0)');
+    deepFog.addColorStop(deepEdge, `rgba(4,9,31,${presence * 0.08})`);
+    deepFog.addColorStop(deepMid, `rgba(4,9,31,${presence * 0.26})`);
+    deepFog.addColorStop(deepLate, `rgba(3,7,25,${presence * 0.58})`);
+    deepFog.addColorStop(blackStop, `rgba(2,5,18,${presence * 0.92})`);
+    deepFog.addColorStop(1, `rgba(1,3,12,${presence * 0.98})`);
+    ctx.fillStyle = deepFog;
+    ctx.fillRect(0, 0, vw, vh);
+    ctx.restore();
+  }
+
+  function lightMood(rawLight) {
+    const light = normalLight(rawLight);
+    const nightness = clamp((1 - light.visibility) / 0.5, 0, 1);
+    // Twilight peaks halfway through dusk/dawn, rather than snapping at phase boundaries.
+    const twilight = (light.phase === 'dusk' || light.phase === 'dawn')
+      ? Math.sin(Math.PI * nightness) : 0;
+    return { light, nightness, twilight, daylight: 1 - nightness };
+  }
+
+  // Tiny floating lights behind the actors: gold reads as fireflies, cyan as
+  // distant spirit motes. They stay sparse enough to preserve combat clarity.
+  function drawAmbientMotes(rawLight) {
+    const mood = lightMood(rawLight);
+    if (mood.nightness < 0.02 && mood.twilight < 0.04) return;
+    const x0 = camX, y0 = camY;
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    for (const m of ambientMotes) {
+      if (m.x < x0 - 40 || m.x > x0 + vw + 40 || m.y < y0 - 40 || m.y > y0 + vh + 40) continue;
+      const pulse = 0.45 + 0.55 * Math.sin(atmosphereClock * 1.7 + m.phase);
+      const alpha = (0.05 + pulse * 0.26) * mood.nightness + mood.twilight * 0.055;
+      if (alpha <= 0.01) continue;
+      const y = m.y + Math.sin(atmosphereClock * 0.58 + m.phase) * m.sway;
+      const color = m.hue === 54 ? '#ffe6a0' : '#9deaff';
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = color; ctx.shadowColor = color; ctx.shadowBlur = 9 + pulse * 8;
+      ctx.beginPath(); ctx.arc(m.x, y, m.r + pulse * 0.7, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.globalAlpha = 1; ctx.shadowBlur = 0; ctx.restore();
+  }
+
+  // Screen-space atmosphere keeps the mood legible even in open, empty areas:
+  // a gentle daytime sun, rose-violet twilight, then a cool moon bloom.
+  function drawCelestialAtmosphere(rawLight) {
+    const mood = lightMood(rawLight);
+    const breath = 0.5 + 0.5 * Math.sin(atmosphereClock * 0.38);
+    ctx.save();
+    if (mood.daylight > 0.03) {
+      const sun = ctx.createRadialGradient(vw * 0.80, vh * 0.12, 0, vw * 0.80, vh * 0.12, Math.max(vw, vh) * 0.58);
+      sun.addColorStop(0, `rgba(255,235,174,${0.12 * mood.daylight})`);
+      sun.addColorStop(0.35, `rgba(255,196,112,${0.055 * mood.daylight})`);
+      sun.addColorStop(1, 'rgba(255,196,112,0)');
+      ctx.fillStyle = sun; ctx.fillRect(0, 0, vw, vh);
+    }
+    if (mood.twilight > 0.01) {
+      const glow = ctx.createLinearGradient(0, 0, 0, vh);
+      glow.addColorStop(0, `rgba(255,156,124,${0.10 * mood.twilight})`);
+      glow.addColorStop(0.48, `rgba(191,123,212,${0.075 * mood.twilight})`);
+      glow.addColorStop(1, 'rgba(87,92,184,0)');
+      ctx.fillStyle = glow; ctx.fillRect(0, 0, vw, vh);
+    }
+    if (mood.nightness > 0.03) {
+      const mx = vw * 0.17, my = vh * 0.16, mr = Math.max(vw, vh) * 0.30;
+      const moon = ctx.createRadialGradient(mx, my, 0, mx, my, mr);
+      moon.addColorStop(0, `rgba(220,230,255,${(0.12 + breath * 0.035) * mood.nightness})`);
+      moon.addColorStop(0.28, `rgba(148,182,255,${0.065 * mood.nightness})`);
+      moon.addColorStop(1, 'rgba(93,119,220,0)');
+      ctx.fillStyle = moon; ctx.fillRect(0, 0, vw, vh);
+    }
+    ctx.restore();
+  }
+
+  function normalLight(light) {
+    const visibility = light && typeof light.visibility === 'number' ? light.visibility : 1;
+    return { phase: (light && light.phase) || 'day', visibility: clamp(visibility, 0.5, 1) };
+  }
+
+  function groundPalette(rawLight) {
+    const light = normalLight(rawLight);
+    const day = { top: '#315f85', bottom: '#1b4165', decorLight: 65, decorAlpha: 1 };
+    const twilight = { top: '#594878', bottom: '#26345f', decorLight: 59, decorAlpha: 0.72 };
+    const night = { top: '#16204a', bottom: '#0d1430', decorLight: 52, decorAlpha: 0.48 };
+    let from = day, to = day, progress = 0;
+    if (light.phase === 'dusk') {
+      from = day; to = night;
+      progress = (1 - light.visibility) / 0.5;
+      if (progress < 0.5) return mixPalette(from, twilight, progress * 2);
+      return mixPalette(twilight, to, (progress - 0.5) * 2);
+    }
+    if (light.phase === 'night') return night;
+    if (light.phase === 'dawn') {
+      from = night; to = day;
+      progress = (light.visibility - 0.5) / 0.5;
+      if (progress < 0.5) return mixPalette(from, twilight, progress * 2);
+      return mixPalette(twilight, to, (progress - 0.5) * 2);
+    }
+    return day;
+  }
+
+  function mixPalette(a, b, t) {
+    return {
+      top: mixHex(a.top, b.top, t), bottom: mixHex(a.bottom, b.bottom, t),
+      decorLight: a.decorLight + (b.decorLight - a.decorLight) * t,
+      decorAlpha: a.decorAlpha + (b.decorAlpha - a.decorAlpha) * t
+    };
+  }
+
+  function mixHex(a, b, t) {
+    const aa = hx(a), bb = hx(b);
+    const c = aa.map((v, i) => Math.round(v + (bb[i] - v) * clamp(t, 0, 1)));
+    return '#' + c.map(v => v.toString(16).padStart(2, '0')).join('');
   }
 
   function drawObstacles() {
@@ -647,25 +835,39 @@ const Renderer = (() => {
     const ov = (view.overview && view.overview.players && view.overview.players.length)
       ? view.overview
       : { players: view.players, bosses: view.bosses, merchants: view.merchants, items: view.items };
-    // obstacles
-    mmx.fillStyle = 'rgba(150,160,180,.5)';
-    for (const o of obstacles) { mmx.beginPath(); mmx.arc(o.x * sxk, o.y * syk, Math.max(1.5, o.r * sxk), 0, 7); mmx.fill(); }
-    // items
-    for (const it of ov.items) { const d = ITEMS[it.type]; mmx.fillStyle = hexA(d ? d.color : '#fff', .5); mmx.fillRect(it.x * sxk - 1, it.y * syk - 1, 2, 2); }
-    // merchants
-    mmx.fillStyle = '#ffd23f'; for (const m of ov.merchants) { mmx.beginPath(); mmx.arc(m.x * sxk, m.y * syk, 3, 0, 7); mmx.fill(); }
-    // boss (dot tinted to its archetype so you can tell which one is loose)
-    for (const b of ov.bosses) { mmx.fillStyle = (BOSS[b.type] && BOSS[b.type].accent) || '#ff3d3d'; mmx.beginPath(); mmx.arc(b.x * sxk, b.y * syk, 4, 0, 7); mmx.fill(); }
-    // players (hide invisible enemies unless we have reveal — matches the main view)
-    for (const p of ov.players) {
-      if (p.invis && !view.hasReveal && p.id !== view.selfId && !view.spectating) continue;
-      const cls = CLASSES[p.cls] || { color: '#fff' };
-      mmx.fillStyle = p.id === view.selfId ? '#9be7ff' : cls.color;
-      mmx.beginPath(); mmx.arc(p.x * sxk, p.y * syk, p.id === view.selfId ? 4 : 3, 0, 7); mmx.fill();
+    // During dusk these markers melt away; at full night, only the local
+    // player remains. Dawn restores them with the same smooth fade.
+    const minimapMarks = clamp((normalLight(view.light).visibility - 0.5) / 0.5, 0, 1);
+    if (minimapMarks > 0.001) {
+      mmx.globalAlpha = minimapMarks;
+      // obstacles
+      mmx.fillStyle = 'rgba(150,160,180,.5)';
+      for (const o of obstacles) { mmx.beginPath(); mmx.arc(o.x * sxk, o.y * syk, Math.max(1.5, o.r * sxk), 0, 7); mmx.fill(); }
+      // items
+      for (const it of ov.items) { const d = ITEMS[it.type]; mmx.fillStyle = hexA(d ? d.color : '#fff', .5); mmx.fillRect(it.x * sxk - 1, it.y * syk - 1, 2, 2); }
+      // merchants
+      mmx.fillStyle = '#ffd23f'; for (const m of ov.merchants) { mmx.beginPath(); mmx.arc(m.x * sxk, m.y * syk, 3, 0, 7); mmx.fill(); }
+      // boss (dot tinted to its archetype so you can tell which one is loose)
+      for (const b of ov.bosses) { mmx.fillStyle = (BOSS[b.type] && BOSS[b.type].accent) || '#ff3d3d'; mmx.beginPath(); mmx.arc(b.x * sxk, b.y * syk, 4, 0, 7); mmx.fill(); }
+      // Rivals fade with the rest of the map; invisibility still applies before night arrives.
+      for (const p of ov.players) {
+        if (p.id === view.selfId || (p.invis && !view.hasReveal && !view.spectating)) continue;
+        const cls = CLASSES[p.cls] || { color: '#fff' };
+        mmx.fillStyle = cls.color; mmx.beginPath(); mmx.arc(p.x * sxk, p.y * syk, 3, 0, 7); mmx.fill();
+      }
+      // The viewport frame is another information marker, so it vanishes too.
+      mmx.strokeStyle = 'rgba(255,255,255,.5)'; mmx.lineWidth = 1;
+      mmx.strokeRect(camX * sxk, camY * syk, vw * sxk, vh * syk);
     }
-    // viewport rect
-    mmx.strokeStyle = 'rgba(255,255,255,.5)'; mmx.lineWidth = 1;
-    mmx.strokeRect(camX * sxk, camY * syk, vw * sxk, vh * syk);
+    // Self is deliberately drawn last and at full brightness in every phase.
+    const self = view.self || ov.players.find(p => p.id === view.selfId);
+    if (self && !view.spectating) {
+      mmx.globalAlpha = 1;
+      mmx.fillStyle = '#9be7ff'; mmx.shadowColor = '#9be7ff'; mmx.shadowBlur = 8;
+      mmx.beginPath(); mmx.arc(self.x * sxk, self.y * syk, 4, 0, 7); mmx.fill();
+      mmx.shadowBlur = 0;
+    }
+    mmx.globalAlpha = 1;
   }
 
   // ---- utils --------------------------------------------------------------

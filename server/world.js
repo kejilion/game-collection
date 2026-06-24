@@ -5,7 +5,7 @@
 // ============================================================================
 
 const {
-  WORLD, CLASSES, ITEM_TYPES, ITEM_WEIGHTS, PERMANENT_SHOP_CATALOG, BALANCE, BOSS_TYPES, OBSTACLES, DROP, KILL
+  WORLD, CLASSES, ITEM_TYPES, ITEM_WEIGHTS, PERMANENT_SHOP_CATALOG, BALANCE, BOSS_TYPES, OBSTACLES, DROP, KILL, dayNightLightAt
 } = require('./config');
 
 // ---- small helpers ---------------------------------------------------------
@@ -156,6 +156,7 @@ class Projectile {
 // ===========================================================================
 class World {
   constructor() {
+    this.dayNightStartedAt = now();
     this.players = new Map();
     this.bosses = new Map();
     this.merchants = new Map();
@@ -221,6 +222,7 @@ class World {
     ent.y = clamp(ent.y, radius, WORLD.height - radius);
   }
   pushFx(e) { this.fx.push(e); }
+  lightAt(t = now()) { return dayNightLightAt(t - this.dayNightStartedAt); }
 
   // ---- lifecycle ----------------------------------------------------------
   addPlayer(name, clsId) {
@@ -1078,7 +1080,7 @@ class World {
     const projectiles = [];
     for (const pr of this.projectiles.values())
       projectiles.push({ id: pr.id, x: r(pr.x), y: r(pr.y), type: pr.type, r: pr.radius, owner: pr.ownerId, c: pr.color });
-    this._snap = { t, players, bosses, merchants, items, projectiles };
+    this._snap = { t, light: this.lightAt(t), players, bosses, merchants, items, projectiles };
     this._fx = this.fx; this.fx = [];   // capture fx once; viewFor() culls per client
     return this._snap;
   }
@@ -1104,7 +1106,7 @@ class World {
       else if (f.x >= rect.x0 && f.x <= rect.x1 && f.y >= rect.y0 && f.y <= rect.y1) fx.push(f);
     }
     return {
-      t: s.t,
+      t: s.t, light: s.light,
       players: s.players.filter(canSee),
       bosses: s.bosses.filter(inR),
       merchants: s.merchants.filter(inR),

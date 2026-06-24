@@ -1,4 +1,4 @@
-/* ============================================================================
+﻿/* ============================================================================
    Arena Brawl — cartoon UI styling
    ========================================================================== */
 :root{
@@ -88,6 +88,20 @@ body.chat-open .panel-chat{display:block;left:50%;right:auto;bottom:42%;transfor
 body.chat-open .chat-log{display:none}
 body.chat-open .chat-form input{opacity:1;font-size:16px;padding:12px 14px}
 .hud{position:absolute;z-index:5}
+
+/* A cyclic phase reel: the mask exposes only the current period at its center. */
+.day-night-status{--phase-cell:96px;top:16px;left:50%;transform:translateX(-50%);width:112px;padding:7px 10px;
+  border:1px solid rgba(183,210,255,.28);border-radius:999px;
+  background:rgba(9,17,47,.66);box-shadow:0 8px 22px rgba(0,0,0,.22),inset 0 1px rgba(255,255,255,.08);
+  backdrop-filter:blur(8px);font-size:12px;font-weight:800;letter-spacing:.08em;color:#ffe6a5;pointer-events:none;
+  transition:color .7s ease,border-color .7s ease,background .7s ease,box-shadow .7s ease}
+.dns-viewport{overflow:hidden;width:var(--phase-cell);margin:auto;mask-image:linear-gradient(90deg,transparent,#000 16%,#000 84%,transparent)}
+.dns-reel{display:flex;width:max-content;transform:translate3d(0,0,0);transition:transform .14s linear;will-change:transform}
+.dns-reel.reel-instant{transition:none}
+.dns-phase{flex:0 0 var(--phase-cell);width:var(--phase-cell);height:16px;line-height:16px;text-align:center;white-space:nowrap;text-shadow:0 0 7px currentColor}
+.day-night-status[data-phase="dusk"]{color:#ffc3a6;border-color:rgba(255,172,142,.42);background:rgba(69,35,79,.68)}
+.day-night-status[data-phase="night"]{color:#c7d7ff;border-color:rgba(150,183,255,.42);background:rgba(12,21,62,.74);box-shadow:0 8px 22px rgba(0,0,0,.3),0 0 18px rgba(105,149,255,.12)}
+.day-night-status[data-phase="dawn"]{color:#ffd0ad;border-color:rgba(255,191,151,.42);background:rgba(73,48,83,.68)}
 
 /* player panel */
 .panel-player{top:14px;left:14px;width:248px;padding:12px 14px;border-radius:16px;
@@ -315,6 +329,7 @@ body.chat-open .chat-form input{opacity:1;font-size:16px;padding:12px 14px}
   .panel-right{top:8px;right:8px;width:128px}.panel-right #minimap{display:none}.board{border-radius:12px}.board-tabs .tab{padding:6px 3px;font-size:11px}
   .board-list{max-height:120px;padding:4px}.board-list li{padding:4px;font-size:10.5px}.board-list .rank{width:14px}
   .panel-chat{display:none}
+  .day-night-status{--phase-cell:90px;top:10px;width:106px;padding:6px 8px;font-size:11px}
   .toast-wrap{top:122px;max-width:calc(100vw - 30px)}.toast{font-size:11px;padding:6px 12px}
   .skillbar{z-index:11;left:auto;right:12px;bottom:calc(12px + env(safe-area-inset-bottom));transform:none;display:grid;grid-template-columns:repeat(2,58px);gap:8px}
   .skill{width:58px;height:58px;border-radius:16px;touch-action:none}.skill.locked{display:none}.skill .key{display:none}.skill .ic{font-size:25px}.skill .nm{font-size:9px;bottom:4px}

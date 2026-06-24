@@ -14,6 +14,8 @@
     overview: { players: [], bosses: [], merchants: [], items: [] },  // global minimap blips (low-rate)
     interpDelay: 120, gapEMA: 50, lastStateAt: 0,  // adaptive interpolation for jittery links
     shopCloseAt: 0, isTouch: false,
+    lastLightPhase: null,
+    dayNightReelIndex: null, dayNightReelPhase: null, dayNightReelProgress: 0, dayNightReelResetTimer: null,
     spectating: false, specTarget: null, specFree: true, spectatorCount: 0,
     lastKilledBy: null, lastKilledAt: 0,   // who landed the killing blow on us (for the death notice)
     // free-cam: a spectator camera detached from any player — pan it anywhere
@@ -26,7 +28,7 @@
 
   // ---- spectator mode -------------------------------------------------------
   function onSpectateWelcome(m) {
-    G.spectating = true; G.specFree = true; G.specTarget = null;
+    G.spectating = true; G.specFree = true; G.specTarget = null; G.lastLightPhase = null; resetDayNightReel();
     G.world = m.world;
     G.specCam = { x: m.world.width / 2, y: m.world.height / 2 };   // free camera starts centered
     G.specKeys = { up: false, down: false, left: false, right: false };
@@ -287,7 +289,7 @@
   }
 
   function onWelcome(m) {
-    G.selfId = m.id; G.world = m.world;
+    G.selfId = m.id; G.world = m.world; G.lastLightPhase = null; resetDayNightReel();
     G.defs = { classes: m.classes, items: m.items, permanentShop: m.permanentShop, bosses: m.bosses || {} };
     G.obstacles = m.obstacles || [];
     Renderer.setWorld(m.world, m.classes, m.items, m.bosses);
@@ -315,6 +317,15 @@
 
   function onState(m) {
     const recv = performance.now();
+    if (m.light) {
+      updateDayNightStatus(m.light);
+      const previous = G.lastLightPhase;
+      if (previous && previous !== m.light.phase) {
+        if (m.light.phase === 'night') HUD.toast('🌙 夜幕降临 · 视野缩小', '#b9c8ff');
+        else if (m.light.phase === 'day') HUD.toast('☀ 天亮了 · 视野恢复', '#ffd98a');
+      }
+      G.lastLightPhase = m.light.phase;
+    }
     // adaptive interpolation: track packet inter-arrival jitter and stay that far behind
     if (G.lastStateAt) {
       const gap = recv - G.lastStateAt;
@@ -384,6 +395,62 @@
     if (G.spectating && m.players) updateSpecPlayerList(m.players);
   }
 
+  function updateDayNightStatus(light) {
+    const el = document.getElementById('dayNightStatus');
+    if (!el) return;
+    const phases = ['day', 'dusk', 'night', 'dawn'];
+    const phase = phases.includes(light.phase) ? light.phase : 'day';
+    const phaseIndex = phases.indexOf(phase);
+    const progress = clamp(Number(light.phaseProgress) || 0, 0, 1);
+    const reel = el.querySelector('.dns-reel');
+    if (!reel) return;
+    el.dataset.phase = phase;
+    el.setAttribute('aria-label', ({ day: '白昼', dusk: '黄昏', night: '夜晚', dawn: '黎明' })[phase]);
+
+    if (G.dayNightReelIndex == null) {
+      G.dayNightReelIndex = 4 + phaseIndex;  // begin in the middle copy for seamless wrapping
+      G.dayNightReelPhase = phaseIndex;
+      G.dayNightReelProgress = progress;
+      setDayNightReelOffset(reel, G.dayNightReelIndex + progress, true);
+      return;
+    }
+    const forward = (phaseIndex - G.dayNightReelPhase + phases.length) % phases.length;
+    let instant = false;
+    // A skipped server phase should still land correctly, but should not race through a long animation.
+    if (forward > 1) {
+      G.dayNightReelIndex = 4 + phaseIndex;
+      G.dayNightReelPhase = phaseIndex;
+      instant = true;
+    } else if (forward === 1) {
+      G.dayNightReelIndex += 1;
+      G.dayNightReelPhase = phaseIndex;
+    }
+    G.dayNightReelProgress = progress;
+    setDayNightReelOffset(reel, G.dayNightReelIndex + progress, instant);
+    if (G.dayNightReelIndex >= 8 && !G.dayNightReelResetTimer) {
+      G.dayNightReelResetTimer = setTimeout(() => {
+        G.dayNightReelIndex -= 4;
+        setDayNightReelOffset(reel, G.dayNightReelIndex + G.dayNightReelProgress, true);
+        G.dayNightReelResetTimer = null;
+      }, 820);
+    }
+  }
+
+  function setDayNightReelOffset(reel, position, instant) {
+    const cell = parseFloat(getComputedStyle(document.getElementById('dayNightStatus')).getPropertyValue('--phase-cell')) || 128;
+    reel.classList.toggle('reel-instant', !!instant);
+    reel.style.transform = `translate3d(${-position * cell}px,0,0)`;
+    if (instant) requestAnimationFrame(() => reel.classList.remove('reel-instant'));
+  }
+
+  function resetDayNightReel() {
+    G.dayNightReelIndex = null;
+    G.dayNightReelPhase = null;
+    G.dayNightReelProgress = 0;
+    clearTimeout(G.dayNightReelResetTimer);
+    G.dayNightReelResetTimer = null;
+  }
+
   // ---- main loop: interpolate + predict + render --------------------------
   function loop(now) {
     const dt = Math.min((now - lastFrame) / 1000, 0.05); lastFrame = now;
@@ -412,7 +479,7 @@
     const span = b.t - a.t || 1;
     const alpha = clamp((target - a.t) / span, 0, 1);
 
-    const view = { selfId: G.spectating ? null : G.selfId, players: [], bosses: [], merchants: [], items: G.items, projectiles: [] };
+    const view = { selfId: G.spectating ? null : G.selfId, players: [], bosses: [], merchants: [], items: G.items, projectiles: [], light: b.data.light || { phase: 'day', visibility: 1 } };
     view.bosses = lerpList(a.idx.bosses, b.idx.bosses, alpha);
     view.merchants = lerpList(a.idx.merchants, b.idx.merchants, alpha);
     view.projectiles = lerpList(a.idx.projectiles, b.idx.projectiles, alpha);
