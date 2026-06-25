@@ -196,9 +196,13 @@ const HUD = (() => {
     setTimeout(() => row.remove(), 5600);
 
     if (fx.boss) {
-      // Boss kills are always worth an immediate global announcement.  It preempts
-      // queued streak messages so the reward never feels swallowed by UI noise.
-      enqueueBanner({ big: '击败 BOSS', sub: killLine(fx), kind: 'boss', urgent: true, duration: 2300 });
+      // Boss-tagged feed entries come from two very different moments, so the
+      // banner has to read differently for each:
+      //   • killer is a player → celebrate "击败 BOSS"
+      //   • killer is a BOSS   → the victim just got taken down, so flip it
+      //     to "被 BOSS 击败" instead of letting "击败 BOSS" imply the reverse.
+      const big = killerIsBoss ? '被 BOSS 击败' : '击败 BOSS';
+      enqueueBanner({ big, sub: killLine(fx), kind: 'boss', urgent: true, duration: 2300 });
       return;
     }
     // big center banner for special moments

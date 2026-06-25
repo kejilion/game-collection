@@ -19,106 +19,100 @@ button{font-family:inherit;cursor:pointer;border:none;color:inherit}
 .screen.show{display:block}
 
 /* ============================ MENU ============================ */
-#menu{display:none;place-items:center;overflow:auto}
-#menu.show{display:grid}
-
-/* Layered, painterly background —replaces blur+float with a static layered
-   gradient + a one-time-painted SVG grain + 5 GPU-cheap drifting motes.
-/* ============================ MENU ============================ */
 #menu{display:none;place-items:center;overflow:auto;padding-bottom:96px;padding-top:8px}
 #menu.show{display:grid}
 
-/* Layered, painterly background — static gradient base + two slowly drifting
-   aurora veils + a starfield, all GPU-friendly transform/opacity animations.
-   No filter:blur repaints; every layer is paint-once then translated. */
+/* ============================ MENU ============================ */
+/* Layered painterly backdrop — one static gradient, two slow aurora veils
+   (transform-only, GPU-composited), and a compact starfield. No backdrop
+   repaints, no heavy blend surfaces. All motion is barely-perceptible breath
+   so the scene feels alive and premium without spinning the compositor hard. */
 .menu-bg{position:fixed;inset:0;pointer-events:none;overflow:hidden;
   background:
-    radial-gradient(120% 90% at 50% -10%,rgba(48,64,128,.55) 0%,transparent 60%),
-    radial-gradient(60% 42% at 50% 108%,rgba(239,91,82,.16) 0%,transparent 70%),
-    linear-gradient(180deg,#13193b 0%,#0c1130 55%,#070a22 100%);
-}
-/* film-grain texture painted once */
-.menu-bg::after{content:"";position:absolute;inset:0;opacity:.06;mix-blend-mode:overlay;
-  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 .7 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");pointer-events:none}
+    radial-gradient(120% 90% at 50% -8%,rgba(46,62,128,.5) 0%,transparent 58%),
+    radial-gradient(58% 40% at 50% 110%,rgba(239,91,82,.12) 0%,transparent 70%),
+    linear-gradient(180deg,#11163a 0%,#0b1030 55%,#070a20 100%)}
 
-/* Two drifting aurora veils — large soft radial blobs, transform-only,
-   32s/28s so motion is barely perceptible but breathes life into the scene */
-.aurora{position:absolute;top:-30%;left:-20%;width:140%;height:90%;
-  opacity:.6;will-change:transform,opacity;mix-blend-mode:screen;pointer-events:none}
+/* fine film grain, painted once, very low opacity for a tactile, premium feel */
+.menu-bg::after{content:"";position:absolute;inset:0;opacity:.045;mix-blend-mode:overlay;pointer-events:none;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 .7 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>")}
+
+/* aurora veils — softened, lower opacity for a more refined, less saturated sky */
+.aurora{position:absolute;top:-32%;left:-22%;width:144%;height:92%;
+  opacity:.5;will-change:transform,opacity;mix-blend-mode:screen;pointer-events:none}
 .aurora-a{
   background:
-    radial-gradient(46% 50% at 22% 30%,rgba(91,140,255,.5) 0%,transparent 60%),
-    radial-gradient(44% 46% at 70% 24%,rgba(163,104,255,.42) 0%,transparent 60%);
-  animation:auroraA 36s ease-in-out infinite alternate}
+    radial-gradient(44% 48% at 22% 30%,rgba(91,140,255,.42) 0%,transparent 60%),
+    radial-gradient(42% 44% at 70% 24%,rgba(163,104,255,.34) 0%,transparent 60%);
+  animation:auroraA 40s ease-in-out infinite alternate}
 .aurora-b{
   background:
-    radial-gradient(48% 52% at 78% 70%,rgba(255,93,158,.36) 0%,transparent 62%),
-    radial-gradient(42% 44% at 26% 74%,rgba(91,200,255,.34) 0%,transparent 62%);
-  animation:auroraB 30s ease-in-out infinite alternate}
+    radial-gradient(46% 50% at 78% 70%,rgba(255,93,158,.28) 0%,transparent 62%),
+    radial-gradient(40% 42% at 26% 74%,rgba(91,200,255,.28) 0%,transparent 62%);
+  animation:auroraB 34s ease-in-out infinite alternate}
 .aurora-c{
-  background:radial-gradient(50% 50% at 50% 60%,rgba(255,200,110,.2) 0%,transparent 60%);
-  animation:auroraC 44s ease-in-out infinite alternate}
-@keyframes auroraA{0%{transform:translate3d(-2%,-1%,0) rotate(-1deg) scale(1);opacity:.45}100%{transform:translate3d(8%,6%,0) rotate(2deg) scale(1.08);opacity:.7}}
-@keyframes auroraB{0%{transform:translate3d(2%,1%,0) rotate(1deg) scale(1.05);opacity:.4}100%{transform:translate3d(-7%,-5%,0) rotate(-2deg) scale(1);opacity:.65}}
-@keyframes auroraC{0%{transform:translate3d(0,3%,0) scale(1);opacity:.25}100%{transform:translate3d(0,-4%,0) scale(1.12);opacity:.45}}
+  background:radial-gradient(50% 50% at 50% 60%,rgba(255,200,110,.15) 0%,transparent 60%);
+  animation:auroraC 52s ease-in-out infinite alternate}
+@keyframes auroraA{0%{transform:translate3d(-1.5%,-1%,0) rotate(-1deg) scale(1);opacity:.38}100%{transform:translate3d(6%,4%,0) rotate(1.6deg) scale(1.06);opacity:.58}}
+@keyframes auroraB{0%{transform:translate3d(1.5%,1%,0) rotate(1deg) scale(1.04);opacity:.34}100%{transform:translate3d(-5%,-4%,0) rotate(-1.6deg) scale(1);opacity:.54}}
+@keyframes auroraC{0%{transform:translate3d(0,2%,0) scale(1);opacity:.2}100%{transform:translate3d(0,-3%,0) scale(1.08);opacity:.36}}
 
-/* Starfield — six pinpoint motes, gentle twinkle via opacity on a slow loop.
-   Single element, paint-once; opacity animation is GPU-composited. */
+/* starfield — tighter, subtler pinpoints for an elegant night sky */
 .stars{position:absolute;inset:0;
   background:
-    radial-gradient(2px 2px at 18% 22%,rgba(255,224,180,.75),transparent 60%),
-    radial-gradient(1.6px 1.6px at 72% 18%,rgba(190,210,255,.7),transparent 60%),
-    radial-gradient(2px 2px at 84% 62%,rgba(255,190,215,.6),transparent 60%),
-    radial-gradient(2px 2px at 12% 72%,rgba(190,230,255,.6),transparent 60%),
-    radial-gradient(1.6px 1.6px at 48% 88%,rgba(255,224,180,.55),transparent 60%),
-    radial-gradient(1.4px 1.4px at 60% 42%,rgba(220,210,255,.55),transparent 60%);
-  animation:starsTwinkle 7s ease-in-out infinite alternate;will-change:opacity}
+    radial-gradient(1.8px 1.8px at 18% 22%,rgba(255,224,180,.7),transparent 60%),
+    radial-gradient(1.5px 1.5px at 72% 18%,rgba(190,210,255,.62),transparent 60%),
+    radial-gradient(1.8px 1.8px at 84% 62%,rgba(255,190,215,.52),transparent 60%),
+    radial-gradient(1.8px 1.8px at 12% 72%,rgba(190,230,255,.52),transparent 60%),
+    radial-gradient(1.4px 1.4px at 48% 88%,rgba(255,224,180,.48),transparent 60%),
+    radial-gradient(1.3px 1.3px at 60% 42%,rgba(220,210,255,.48),transparent 60%);
+  animation:starsTwinkle 8s ease-in-out infinite alternate;will-change:opacity}
 .stars::after{content:"";position:absolute;inset:0;
   background:
-    radial-gradient(1.2px 1.2px at 32% 38%,rgba(200,220,255,.5),transparent 60%),
-    radial-gradient(1.2px 1.2px at 88% 28%,rgba(255,210,170,.45),transparent 60%),
-    radial-gradient(1px 1px at 22% 52%,rgba(255,255,255,.4),transparent 60%),
-    radial-gradient(1.2px 1.2px at 66% 76%,rgba(200,220,255,.45),transparent 60%);
-  animation:starsTwinkleB 5.5s ease-in-out infinite alternate;will-change:opacity}
-@keyframes starsTwinkle{0%{opacity:.55}100%{opacity:1}}
-@keyframes starsTwinkleB{0%{opacity:1}100%{opacity:.5}}
+    radial-gradient(1.1px 1.1px at 32% 38%,rgba(200,220,255,.42),transparent 60%),
+    radial-gradient(1.1px 1.1px at 88% 28%,rgba(255,210,170,.38),transparent 60%),
+    radial-gradient(1px 1px at 22% 52%,rgba(255,255,255,.34),transparent 60%),
+    radial-gradient(1.1px 1.1px at 66% 76%,rgba(200,220,255,.38),transparent 60%);
+  animation:starsTwinkleB 6.5s ease-in-out infinite alternate;will-change:opacity}
+@keyframes starsTwinkle{0%{opacity:.5}100%{opacity:.92}}
+@keyframes starsTwinkleB{0%{opacity:.92}100%{opacity:.46}}
 
-/* Card — layered translucent glass, no backdrop-filter. Warm halo + top
-   highlight + base gradient. contain:paint isolates it from the bg. */
+/* card — refined translucent glass: cooler, quieter base, finer hairlines,
+   a single warm halo and a crisp top edge. contain:paint keeps it isolated. */
 .menu-card{position:relative;width:min(560px,92vw);margin:24px;padding:36px 30px 28px;
   background:
-    radial-gradient(70% 45% at 14% 0%,rgba(255,210,63,.09),transparent 65%),
-    linear-gradient(180deg,rgba(255,255,255,.08) 0%,rgba(255,255,255,0) 28%),
-    linear-gradient(180deg,rgba(26,34,72,.84) 0%,rgba(14,20,48,.92) 100%);
-  border:1px solid rgba(255,255,255,.1);
+    radial-gradient(70% 45% at 14% 0%,rgba(255,210,63,.07),transparent 65%),
+    linear-gradient(180deg,rgba(255,255,255,.07) 0%,rgba(255,255,255,0) 26%),
+    linear-gradient(180deg,rgba(24,30,66,.86) 0%,rgba(13,18,44,.93) 100%);
+  border:1px solid rgba(255,255,255,.09);
   border-radius:26px;
   box-shadow:
-    0 40px 90px -24px rgba(0,0,0,.7),
-    0 12px 30px -10px rgba(0,0,0,.5),
-    0 0 0 1px rgba(255,255,255,.04) inset,
-    0 1px 0 rgba(255,255,255,.12) inset;
+    0 44px 96px -26px rgba(0,0,0,.72),
+    0 14px 32px -12px rgba(0,0,0,.52),
+    inset 0 0 0 1px rgba(255,255,255,.035),
+    inset 0 1px 0 rgba(255,255,255,.1);
   text-align:center;
   contain:paint;
   animation:menuIn .6s cubic-bezier(.2,.8,.25,1) both}
 @keyframes menuIn{
-  from{opacity:0;transform:translateY(14px) scale(.98)}
+  from{opacity:0;transform:translateY(14px) scale(.985)}
   to{opacity:1;transform:translateY(0) scale(1)}
 }
-/* gradient accent hairline at top — now a glowing 2px ribbon */
-.menu-card::before{content:"";position:absolute;top:0;left:16%;right:16%;height:2px;
-  background:linear-gradient(90deg,transparent,rgba(255,210,100,.8) 30%,rgba(255,150,200,.7) 55%,rgba(150,190,255,.7) 80%,transparent);
-  border-radius:2px;opacity:.9;box-shadow:0 0 12px rgba(255,200,120,.4)}
+/* top accent ribbon — slimmer, softer glow, more luxurious */
+.menu-card::before{content:"";position:absolute;top:0;left:18%;right:18%;height:1.5px;
+  background:linear-gradient(90deg,transparent,rgba(255,210,100,.75) 30%,rgba(255,150,200,.62) 55%,rgba(150,190,255,.62) 80%,transparent);
+  border-radius:2px;opacity:.85;box-shadow:0 0 10px rgba(255,200,120,.32)}
 
-/* Logo — animated gradient sheen for a living, premium title */
+/* logo — gentler sheen + a calmer, more premium breath */
 .logo{font-size:50px;font-weight:800;letter-spacing:.5px;line-height:1;
   background:linear-gradient(95deg,#ffd23f 0%,#ff8a5b 26%,#ff5d9e 50%,#9b7bff 74%,#5bc8ff 100%);
-  background-size:220% 100%;
+  background-size:200% 100%;
   -webkit-background-clip:text;background-clip:text;color:transparent;
   -webkit-text-fill-color:transparent;
-  filter:drop-shadow(0 6px 24px rgba(255,140,80,.28));
-  animation:logoSheen 7s ease-in-out infinite alternate,logoBreath 4.8s ease-in-out infinite alternate}
+  filter:drop-shadow(0 5px 20px rgba(255,140,80,.22));
+  animation:logoSheen 9s ease-in-out infinite alternate,logoBreath 6s ease-in-out infinite alternate}
 @keyframes logoSheen{0%{background-position:0% 50%}100%{background-position:100% 50%}}
-@keyframes logoBreath{0%{transform:scale(1);filter:drop-shadow(0 6px 24px rgba(255,140,80,.22))}100%{transform:scale(1.03);filter:drop-shadow(0 8px 30px rgba(255,140,80,.4))}}
+@keyframes logoBreath{0%{transform:scale(1);filter:drop-shadow(0 5px 20px rgba(255,140,80,.18))}100%{transform:scale(1.018);filter:drop-shadow(0 7px 26px rgba(255,140,80,.32))}}
 .logo span{display:block;font-size:12px;font-weight:700;letter-spacing:9px;margin-top:11px;
   color:#9fb0d8;-webkit-text-fill-color:#9fb0d8;padding-left:9px;opacity:.9}
 
@@ -150,8 +144,8 @@ button{font-family:inherit;cursor:pointer;border:none;color:inherit}
   box-shadow:0 14px 32px -8px var(--ccs),inset 0 0 0 1px var(--ccs),inset 0 -10px 20px rgba(0,0,0,.2)}
 .class-card.sel::after{content:"";position:absolute;inset:0;border-radius:18px;pointer-events:none;
   background:radial-gradient(60% 50% at 50% 0%,var(--ccs),transparent 70%);
-  animation:cardBreath 3.4s ease-in-out infinite alternate}
-@keyframes cardBreath{to{opacity:.45}}
+  animation:cardBreath 3.8s ease-in-out infinite alternate}
+@keyframes cardBreath{to{opacity:.4}}
 .class-card .ava{width:96px;height:96px;margin:0 auto 10px;border-radius:50%;
   display:block;background:radial-gradient(circle at 35% 30%,rgba(255,255,255,.45),transparent 55%),var(--cc);
   box-shadow:inset 0 -8px 16px rgba(0,0,0,.3),0 0 0 2px rgba(255,255,255,.1),0 8px 18px var(--ccs);
@@ -182,6 +176,25 @@ button{font-family:inherit;cursor:pointer;border:none;color:inherit}
 .play-btn:hover::before{left:130%}
 .play-btn:active{transform:translateY(1px)}
 
+/* "joining…" loading state — shown while we wait for the server's welcome
+   message. Keeps the menu visible so the player has feedback, disables
+   re-click, and swaps the label for a spinner. */
+.play-btn[disabled],.spectate-btn[disabled]{pointer-events:none;cursor:default;opacity:.92}
+.play-btn .btn-spin{position:absolute;top:50%;left:18px;width:16px;height:16px;margin-top:-8px;
+  border-radius:50%;border:2px solid rgba(120,60,0,.25);border-top-color:rgba(80,30,0,.85);
+  animation:spin .8s linear infinite;opacity:0;pointer-events:none}
+.play-btn.loading .btn-spin{opacity:1}
+.play-btn.loading .btn-label,
+.play-btn.loading::before{opacity:0}
+.play-btn .btn-label{display:inline-block;transition:opacity .15s}
+.play-btn.loading .btn-label{opacity:0}
+.spectate-btn.loading{opacity:.7;pointer-events:none}
+.spectate-btn.loading::before{content:"";position:absolute;left:14px;top:50%;width:12px;height:12px;margin-top:-6px;
+  border-radius:50%;border:2px solid rgba(150,170,220,.25);border-top-color:rgba(190,210,255,.9);
+  animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion: reduce){.play-btn .btn-spin,.spectate-btn.loading::before{animation-duration:1.6s}}
+
 .spectate-btn{margin-top:10px;width:100%;padding:11px;font-size:14px;font-weight:700;letter-spacing:.5px;
   border-radius:14px;color:#bcd0ff;
   background:rgba(100,140,255,.08);
@@ -205,13 +218,12 @@ button{font-family:inherit;cursor:pointer;border:none;color:inherit}
 
 .conn-status{position:fixed;bottom:calc(60px + env(safe-area-inset-bottom));left:50%;transform:translateX(-50%);
   font-size:11px;letter-spacing:.4px;font-weight:700;color:var(--dim);
-  background:rgba(0,0,0,.45);padding:6px 14px;border-radius:20px;
+  background:rgba(0,0,0,.42);padding:6px 14px;border-radius:20px;
   border:1px solid rgba(255,255,255,.1);
-  backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);
   display:inline-flex;align-items:center;gap:6px}
 .conn-status::before{content:"";width:6px;height:6px;border-radius:50%;
   background:currentColor;box-shadow:0 0 8px currentColor;opacity:.85;
-  animation:connPulse 1.8s ease-in-out infinite}
+  animation:connPulse 2s ease-in-out infinite}
 @keyframes connPulse{0%,100%{opacity:.5;transform:scale(.85)}50%{opacity:1;transform:scale(1.15)}}
 .conn-status.ok{color:#6ee7a0}.conn-status.bad{color:#ff7a7a}
 
@@ -221,11 +233,62 @@ button{font-family:inherit;cursor:pointer;border:none;color:inherit}
   .menu-card,.aurora-a,.aurora-b,.aurora-c,.stars,.stars::after,.logo,.class-card.sel::after,.conn-status::before{animation:none!important}
   .menu-card{animation-duration:.01ms!important}
   .play-btn::before{transition:none}
+  #game.game-enter #canvas,#game.game-enter .hud{animation:none!important;opacity:1!important;transform:none!important}
 }
-
 /* ============================ GAME ============================ */
 #game{background:#0a0f24}
 #canvas{position:absolute;inset:0;width:100%;height:100%;display:block;cursor:crosshair}
+
+/* ---- enter-the-arena entrance -----------------------------------------
+   Mirror of the menu's menuIn: soft fade + gentle scale on the canvas,
+   then HUD panels slide up in a small cascade. We only apply the
+   .game-enter class on a fresh enter (after welcome or spectate), so the
+   same elements re-render cleanly without re-animating on every HUD update. */
+#game:not(.game-enter) #canvas,
+#game:not(.game-enter) .hud{animation:none}
+#game.game-enter #canvas{
+  animation:canvasIn .55s cubic-bezier(.2,.8,.25,1) both;
+}
+#game.game-enter .hud{
+  opacity:0;animation:hudRise .5s cubic-bezier(.2,.8,.25,1) both;
+  animation-delay:.25s;
+}
+/* cascade order — the most important chips arrive first so the player
+   sees their own status before peripheral panels. */
+#game.game-enter .panel-player{animation-delay:.25s}
+#game.game-enter .day-night-status{animation-delay:.3s}
+#game.game-enter .panel-right{animation-delay:.4s}
+#game.game-enter .panel-chat{animation-delay:.55s}
+#game.game-enter .skillbar{animation-delay:.65s}
+#game.game-enter .kill-feed{animation-delay:.75s}
+#game.game-enter .toast-wrap{animation-delay:.25s}
+@keyframes canvasIn{
+  from{opacity:0;transform:scale(1.04)}
+  to{opacity:1;transform:scale(1)}
+}
+@keyframes hudRise{
+  from{opacity:0;transform:translateY(14px) scale(.985)}
+  to{opacity:1;transform:translateY(0) scale(1)}
+}
+/* some HUD elements use `transform:translateX(-50%)` for centering — we
+   override transform with the animation, so give them their own keyframes
+   that preserve the centering shift. */
+#game.game-enter .day-night-status{animation-name:ddnIn}
+#game.game-enter .skillbar{animation-name:skbIn}
+#game.game-enter .toast-wrap{animation-name:twIn}
+@keyframes ddnIn{
+  from{opacity:0;transform:translate(-50%,14px) scale(.985)}
+  to{opacity:1;transform:translate(-50%,0) scale(1)}
+}
+@keyframes skbIn{
+  from{opacity:0;transform:translate(-50%,14px) scale(.985)}
+  to{opacity:1;transform:translate(-50%,0) scale(1)}
+}
+@keyframes twIn{
+  from{opacity:0;transform:translate(-50%,14px) scale(.985)}
+  to{opacity:1;transform:translate(-50%,0) scale(1)}
+}
+
 #mobileControls{display:none}
 .mobile-hint{display:none}
 /* mobile: tapping 馃挰 reveals a centered chat input even though the chat panel is hidden */

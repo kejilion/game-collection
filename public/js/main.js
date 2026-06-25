@@ -18,6 +18,7 @@
     dayNightReelIndex: null, dayNightReelPhase: null, dayNightReelProgress: 0, dayNightReelResetTimer: null,
     spectating: false, specTarget: null, specFree: true, spectatorCount: 0,
     lastKilledBy: null, lastKilledAt: 0,   // who landed the killing blow on us (for the death notice)
+    joining: false, _joinSafetyT: 0,       // debounce + safety timeout for the welcome handshake
     // free-cam: a spectator camera detached from any player — pan it anywhere
     specCam: { x: 1600, y: 1100 }, specKeys: { up: false, down: false, left: false, right: false }, specDrag: null,
     specLastTarget: null   // remembered so 空格 can toggle straight back to the last followed player
@@ -48,6 +49,7 @@
     if (_toolbar && G.isTouch) _toolbar.classList.add('show');
     const _slist = document.getElementById('spectatorList');
     if (_slist && G.isTouch) _slist.classList.add('collapsed');
+    clearJoinLoading();
     wireSpectatorControls();
     wireSpecJoystick();
     updateSpecUI();                       // show 自由视角 + pan hint right away
@@ -390,6 +392,7 @@
     HUD.buildPermanentShop(G.selectedClass, permBuy, G.owned);
     if (typeof m.gold === 'number') HUD.updatePermShopGold(m.gold);
     G.pred.ready = false; G.snaps.length = 0; G.items = []; G.deadSince = 0; G.shopCloseAt = 0;
+    clearJoinLoading();
     showScreen('game');
     sendView();                            // tell the server our viewport so it streams only what we can see
   }
@@ -707,16 +710,44 @@
   }
   function spectate() {
     if (!Net.ready) { HUD.toast('正在连接服务器…', '#ff7a7a'); return; }
+    if (G.joining) return;                  // already pending
+    G.joining = true;
+    setBtnLoading('spectateBtn', true);
     Net.send({ type: 'spectate' });   // server replies with spectateWelcome -> onSpectateWelcome
   }
   function play() {
     if (!Net.ready) { HUD.toast('正在连接服务器…', '#ff7a7a'); return; }
+    if (G.joining) return;                  // debounce double-clicks while waiting for welcome
+    G.joining = true;
+    setBtnLoading('playBtn', true);
     let name = document.getElementById('nameInput').value.trim().slice(0, 14);
     if (!name) name = '勇士' + Math.floor(Math.random() * 1000);
     localStorage.setItem('brawl_name', name);
     Net.send({ type: 'join', name, cls: G.selectedClass });
     setupInput();
+    armJoinSafety();                       // 8s safety net (cleared in onWelcome / onSpectateWelcome)
     if (G.isTouch) enterFullscreen();      // immersive play on phones (within the tap gesture)
+  }
+  // visual feedback while waiting for welcome; cleared when the screen
+  // actually flips to game (or by the safety timeout below).
+  function setBtnLoading(id, on) {
+    const b = document.getElementById(id);
+    if (!b) return;
+    b.classList.toggle('loading', !!on);
+    b.disabled = !!on;
+  }
+  function clearJoinLoading() {
+    G.joining = false;
+    setBtnLoading('playBtn', false);
+    setBtnLoading('spectateBtn', false);
+  }
+  // safety net — if the server never replies (e.g. cold-connect stalls),
+  // restore the buttons so the player can try again.
+  function armJoinSafety() {
+    clearTimeout(G._joinSafetyT);
+    G._joinSafetyT = setTimeout(() => {
+      if (G.joining) { clearJoinLoading(); HUD.toast('连接超时，请重试', '#ff7a7a'); }
+    }, 8000);
   }
 
   // ---- in-game UI wiring --------------------------------------------------
@@ -800,9 +831,20 @@
   // ---- screen helpers -----------------------------------------------------
   function showScreen(name) {
     G.screen = name;
-    document.getElementById('menu').classList.toggle('show', name === 'menu');
-    document.getElementById('game').classList.toggle('show', name === 'game');
-    if (name === 'game') Renderer.resize();   // #game was display:none at init → canvas needs real size now
+    const menu = document.getElementById('menu');
+    const game = document.getElementById('game');
+    menu.classList.toggle('show', name === 'menu');
+    game.classList.toggle('show', name === 'game');
+    if (name === 'game') {
+      Renderer.resize();   // #game was display:none at init → canvas needs real size now
+      // replay the entrance animation: strip + reflow + re-add the class so
+      // the cascade runs every time we enter the arena, not just on first load.
+      game.classList.remove('game-enter');
+      void game.offsetWidth;
+      requestAnimationFrame(() => game.classList.add('game-enter'));
+    } else {
+      game.classList.remove('game-enter');
+    }
     if (name === 'menu') HUD.updateMenuHistory(G.leaderboard.hist);
   }
   function toggleRespawn(show) { document.getElementById('respawn').classList.toggle('show', !!show); }
