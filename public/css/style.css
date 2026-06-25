@@ -1,5 +1,5 @@
 /* ============================================================================
-   Arena Brawl — cartoon UI styling
+   Arena Brawl —cartoon UI styling
    ========================================================================== */
 :root{
   --warrior:#ef5b52; --mage:#5b8cff; --assassin:#a368ff;
@@ -22,71 +22,92 @@ button{font-family:inherit;cursor:pointer;border:none;color:inherit}
 #menu{display:none;place-items:center;overflow:auto}
 #menu.show{display:grid}
 
-/* Layered, painterly background — replaces blur+float with a static layered
+/* Layered, painterly background —replaces blur+float with a static layered
    gradient + a one-time-painted SVG grain + 5 GPU-cheap drifting motes.
-   Eliminates the filter:blur(6px) repaint cost entirely. */
+/* ============================ MENU ============================ */
+#menu{display:none;place-items:center;overflow:auto;padding-bottom:96px;padding-top:8px}
+#menu.show{display:grid}
+
+/* Layered, painterly background — static gradient base + two slowly drifting
+   aurora veils + a starfield, all GPU-friendly transform/opacity animations.
+   No filter:blur repaints; every layer is paint-once then translated. */
 .menu-bg{position:fixed;inset:0;pointer-events:none;overflow:hidden;
   background:
-    /* top spotlight pulls the eye toward the card */
     radial-gradient(120% 90% at 50% -10%,rgba(48,64,128,.55) 0%,transparent 60%),
-    /* color auras at 3 corners */
-    radial-gradient(48% 36% at 14% 18%,rgba(91,140,255,.28) 0%,transparent 65%),
-    radial-gradient(46% 34% at 86% 16%,rgba(163,104,255,.24) 0%,transparent 65%),
-    radial-gradient(60% 42% at 50% 108%,rgba(239,91,82,.18) 0%,transparent 70%),
-    /* base night gradient */
+    radial-gradient(60% 42% at 50% 108%,rgba(239,91,82,.16) 0%,transparent 70%),
     linear-gradient(180deg,#13193b 0%,#0c1130 55%,#070a22 100%);
 }
-/* film-grain texture, painted once — single 160×160 SVG tile; mix-blend-mode
-   isolates it from anything painted above (the menu-card) */
-.menu-bg::after{content:"";position:absolute;inset:0;opacity:.07;mix-blend-mode:overlay;
-  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 .7 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>")}
-/* five slow-drifting motes — transform-only animation, GPU-accelerated,
-   24-second period so the motion is barely perceptible but adds life */
-.menu-bg::before{content:"";position:absolute;inset:0;
-  background:
-    radial-gradient(2px 2px at 18% 22%,rgba(255,210,160,.6),transparent 60%),
-    radial-gradient(1.6px 1.6px at 72% 18%,rgba(180,200,255,.55),transparent 60%),
-    radial-gradient(1.6px 1.6px at 84% 62%,rgba(255,180,210,.5),transparent 60%),
-    radial-gradient(2px 2px at 12% 72%,rgba(180,230,255,.5),transparent 60%),
-    radial-gradient(1.6px 1.6px at 48% 88%,rgba(255,210,160,.45),transparent 60%);
-  animation:menuDrift 24s ease-in-out infinite alternate;
-  will-change:transform;
-}
-@keyframes menuDrift{to{transform:translate3d(-14px,-18px,0)}}
+/* film-grain texture painted once */
+.menu-bg::after{content:"";position:absolute;inset:0;opacity:.06;mix-blend-mode:overlay;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 .7 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");pointer-events:none}
 
-/* Card — layered translucent, no backdrop-filter (GPU cost). Three stacked
-   layers deliver glassy depth: warm halo + top highlight + base gradient.
-   `contain:paint` isolates it from the bg for fewer invalidations. */
-.menu-card{position:relative;width:min(560px,92vw);margin:24px;padding:34px 30px 26px;
+/* Two drifting aurora veils — large soft radial blobs, transform-only,
+   32s/28s so motion is barely perceptible but breathes life into the scene */
+.aurora{position:absolute;top:-30%;left:-20%;width:140%;height:90%;
+  filter:blur(40px);opacity:.55;will-change:transform;mix-blend-mode:screen;pointer-events:none}
+.aurora-a{
   background:
-    radial-gradient(70% 45% at 14% 0%,rgba(255,210,63,.08),transparent 65%),
-    linear-gradient(180deg,rgba(255,255,255,.07) 0%,rgba(255,255,255,0) 26%),
-    linear-gradient(180deg,rgba(24,32,68,.82) 0%,rgba(14,20,48,.9) 100%);
-  border:1px solid rgba(255,255,255,.09);
-  border-radius:24px;
+    radial-gradient(40% 45% at 22% 30%,rgba(91,140,255,.42) 0%,transparent 62%),
+    radial-gradient(38% 40% at 70% 24%,rgba(163,104,255,.34) 0%,transparent 62%);
+  animation:auroraDriftA 32s ease-in-out infinite alternate}
+.aurora-b{
+  background:
+    radial-gradient(42% 46% at 78% 70%,rgba(255,93,158,.28) 0%,transparent 64%),
+    radial-gradient(36% 38% at 26% 74%,rgba(91,200,255,.26) 0%,transparent 64%);
+  animation:auroraDriftB 28s ease-in-out infinite alternate}
+@keyframes auroraDriftA{to{transform:translate3d(8%,6%,0) rotate(2deg)}}
+@keyframes auroraDriftB{to{transform:translate3d(-7%,-5%,0) rotate(-2deg)}}
+
+/* Starfield — six pinpoint motes, gentle twinkle via opacity on a slow loop.
+   Single element, paint-once; opacity animation is GPU-composited. */
+.stars{position:absolute;inset:0;
+  background:
+    radial-gradient(2px 2px at 18% 22%,rgba(255,224,180,.7),transparent 60%),
+    radial-gradient(1.6px 1.6px at 72% 18%,rgba(190,210,255,.65),transparent 60%),
+    radial-gradient(1.6px 1.6px at 84% 62%,rgba(255,190,215,.55),transparent 60%),
+    radial-gradient(2px 2px at 12% 72%,rgba(190,230,255,.55),transparent 60%),
+    radial-gradient(1.6px 1.6px at 48% 88%,rgba(255,224,180,.5),transparent 60%),
+    radial-gradient(1.4px 1.4px at 60% 42%,rgba(220,210,255,.5),transparent 60%);
+  animation:starsTwinkle 6s ease-in-out infinite alternate;will-change:opacity}
+@keyframes starsTwinkle{0%{opacity:.6}100%{opacity:1}}
+
+/* Card — layered translucent glass, no backdrop-filter. Warm halo + top
+   highlight + base gradient. contain:paint isolates it from the bg. */
+.menu-card{position:relative;width:min(560px,92vw);margin:24px;padding:36px 30px 28px;
+  background:
+    radial-gradient(70% 45% at 14% 0%,rgba(255,210,63,.09),transparent 65%),
+    linear-gradient(180deg,rgba(255,255,255,.08) 0%,rgba(255,255,255,0) 28%),
+    linear-gradient(180deg,rgba(26,34,72,.84) 0%,rgba(14,20,48,.92) 100%);
+  border:1px solid rgba(255,255,255,.1);
+  border-radius:26px;
   box-shadow:
-    0 32px 80px -20px rgba(0,0,0,.65),
+    0 40px 90px -24px rgba(0,0,0,.7),
+    0 12px 30px -10px rgba(0,0,0,.5),
     0 0 0 1px rgba(255,255,255,.04) inset,
-    0 1px 0 rgba(255,255,255,.1) inset;
+    0 1px 0 rgba(255,255,255,.12) inset;
   text-align:center;
   contain:paint;
-  animation:menuIn .55s cubic-bezier(.2,.8,.25,1) both;
-}
+  animation:menuIn .6s cubic-bezier(.2,.8,.25,1) both}
 @keyframes menuIn{
-  from{opacity:0;transform:translateY(10px) scale(.985)}
+  from{opacity:0;transform:translateY(14px) scale(.98)}
   to{opacity:1;transform:translateY(0) scale(1)}
 }
-/* gradient accent bar at top — 1px hairline, no paint cost beyond itself */
-.menu-card::before{content:"";position:absolute;top:0;left:18%;right:18%;height:1px;
-  background:linear-gradient(90deg,transparent,rgba(255,210,100,.75) 30%,rgba(255,180,210,.6) 55%,rgba(180,200,255,.6) 80%,transparent);
-  border-radius:1px;opacity:.85}
+/* gradient accent hairline at top — now a glowing 2px ribbon */
+.menu-card::before{content:"";position:absolute;top:0;left:16%;right:16%;height:2px;
+  background:linear-gradient(90deg,transparent,rgba(255,210,100,.8) 30%,rgba(255,150,200,.7) 55%,rgba(150,190,255,.7) 80%,transparent);
+  border-radius:2px;opacity:.9;box-shadow:0 0 12px rgba(255,200,120,.4)}
 
-.logo{font-size:48px;font-weight:800;letter-spacing:.5px;line-height:1;
+/* Logo — animated gradient sheen for a living, premium title */
+.logo{font-size:50px;font-weight:800;letter-spacing:.5px;line-height:1;
   background:linear-gradient(95deg,#ffd23f 0%,#ff8a5b 26%,#ff5d9e 50%,#9b7bff 74%,#5bc8ff 100%);
+  background-size:220% 100%;
   -webkit-background-clip:text;background-clip:text;color:transparent;
-  text-shadow:0 8px 32px rgba(255,140,80,.22)}
-.logo span{display:block;font-size:12px;font-weight:700;letter-spacing:9px;margin-top:10px;
-  color:#9fb0d8;-webkit-text-fill-color:#9fb0d8;padding-left:9px;opacity:.85}
+  -webkit-text-fill-color:transparent;
+  filter:drop-shadow(0 6px 24px rgba(255,140,80,.28));
+  animation:logoSheen 7s ease-in-out infinite alternate}
+@keyframes logoSheen{0%{background-position:0% 50%}100%{background-position:100% 50%}}
+.logo span{display:block;font-size:12px;font-weight:700;letter-spacing:9px;margin-top:11px;
+  color:#9fb0d8;-webkit-text-fill-color:#9fb0d8;padding-left:9px;opacity:.9}
 
 .tagline{color:#aebadb;font-size:13.5px;margin:14px 0 22px;letter-spacing:.3px;line-height:1.4}
 
@@ -101,26 +122,28 @@ button{font-family:inherit;cursor:pointer;border:none;color:inherit}
 .field input::placeholder{color:rgba(159,176,216,.5);font-weight:500}
 .field input:hover{border-color:rgba(255,255,255,.2);background:rgba(0,0,0,.36)}
 .field input:focus{border-color:rgba(91,200,255,.7);background:rgba(0,0,0,.42);
-  box-shadow:inset 0 2px 4px rgba(0,0,0,.25),0 0 0 4px rgba(91,200,255,.14)}
+  box-shadow:inset 0 2px 4px rgba(0,0,0,.25),0 0 0 4px rgba(91,200,255,.16)}
 
 .class-pick{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:22px}
 .class-card{position:relative;padding:18px 10px 14px;border-radius:18px;cursor:pointer;
-  background:linear-gradient(180deg,rgba(255,255,255,.04) 0%,rgba(0,0,0,.22) 100%);
+  background:linear-gradient(180deg,rgba(255,255,255,.05) 0%,rgba(0,0,0,.24) 100%);
   border:1px solid rgba(255,255,255,.08);
-  box-shadow:inset 0 1px 0 rgba(255,255,255,.06),0 4px 14px rgba(0,0,0,.32);
-  transition:transform .18s,border-color .18s,box-shadow .22s;will-change:transform;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.07),0 4px 14px rgba(0,0,0,.32);
+  transition:transform .18s cubic-bezier(.2,.8,.25,1),border-color .18s,box-shadow .22s;will-change:transform;
   text-align:center;overflow:hidden}
-.class-card:hover{transform:translateY(-2px);border-color:rgba(255,255,255,.2)}
+.class-card:hover{transform:translateY(-3px);border-color:rgba(255,255,255,.22);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.1),0 10px 24px rgba(0,0,0,.4)}
 .class-card.sel{border-color:var(--cc);
-  box-shadow:0 12px 28px -8px var(--ccs),inset 0 0 0 1px var(--ccs),inset 0 -10px 18px rgba(0,0,0,.18)}
+  box-shadow:0 14px 32px -8px var(--ccs),inset 0 0 0 1px var(--ccs),inset 0 -10px 20px rgba(0,0,0,.2)}
 .class-card.sel::after{content:"";position:absolute;inset:0;border-radius:18px;pointer-events:none;
   background:radial-gradient(60% 50% at 50% 0%,var(--ccs),transparent 70%);
-  animation:cardBreath 3.2s ease-in-out infinite alternate}
-@keyframes cardBreath{to{opacity:.5}}
+  animation:cardBreath 3.4s ease-in-out infinite alternate}
+@keyframes cardBreath{to{opacity:.45}}
 .class-card .ava{width:96px;height:96px;margin:0 auto 10px;border-radius:50%;
   display:block;background:radial-gradient(circle at 35% 30%,rgba(255,255,255,.45),transparent 55%),var(--cc);
-  box-shadow:inset 0 -8px 16px rgba(0,0,0,.3),0 0 0 2px rgba(255,255,255,.08),0 8px 18px var(--ccs);
+  box-shadow:inset 0 -8px 16px rgba(0,0,0,.3),0 0 0 2px rgba(255,255,255,.1),0 8px 18px var(--ccs);
   position:relative;z-index:1}
+.class-card.sel .ava{box-shadow:inset 0 -8px 16px rgba(0,0,0,.3),0 0 0 2px rgba(255,255,255,.28),0 0 22px var(--ccs),0 8px 18px var(--ccs)}
 .class-card h4{font-size:17px;font-weight:800;letter-spacing:.5px}
 .class-card .role{font-size:11px;color:var(--dim);margin-top:3px;min-height:30px;line-height:1.3;
   letter-spacing:.2px}
@@ -167,19 +190,22 @@ button{font-family:inherit;cursor:pointer;border:none;color:inherit}
 .mini-board .empty{justify-content:center;color:var(--dim);opacity:.7}
 .mini-board .nm{font-weight:700}.mini-board .sc{color:var(--gold);font-weight:800}
 
-.conn-status{position:fixed;bottom:14px;left:50%;transform:translateX(-50%);
+.conn-status{position:fixed;bottom:calc(60px + env(safe-area-inset-bottom));left:50%;transform:translateX(-50%);
   font-size:11px;letter-spacing:.4px;font-weight:700;color:var(--dim);
   background:rgba(0,0,0,.45);padding:6px 14px;border-radius:20px;
   border:1px solid rgba(255,255,255,.1);
   backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);
   display:inline-flex;align-items:center;gap:6px}
 .conn-status::before{content:"";width:6px;height:6px;border-radius:50%;
-  background:currentColor;box-shadow:0 0 8px currentColor;opacity:.7}
+  background:currentColor;box-shadow:0 0 8px currentColor;opacity:.85;
+  animation:connPulse 1.8s ease-in-out infinite}
+@keyframes connPulse{0%,100%{opacity:.5;transform:scale(.85)}50%{opacity:1;transform:scale(1.15)}}
 .conn-status.ok{color:#6ee7a0}.conn-status.bad{color:#ff7a7a}
 
-/* respect reduced-motion preferences — disable continuous animations */
+
+/* respect reduced-motion preferences —disable continuous animations */
 @media (prefers-reduced-motion: reduce){
-  .menu-card,.menu-bg::before,.class-card.sel::after{animation:none!important}
+  .menu-card,.aurora-a,.aurora-b,.stars,.logo,.class-card.sel::after,.conn-status::before{animation:none!important}
   .menu-card{animation-duration:.01ms!important}
   .play-btn::before{transition:none}
 }
@@ -189,7 +215,7 @@ button{font-family:inherit;cursor:pointer;border:none;color:inherit}
 #canvas{position:absolute;inset:0;width:100%;height:100%;display:block;cursor:crosshair}
 #mobileControls{display:none}
 .mobile-hint{display:none}
-/* mobile: tapping 💬 reveals a centered chat input even though the chat panel is hidden */
+/* mobile: tapping 馃挰 reveals a centered chat input even though the chat panel is hidden */
 body.chat-open .panel-chat{display:block;left:50%;right:auto;bottom:42%;transform:translateX(-50%);width:min(86vw,360px);z-index:32}
 body.chat-open .chat-log{display:none}
 body.chat-open .chat-form input{opacity:1;font-size:16px;padding:12px 14px}
@@ -281,7 +307,7 @@ body.chat-open .chat-form input{opacity:1;font-size:16px;padding:12px 14px}
 .skill .cd-num{z-index:4}
 
 /* overlay panels (shop/settings) */
-/* overlay panels (shop/settings) — glassy like menu-card, with a soft
+/* overlay panels (shop/settings) —glassy like menu-card, with a soft
    warm halo behind the title to tie shop / settings / respawn together. */
 .overlay-panel{position:absolute;z-index:20;top:50%;left:50%;transform:translate(-50%,-50%) scale(.92);
   width:min(520px,94vw);padding:24px 24px 20px;border-radius:24px;background:var(--panel);
@@ -309,7 +335,7 @@ body.chat-open .chat-form input{opacity:1;font-size:16px;padding:12px 14px}
 .shop-item .si-ds{font-size:10.5px;color:var(--dim);line-height:1.2}
 .shop-item .si-pr{font-weight:800;color:var(--gold);font-size:13px;white-space:nowrap}
 .shop-item.cant{opacity:.5}
-/* permanent shop — single page, sections separated by title.
+/* permanent shop —single page, sections separated by title.
    Cards share the menu-card glassy language: layered translucency, top
    highlight, glow on hover, and a small price badge so gold coins feel
    like a coin rather than plain text. */
@@ -359,7 +385,7 @@ body.chat-open .chat-form input{opacity:1;font-size:16px;padding:12px 14px}
 .set-btn.danger{background:rgba(239,91,82,.2);color:#ff9b94}
 .set-btn.danger:hover{background:rgba(239,91,82,.34)}
 
-/* audio toggles inside the settings panel — music / sfx side by side */
+/* audio toggles inside the settings panel —music / sfx side by side */
 .audio-toggle-row{display:flex;gap:10px;margin-bottom:10px}
 .audio-toggle{position:relative;display:flex;align-items:center;justify-content:center;gap:6px;
   margin-bottom:0;padding:13px 10px;font-size:15px;font-weight:800;border-radius:14px;
@@ -384,7 +410,7 @@ body.chat-open .chat-form input{opacity:1;font-size:16px;padding:12px 14px}
 .respawn-card #respawnCount{color:var(--gold);font-weight:800;font-size:20px}
 .respawn-card .set-btn{margin-top:18px}
 
-/* ============================ KILL FEED + 全服播报 ============================ */
+/* ============================ KILL FEED + 鍏ㄦ湇鎾姤 ============================ */
 .kill-feed{top:176px;left:14px;width:284px;display:flex;flex-direction:column;gap:5px;pointer-events:none;z-index:6}
 .kf-row{align-self:flex-start;max-width:100%;display:flex;align-items:center;gap:7px;padding:5px 11px;border-radius:20px;
   background:rgba(10,14,34,.78);border:1px solid var(--line);box-shadow:0 4px 14px rgba(0,0,0,.4);
@@ -636,4 +662,53 @@ body:not(.is-touch) .spectator-list.collapsed .sl-player { display: flex; }
 @media (max-width:680px) {
   .menu-audio { right: 10px; bottom: 10px; gap: 4px; }
   .menu-audio button { padding: 7px 9px; font-size: 11px; }
+}
+
+
+/* ====== menu footer (version / github / health reminder) ====== */
+.menu-footer{
+  position:fixed;left:0;right:0;bottom:0;z-index:6;
+  display:flex;flex-direction:column;align-items:center;gap:6px;
+  padding:10px 12px calc(8px + env(safe-area-inset-bottom));
+  pointer-events:none;
+  background:linear-gradient(180deg,transparent 0%,rgba(8,11,34,.55) 60%,rgba(7,10,28,.82) 100%);
+}
+.menu-footer .mf-row{
+  display:flex;align-items:center;gap:14px;
+  font-size:.74rem;letter-spacing:.3px;
+  color:rgba(180,200,255,.5);
+}
+.menu-footer .mf-ver{
+  padding:2px 9px;border-radius:20px;
+  border:1px solid rgba(255,255,255,.12);
+  background:rgba(255,255,255,.04);
+  font-weight:700;color:#9fb0d8;
+}
+.menu-footer .mf-gh{
+  pointer-events:auto;
+  display:inline-flex;align-items:center;gap:5px;
+  color:rgba(180,200,255,.6);text-decoration:none;
+  padding:2px 9px;border-radius:20px;
+  border:1px solid rgba(255,255,255,.1);
+  background:rgba(255,255,255,.03);
+  transition:color .2s,border-color .2s,background .2s,transform .15s;
+}
+.menu-footer .mf-gh .mf-gh-ic{display:block;opacity:.85}
+.menu-footer .mf-gh:hover{
+  color:#fff;border-color:rgba(255,255,255,.28);
+  background:rgba(255,255,255,.08);transform:translateY(-1px);
+}
+.menu-footer .mf-tip{
+  font-size:.7rem;line-height:1.4;text-align:center;
+  color:rgba(159,176,216,.42);
+  text-shadow:0 1px 2px rgba(0,0,0,.5);
+}
+@media (max-width:680px){
+  .menu-footer{gap:4px;padding:8px 8px calc(6px + env(safe-area-inset-bottom))}
+  .menu-footer .mf-row{gap:10px;font-size:.68rem}
+  .menu-footer .mf-tip{font-size:.64rem}
+  /* nudges the floating connection badge up so it doesn't sit under footer */
+  .conn-status{bottom:calc(54px + env(safe-area-inset-bottom))}
+  #menu{padding-bottom:72px}
+  .menu-spec-count{bottom:calc(70px + env(safe-area-inset-bottom))}
 }
