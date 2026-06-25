@@ -226,7 +226,10 @@ const Renderer = (() => {
   // screen at dusk, contracts inward, then expands beyond the screen again at
   // dawn; that keeps both transitions gentle even when a snapshot arrives.
   function drawNightVision(view, dt) {
-    if (view.spectating || !view.self) return;
+    // Free-cam spectators (no followed player) see the whole arena brightly;
+    // a spectator *following* a player adopts that player's limited night vision
+    // so the veil contracts around the one they're tracking, just like playing.
+    if (!view.self) return;
     const light = normalLight(view.light);
     const nightness = clamp((1 - light.visibility) / 0.5, 0, 1);
     const cx = view.self.x - camX;

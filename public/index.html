@@ -1,10 +1,10 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
 <title>大乱斗 · Arena Brawl</title>
-<link rel="stylesheet" href="css/style.css?v=20260629" />
+<link rel="stylesheet" href="css/style.css?v=20260630" />
 </head>
 <body>
 
@@ -104,6 +104,9 @@
     <div id="moveJoystick" role="application" aria-label="Move your character">
       <span id="moveJoystickKnob"></span>
     </div>
+    <div id="specJoystick" role="application" aria-label="Pan spectator camera">
+      <span id="specJoystickKnob"></span>
+    </div>
     <div id="mobileBtns">
       <button id="mobileSettings" type="button" data-touch-action="settings" aria-label="设置">☰</button>
       <button id="mobileFs" type="button" aria-label="全屏">⛶</button>
@@ -145,6 +148,14 @@
   <!-- spectator player list -->
   <div class="hud spectator-list" id="spectatorList"></div>
 
+  <!-- spectator toolbar (mobile only) -->
+  <div class="hud spec-toolbar" id="specToolbar">
+    <button class="st-btn" id="stPrev" aria-label="上一个玩家">◀</button>
+    <button class="st-btn st-toggle" id="stToggle" aria-label="切换自由/跟随">跟随玩家</button>
+    <button class="st-btn" id="stNext" aria-label="下一个玩家">▶</button>
+    <button class="st-btn st-exit" id="stExit" aria-label="退出观战">退出</button>
+  </div>
+
   <!-- spectator count badge (shown to all in-game) -->
   <div class="hud spec-count-badge" id="specCountBadge"></div>
 
@@ -172,6 +183,6 @@
 <script src="js/input.js?v=20260623"></script>
 <script src="js/render.js?v=20260627"></script>
 <script src="js/hud.js?v=20260623"></script>
-<script src="js/main.js?v=20260629"></script>
+<script src="js/main.js?v=20260630"></script>
 </body>
 </html>

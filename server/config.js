@@ -11,9 +11,9 @@ const WORLD = { width: 3200, height: 2200 };
 // simulation, snapshots and tests always agree on the same phase.
 const DAY_NIGHT = {
   dayMs: 150000,
-  duskMs: 30000,
+  duskMs: 60000,
   nightMs: 90000,
-  dawnMs: 30000,
+  dawnMs: 60000,
   nightVisibility: 0.5
 };
 

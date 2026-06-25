@@ -1,4 +1,4 @@
-// ============================================================================
+﻿// ============================================================================
 //  main.js — game client orchestration
 //  Connects the modules, manages menu/game screens, buffers server snapshots
 //  and renders them with interpolation + client-side prediction for self.
@@ -43,8 +43,15 @@
     document.getElementById('spectatorList').classList.add('show');
     document.getElementById('playerPanel').style.display = 'none';
     document.getElementById('skillbar').style.display = 'none';
+    document.body.classList.add('spec-mode');
+    const _toolbar = document.getElementById('specToolbar');
+    if (_toolbar && G.isTouch) _toolbar.classList.add('show');
+    const _slist = document.getElementById('spectatorList');
+    if (_slist && G.isTouch) _slist.classList.add('collapsed');
     wireSpectatorControls();
-    updateSpecUI();                       // show the 自由视角 + pan hint right away
+    wireSpecJoystick();
+    updateSpecUI();                       // show 自由视角 + pan hint right away
+    updateSpecJoystickVisibility();
   }
 
   function onSpectatorCount(m) {
@@ -75,7 +82,7 @@
   }
 
   function specSelectPlayer(id) {
-    G.specFree = false; G.specTarget = id; G.specLastTarget = id; updateSpecUI();
+    G.specFree = false; G.specTarget = id; G.specLastTarget = id; updateSpecUI(); updateSpecJoystickVisibility();
   }
 
   // free view -> resume following: re-grab the last followed player if still alive,
@@ -92,7 +99,7 @@
   function specGoFree() {
     // entering free view inherits the followed player's position — clamp it so a
     // player parked near a map edge doesn't drop the free camera into the overshoot band.
-    G.specFree = true; G.specTarget = null; clampSpecCam(); updateSpecUI();
+    G.specFree = true; G.specTarget = null; clampSpecCam(); updateSpecUI(); updateSpecJoystickVisibility();
   }
 
   // Keep the free camera inside the range the screen can actually show. specCam is
@@ -126,21 +133,25 @@
     document.getElementById('spectatorList').classList.remove('show');
     document.getElementById('playerPanel').style.display = '';
     document.getElementById('skillbar').style.display = '';
+    document.body.classList.remove('spec-mode');
+    const _tb = document.getElementById('specToolbar'); if (_tb) _tb.classList.remove('show');
+    const _sj = document.getElementById('specJoystick'); if (_sj) _sj.classList.remove('show');
     showScreen('menu');
   }
 
   function updateSpecUI() {
     const el = document.getElementById('specTarget');
-    if (G.specFree) { el.textContent = '\u81EA\u7531\u89C6\u89D2 \u00B7 WASD/\u62D6\u52A8\u79FB\u52A8 \u00B7 \u7A7A\u683C\u8DDF\u968F'; return; }
+    if (G.specFree) { el.textContent = G.isTouch ? '\u81EA\u7531\u89C6\u89D2 \u00B7 \u6447\u6746\u79FB\u52A8' : '\u81EA\u7531\u89C6\u89D2 \u00B7 WASD/\u62D6\u52A8\u79FB\u52A8 \u00B7 \u7A7A\u683C\u8DDF\u968F'; syncSpecToolbar(true); return; }
     const snap = G.snaps.length > 0 ? G.snaps[G.snaps.length - 1] : null;
     const target = snap ? snap.data.players.find(p => p.id === G.specTarget) : null;
     el.textContent = target ? target.name : '\u81EA\u7531\u89C6\u89D2';
+    syncSpecToolbar(false);
   }
 
   function updateSpecPlayerList(players) {
     const el = document.getElementById('spectatorList');
     if (!el || !G.spectating) return;
-    let html = '<div class="sl-title">\u6218\u573A\u4EBA\u7269 (' + players.length + ')</div>';
+    let html = '<div class="sl-title"><button class="sl-toggle" id="specListToggle">\uD83D\uDC65 ' + players.length + '</button></div>';
     const sorted = [...players].sort((a, b) => b.score - a.score);
     for (const p of sorted) {
       const cls = G.defs.classes[p.cls] || { color: '#fff' };
@@ -156,6 +167,8 @@
     el.querySelectorAll('.sl-player').forEach(row => {
       row.addEventListener('click', () => specSelectPlayer(row.dataset.pid));
     });
+    const toggle = el.querySelector('#specListToggle');
+    if (toggle) toggle.addEventListener('click', () => el.classList.toggle('collapsed'));
   }
 
   let _specControlsWired = false;
@@ -208,6 +221,75 @@
       cv.addEventListener('pointerup', endDrag);
       cv.addEventListener('pointercancel', endDrag);
     }
+    // mobile spectator toolbar buttons
+    const stPrev = document.getElementById('stPrev');
+    const stNext = document.getElementById('stNext');
+    const stToggle = document.getElementById('stToggle');
+    const stExit = document.getElementById('stExit');
+    if (stPrev) stPrev.addEventListener('click', () => specSwitchTarget(-1));
+    if (stNext) stNext.addEventListener('click', () => specSwitchTarget(1));
+    if (stToggle) stToggle.addEventListener('click', specToggleFollow);
+    if (stExit) stExit.addEventListener('click', specExit);
+  }
+
+  // sync bottom toolbar toggle button text with current spec state
+  function syncSpecToolbar(isFree) {
+    const btn = document.getElementById('stToggle');
+    if (!btn) return;
+    if (isFree) { btn.textContent = '\u8DDF\u968F\u73A9\u5BB6'; btn.classList.remove('is-free'); }
+    else { btn.textContent = '\u81EA\u7531\u89C6\u89D2'; btn.classList.add('is-free'); }
+  }
+
+  // mobile equivalent of Space key: toggle free <-> follow
+  function specToggleFollow() {
+    if (G.specFree) specResumeFollow(); else specGoFree();
+  }
+
+  // show/hide the spec joystick based on free-cam state (touch only)
+  function updateSpecJoystickVisibility() {
+    const sj = document.getElementById('specJoystick');
+    if (!sj) return;
+    sj.classList.toggle('show', G.spectating && G.specFree && G.isTouch);
+  }
+
+  // spectator joystick: drives G.specKeys via pointer events (mirrors input.js joystick)
+  let _specJoyWired = false;
+  function wireSpecJoystick() {
+    if (_specJoyWired) return;
+    _specJoyWired = true;
+    const stick = document.getElementById('specJoystick');
+    if (!stick) return;
+    let pid = null;
+    const knob = document.getElementById('specJoystickKnob');
+
+    function update(e) {
+      const rect = stick.getBoundingClientRect();
+      let x = (e.clientX - rect.left - rect.width / 2) / (rect.width / 2);
+      let y = (e.clientY - rect.top - rect.height / 2) / (rect.height / 2);
+      const len = Math.hypot(x, y);
+      if (len > 1) { x /= len; y /= len; }
+      if (knob) knob.style.transform = 'translate(' + (x * 38) + 'px, ' + (y * 38) + 'px)';
+      const dz = 0.24;
+      G.specKeys.up = y < -dz; G.specKeys.down = y > dz;
+      G.specKeys.left = x < -dz; G.specKeys.right = x > dz;
+    }
+    function clear() {
+      pid = null;
+      G.specKeys = { up: false, down: false, left: false, right: false };
+      if (knob) knob.style.transform = 'translate(0, 0)';
+    }
+    stick.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      pid = e.pointerId;
+      try { stick.setPointerCapture(e.pointerId); } catch (e2) {}
+      update(e);
+    });
+    stick.addEventListener('pointermove', (e) => {
+      if (e.pointerId === pid) { e.preventDefault(); update(e); }
+    });
+    const end = (e) => { if (e.pointerId === pid) clear(); };
+    stick.addEventListener('pointerup', end);
+    stick.addEventListener('pointercancel', end);
   }
 
   function escapeHtml(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
@@ -505,7 +587,7 @@
       if (!G.specFree && G.specTarget) {
         const tp = view.players.find(p => p.id === G.specTarget);
         if (tp) view.self = tp;
-        else { G.specFree = true; G.specTarget = null; clampSpecCam(); updateSpecUI(); }   // followed player gone -> free
+        else { G.specFree = true; G.specTarget = null; clampSpecCam(); updateSpecUI(); updateSpecJoystickVisibility(); }   // followed player gone -> free
       }
       if (G.specFree) {
         view.self = null;                                     // detach from every player
