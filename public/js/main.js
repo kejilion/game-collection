@@ -1,4 +1,4 @@
-﻿// ============================================================================
+// ============================================================================
 //  main.js — game client orchestration
 //  Connects the modules, manages menu/game screens, buffers server snapshots
 //  and renders them with interpolation + client-side prediction for self.
@@ -32,7 +32,7 @@
     G.world = m.world;
     G.specCam = { x: m.world.width / 2, y: m.world.height / 2 };   // free camera starts centered
     G.specKeys = { up: false, down: false, left: false, right: false };
-    G.defs = { classes: m.classes, items: m.items, permanentShop: m.permanentShop, bosses: m.bosses || {} };
+    G.defs = { classes: m.classes, items: m.items, permanentShop: m.permanentShop, bosses: m.bosses || {}, balance: m.balance || null };
     G.obstacles = m.obstacles || [];
     Renderer.setWorld(m.world, m.classes, m.items, m.bosses);
     Renderer.setObstacles(G.obstacles);
@@ -364,7 +364,7 @@
   }
 
   function onDefs(m) {
-    G.defs = { classes: m.classes, items: m.items, permanentShop: m.permanentShop, bosses: m.bosses || {} };
+    G.defs = { classes: m.classes, items: m.items, permanentShop: m.permanentShop, bosses: m.bosses || {}, balance: m.balance || null };
     HUD.setDefs(m.classes, m.items, m.permanentShop);
     HUD.setPermShop(m.permanentShop);
     HUD.buildClassPicker((cls) => { G.selectedClass = cls; });
@@ -372,7 +372,7 @@
 
   function onWelcome(m) {
     G.selfId = m.id; G.world = m.world; G.lastLightPhase = null; resetDayNightReel();
-    G.defs = { classes: m.classes, items: m.items, permanentShop: m.permanentShop, bosses: m.bosses || {} };
+    G.defs = { classes: m.classes, items: m.items, permanentShop: m.permanentShop, bosses: m.bosses || {}, balance: m.balance || null };
     G.obstacles = m.obstacles || [];
     Renderer.setWorld(m.world, m.classes, m.items, m.bosses);
     Renderer.setObstacles(G.obstacles);
