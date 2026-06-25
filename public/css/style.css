@@ -485,3 +485,35 @@ body:not(.is-touch) .spec-toolbar { display: none !important; }
 body:not(.is-touch) #specJoystick { display: none !important; }
 body:not(.is-touch) .spectator-list .sl-toggle { display: none; }
 body:not(.is-touch) .spectator-list.collapsed .sl-player { display: flex; }
+
+/* ====== minimal audio test panel (menu only) ====== */
+.menu-audio {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  display: flex;
+  gap: 6px;
+  z-index: 5;
+}
+.menu-audio button {
+  font: 700 12px/1 "Baloo 2","Noto Sans SC",sans-serif;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: rgba(20,28,40,.55);
+  border: 1px solid rgba(255,255,255,.18);
+  color: #cfe3ff;
+  cursor: pointer;
+  transition: background .14s, border-color .14s;
+  backdrop-filter: blur(4px);
+}
+.menu-audio button:hover { background: rgba(40,60,90,.7); border-color: rgba(255,255,255,.32); }
+.menu-audio button:active { transform: translateY(1px); }
+.menu-audio button[aria-pressed="true"] {
+  background: rgba(255,93,115,.22);
+  border-color: rgba(255,93,115,.55);
+  color: #ff9b94;
+}
+@media (max-width:680px) {
+  .menu-audio { right: 10px; bottom: 10px; gap: 4px; }
+  .menu-audio button { padding: 7px 9px; font-size: 11px; }
+}

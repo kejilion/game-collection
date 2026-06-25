@@ -35,6 +35,11 @@
   </div>
   <div class="menu-spec-count" id="menuSpecCount"></div>
   <div class="conn-status" id="connStatus">连接中…</div>
+  <div class="menu-audio" id="menuAudio">
+    <button id="btnTestSfx" type="button" title="试听音效">🔊 试音</button>
+    <button id="btnToggleMusic" type="button" title="背景乐开关">🎵 BGM</button>
+    <button id="btnMute" type="button" title="静音切换" aria-pressed="false">🔇</button>
+  </div>
 </section>
 
 <!-- ============================ GAME ============================ -->
@@ -183,6 +188,66 @@
 <script src="js/input.js?v=20260623"></script>
 <script src="js/render.js?v=20260627"></script>
 <script src="js/hud.js?v=20260623"></script>
+<script src="js/audio.js?v=20260701"></script>
 <script src="js/main.js?v=20260630"></script>
+<script>
+  // Minimal audio wiring — runs after main.js, does not depend on game state.
+  (function () {
+    if (!Audio.isSupported) return;
+    Audio.loadPrefs();
+
+    var playBtn  = document.getElementById('playBtn');
+    var specBtn  = document.getElementById('spectateBtn');
+    var testBtn  = document.getElementById('btnTestSfx');
+    var musicBtn = document.getElementById('btnToggleMusic');
+    var muteBtn  = document.getElementById('btnMute');
+
+    function syncMuteLabel() {
+      muteBtn.textContent = Audio.isMuted ? '🔇 已静音' : '🔊 静音';
+      muteBtn.setAttribute('aria-pressed', Audio.isMuted ? 'true' : 'false');
+    }
+
+    function ensureAudio() {
+      // Must run inside a user-gesture handler so iOS Safari allows audio.
+      Audio.init();
+      Audio.preload();
+    }
+
+    // First user gesture: enter the game. Kick off audio context + preload.
+    [playBtn, specBtn].forEach(function (btn) {
+      if (!btn) return;
+      btn.addEventListener('click', ensureAudio, { once: false });
+    });
+
+    // Manual test buttons — also act as user gestures, so audio is unlocked even
+    // if the player only opens the menu and never starts a match.
+    if (testBtn) testBtn.addEventListener('click', function () {
+      ensureAudio();
+      Audio.play('swing');
+      setTimeout(function () { Audio.play('slash'); }, 180);
+      setTimeout(function () { Audio.play('explosion', { vol: 0.8 }); }, 360);
+    });
+
+    if (musicBtn) musicBtn.addEventListener('click', function () {
+      ensureAudio();
+      if (musicBtn.dataset.on === '1') {
+        Audio.stopMusic();
+        musicBtn.textContent = '🎵 BGM';
+        musicBtn.dataset.on = '0';
+      } else {
+        Audio.playMusic('bgm-loop');
+        musicBtn.textContent = '⏸ BGM';
+        musicBtn.dataset.on = '1';
+      }
+    });
+
+    if (muteBtn) muteBtn.addEventListener('click', function () {
+      Audio.mute(!Audio.isMuted);
+      syncMuteLabel();
+    });
+
+    syncMuteLabel();
+  })();
+</script>
 </body>
 </html>
