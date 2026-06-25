@@ -886,14 +886,10 @@ const Renderer = (() => {
       // merchants
       mmx.fillStyle = '#ffd23f'; for (const m of ov.merchants) { mmx.beginPath(); mmx.arc(m.x * sxk, m.y * syk, 3, 0, 7); mmx.fill(); }
       // boss (dot tinted to its archetype so you can tell which one is loose)
-      for (const b of ov.bosses) {
-        if (b.x == null || b.y == null) continue;          // server-masked (defensive — bosses are never invis today)
-        mmx.fillStyle = (BOSS[b.type] && BOSS[b.type].accent) || '#ff3d3d'; mmx.beginPath(); mmx.arc(b.x * sxk, b.y * syk, 4, 0, 7); mmx.fill();
-      }
+      for (const b of ov.bosses) { mmx.fillStyle = (BOSS[b.type] && BOSS[b.type].accent) || '#ff3d3d'; mmx.beginPath(); mmx.arc(b.x * sxk, b.y * syk, 4, 0, 7); mmx.fill(); }
       // Rivals fade with the rest of the map; invisibility still applies before night arrives.
       for (const p of ov.players) {
         if (p.id === view.selfId || (p.invis && !view.hasReveal && !view.spectating)) continue;
-        if (p.x == null || p.y == null) continue;            // server-masked invisible player — skip the dot
         const cls = CLASSES[p.cls] || { color: '#fff' };
         mmx.fillStyle = cls.color; mmx.beginPath(); mmx.arc(p.x * sxk, p.y * syk, 3, 0, 7); mmx.fill();
       }

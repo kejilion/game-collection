@@ -319,14 +319,6 @@ class World {
   enemiesOfPlayerId(ownerId, opts) {
     return this.enemiesOfPlayer(this.players.get(ownerId), opts);
   }
-  // 是否可被命中/选目标 — 隐身玩家视为不可见。
-  // 这是敌人视角的"我能看见谁"判定；BOSS 自己不会持有 reveal，所以 BOSS 用
-  // 这个函数就是"看不见隐身者"，与设计意图一致（隐身对 BOSS 同样生效）。
-  isTargetable(p, t = now()) {
-    if (!p || p.dead) return false;
-    if (p.kind === 'player' && p.hasBuff('invis', t)) return false;
-    return true;
-  }
   nearestEnemy(p, maxRange) {
     let best = null, bestD = maxRange * maxRange;
     for (const e of this.enemiesOfPlayer(p)) {
@@ -364,18 +356,12 @@ class World {
   handleDeath(target, attacker) {
     const t = now();
     if (target.kind === 'player') {
-      // Death (or in-place revive) is a hard reset of the combat state.
-      // Otherwise a stealthed/hasted/reveal-buffed player would respawn with
-      // their old timers still ticking — invisible on spawn, etc.
-      const clearBuffs = (p) => { for (const k in p.buffs) delete p.buffs[k]; };
       if (target.extraLives > 0) {       // 复活之心: revive in place
         target.extraLives -= 1; target.hp = target.effMaxHp();
         target.spawnProtectUntil = t + 1500;
-        clearBuffs(target);
         this.pushFx({ t: 'revive', x: target.x, y: target.y });
         return;
       }
-      clearBuffs(target);
       const victimStreak = target.killStreak;
       target.dead = true; target.deaths += 1;
       target.killStreak = 0; target.multiKill = 0;
@@ -693,18 +679,6 @@ class World {
   update(dt) {
     const t = now();
 
-    // Periodic (1Hz) sweep of expired buff keys. hasBuff() filters at read
-    // time, so stale entries don't break behavior — but a long match can
-    // accumulate hundreds of them in p.buffs. Clearing the dead ones keeps
-    // the snapshots small and prevents surprise leaks (e.g. a death that
-    // didn't reset the dictionary would let stealth "carry over" if a buff
-    // had already expired but the key was still in the object).
-    if (t - (this._buffCleanAt || 0) >= 1000) {
-      for (const p of this.players.values())
-        for (const k in p.buffs) if (p.buffs[k] <= t) delete p.buffs[k];
-      this._buffCleanAt = t;
-    }
-
     // players: movement, buffs, respawn
     for (const p of this.players.values()) {
       // chat expiry
@@ -898,14 +872,10 @@ class World {
   }
 
   // nearest living hero to a boss within `range` (squared compare); null if none.
-  // Stealthed heroes are skipped — BOSS doesn't "see" invisible players, so a
-  // cloaked assassin disengaging should lose aggro (the stealth-flee tactic
-  // the assassin kit is balanced around).
   nearestPlayer(b, range) {
-    const t = now();
     let best = null, bd = range * range;
     for (const p of this.players.values()) {
-      if (!this.isTargetable(p, t)) continue;
+      if (p.dead) continue;
       const d = dist2(b.x, b.y, p.x, p.y);
       if (d < bd) { bd = d; best = p; }
     }
@@ -934,10 +904,8 @@ class World {
     }
 
     // acquire / refresh target = nearest living hero, sticky until it leaves aggro
-    // or goes invisible (stealth breaks aggro — see nearestPlayer)
     let tgt = b.targetId && this.players.get(b.targetId);
-    if (!tgt || tgt.dead || tgt.hasBuff('invis', t)
-        || dist2(b.x, b.y, tgt.x, tgt.y) > def.aggro * def.aggro)
+    if (!tgt || tgt.dead || dist2(b.x, b.y, tgt.x, tgt.y) > def.aggro * def.aggro)
       tgt = this.nearestPlayer(b, def.aggro);
     b.targetId = tgt ? tgt.id : null;
     if (!tgt) return;
@@ -977,10 +945,9 @@ class World {
 
   // ring AOE centered on the boss
   bossSlam(b, ab) {
-    const t = now();
     this.pushFx({ t: 'shock', x: b.x, y: b.y, radius: ab.radius, color: b.def.accent, fill: true });
     for (const p of this.players.values())
-      if (this.isTargetable(p, t) && dist2(b.x, b.y, p.x, p.y) <= (ab.radius + 22) ** 2) this.damageEntity(p, ab.dmg, b);
+      if (!p.dead && dist2(b.x, b.y, p.x, p.y) <= (ab.radius + 22) ** 2) this.damageEntity(p, ab.dmg, b);
   }
 
   // projectile barrage: 'radial' (full circle) or 'aimed' (fan toward target),
@@ -1033,11 +1000,10 @@ class World {
 
   // life-drain pulse: damages heroes in range and converts a share of it into healing
   bossDrain(b, ab) {
-    const t = now();
     this.pushFx({ t: 'shock', x: b.x, y: b.y, radius: ab.radius, color: b.def.accent, fill: true, drain: true });
     let healed = 0;
     for (const p of this.players.values())
-      if (this.isTargetable(p, t) && dist2(b.x, b.y, p.x, p.y) <= (ab.radius + 22) ** 2) {
+      if (!p.dead && dist2(b.x, b.y, p.x, p.y) <= (ab.radius + 22) ** 2) {
         this.damageEntity(p, ab.dmg, b); healed += ab.dmg * (ab.heal || 0);
       }
     if (healed) b.hp = Math.min(b.maxHp, b.hp + healed);
@@ -1067,14 +1033,13 @@ class World {
     this.resolveObstacles(b, b.r);
     for (const p of this.players.values()) {               // each hero is struck at most once per charge
       if (p.dead || c.hit.has(p.id)) continue;
-      if (!this.isTargetable(p, t)) continue;              // stealthed heroes aren't trampled
       if (dist2(b.x, b.y, p.x, p.y) <= (c.hitR + 22) ** 2) { c.hit.add(p.id); this.damageEntity(p, c.dmg, b); }
     }
     if (t >= c.until) {
       if (c.nova) {                                        // burst on arrival
         this.pushFx({ t: 'shock', x: b.x, y: b.y, radius: c.nova.radius, color: b.def.accent, fill: true });
         for (const p of this.players.values())
-          if (this.isTargetable(p, t) && dist2(b.x, b.y, p.x, p.y) <= (c.nova.radius + 22) ** 2) this.damageEntity(p, c.nova.dmg, b);
+          if (!p.dead && dist2(b.x, b.y, p.x, p.y) <= (c.nova.radius + 22) ** 2) this.damageEntity(p, c.nova.dmg, b);
       }
       b.charge = null;
     }
@@ -1096,10 +1061,6 @@ class World {
         id: p.id, name: p.name, cls: p.clsId, x: r(p.x), y: r(p.y),
         hp: r(Math.max(0, p.hp)), maxHp: r(p.effMaxHp()), level: p.level,
         facing: +p.facing.toFixed(2), moving: p.moving, dead: p.dead,
-        // slowUntil/slowMul mirror the debuff the client needs for client-side
-        // prediction — without this, a hero who got chilled (e.g. mage 霜雪新星)
-        // briefly walks at full speed until the server corrects.
-        slowUntil: p.slowUntil, slowMul: p.slowMul,
         kills: p.kills, deaths: p.deaths, bossKills: p.bossKills, gold: r(p.gold),
         score: p.score, xp: r(p.xp), xpNext: p.xpNext, extraLives: p.extraLives,
         invis: p.hasBuff('invis', t), buffs,
@@ -1161,22 +1122,9 @@ class World {
   overview() {
     const t = now();
     const r = (n) => Math.round(n);
-    // Reveal is a global "show everyone" power — once any player has it the
-    // stealth-everywhere promise is gone, so we don't bother masking and let
-    // the reveal-holder's minimap work. While nobody has reveal we drop the
-    // exact x/y of cloaked players so a patched client can't read them out
-    // of the overview stream (the AoI slice already hides them, this closes
-    // the minimap channel).
-    const anyoneRevealed = [...this.players.values()].some(p => p.hasBuff('reveal', t));
     const players = [];
-    for (const p of this.players.values()) {
-      const isInvis = p.hasBuff('invis', t);
-      players.push({
-        id: p.id, cls: p.clsId, dead: p.dead, invis: isInvis,
-        x: (isInvis && !anyoneRevealed) ? null : r(p.x),
-        y: (isInvis && !anyoneRevealed) ? null : r(p.y),
-      });
-    }
+    for (const p of this.players.values())
+      players.push({ id: p.id, cls: p.clsId, x: r(p.x), y: r(p.y), dead: p.dead, invis: p.hasBuff('invis', t) });
     const bosses = [];
     for (const b of this.bosses.values()) bosses.push({ id: b.id, x: r(b.x), y: r(b.y), type: b.type });
     const merchants = [];

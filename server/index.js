@@ -11,7 +11,7 @@ const { WebSocketServer } = require('ws');
 
 const { World } = require('./world');
 const leaderboard = require('./leaderboard');
-const { WORLD, TICK_RATE, BROADCAST_RATE, CLASSES, ITEM_TYPES, PERMANENT_SHOP_CATALOG, BOSS_DEFS, BALANCE } = require('./config');
+const { WORLD, TICK_RATE, BROADCAST_RATE, CLASSES, ITEM_TYPES, PERMANENT_SHOP_CATALOG, BOSS_DEFS } = require('./config');
 
 const PORT = process.env.PORT || 3000;
 const BACKPRESSURE_BYTES = 256 * 1024;   // skip a client's state frame while its send buffer is backed up
@@ -79,10 +79,6 @@ wss.on('connection', (ws) => {
           type: 'welcome', id: p.id, world: WORLD,
           classes: CLASSES, items: ITEM_TYPES, permanentShop: PERMANENT_SHOP_CATALOG, bosses: BOSS_DEFS,
           obstacles: world.getObstacles(), tickRate: TICK_RATE,
-          // Balance subset the client needs for prediction (e.g. the speed-buff
-          // multiplier). Without this, predictSelf would either hard-code the
-          // value (drifting from server on balance changes) or skip the buff.
-          balance: { buff: { speedMul: BALANCE.buff.speedMul } },
           gold: p.gold,
           // permanent-shop "already bought" state for THIS match (so the shop
           // panel can render owned items as such). Resets every match because
@@ -124,7 +120,6 @@ wss.on('connection', (ws) => {
         send(ws, {
           type: 'spectateWelcome', world: WORLD,
           classes: CLASSES, items: ITEM_TYPES, permanentShop: PERMANENT_SHOP_CATALOG, bosses: BOSS_DEFS,
-          balance: { buff: { speedMul: BALANCE.buff.speedMul } },
           obstacles: world.getObstacles(), tickRate: TICK_RATE
         });
         broadcast({ type: 'spectatorCount', count: spectators.size });
