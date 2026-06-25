@@ -1,6 +1,6 @@
-// ============================================================================
+﻿// ============================================================================
 //  Tests for the authoritative world simulation (server/world.js).
-//  Zero dependencies — Node's built-in runner:  npm test  (node --test, Node >=18)
+//  Zero dependencies 鈥?Node's built-in runner:  npm test  (node --test, Node >=18)
 //
 //  The sim uses real Date.now() for cooldowns/protection, so tests that care
 //  about timing reset those fields explicitly. `duel()` builds an isolated world
@@ -162,9 +162,9 @@ test('BOSS kill does not falsely credit a bystander via lastHitBy', () => {
   victim.spawnProtectUntil = 0; bystander.spawnProtectUntil = 0;
   victim.x = 500; victim.y = 500; bystander.x = 800; bystander.y = 500;
   const boss = [...w.bosses.values()][0];
-  boss.x = victim.x + 30; boss.y = victim.y;       // adjacent → next tick will hit
+  boss.x = victim.x + 30; boss.y = victim.y;       // adjacent 鈫?next tick will hit
   victim.hp = 1;                                  // one-shot by BOSS contact
-  // simulate "victim was recently hit by bystander" — this is the trap that
+  // simulate "victim was recently hit by bystander" 鈥?this is the trap that
   // made the old code falsely credit bystander.
   victim.lastHitBy = bystander.id;
   const killsBefore = bystander.kills;
@@ -207,9 +207,9 @@ test('skill 2 is gated behind its required level', () => {
   a.x = 500; a.y = 500; b.x = 560; b.y = 500;
   const hp0 = b.hp;
   a.level = 1;
-  w.doSkill(a, 1);                              // 霜雪新星 needs Lv.3 — blocked while under-leveled
+  w.doSkill(a, 1);                              // 闇滈洩鏂版槦 needs Lv.3 鈥?blocked while under-leveled
   assert.equal(b.hp, hp0, 'locked skill does nothing below its required level');
-  a.level = 3;
+  a.level = 5;
   w.doSkill(a, 1);                              // now unlocked
   tickProjectiles(w);
   assert.ok(b.hp < hp0, 'skill fires once the level requirement is met');
@@ -217,7 +217,7 @@ test('skill 2 is gated behind its required level', () => {
 
 test('frost nova (mage skill 2) damages and slows enemies in range', () => {
   const { w, a, b } = duel('mage', 'warrior');
-  a.x = 500; a.y = 500; b.x = 560; b.y = 500; a.level = 3;
+  a.x = 500; a.y = 500; b.x = 560; b.y = 500; a.level = 5;
   const full = b.effSpeed(Date.now());
   const hp0 = b.hp;
   w.doSkill(a, 1);
@@ -230,7 +230,7 @@ test('frost nova (mage skill 2) damages and slows enemies in range', () => {
 test('war cry (warrior skill 2) heals and braces against incoming damage', () => {
   const { w, a, b } = duel('warrior', 'warrior');
   a.x = 500; a.y = 500; b.x = 560; b.y = 500;
-  a.level = 3; a.hp = 60; a.spawnProtectUntil = 0;
+  a.level = 5; a.hp = 60; a.spawnProtectUntil = 0;
   w.doSkill(a, 1);
   assert.ok(a.hp > 60, 'war cry restored health');
   assert.ok(a.hasBuff('guard', Date.now()), 'brace (guard) buff is active');
@@ -241,7 +241,7 @@ test('war cry (warrior skill 2) heals and braces against incoming damage', () =>
 
 test('shadow veil (assassin skill 2) blinks the held direction and cloaks', () => {
   const { w, a, b } = duel('assassin', 'warrior');
-  a.x = 500; a.y = 500; b.x = 560; b.y = 500; a.level = 3;
+  a.x = 500; a.y = 500; b.x = 560; b.y = 500; a.level = 5;
   a.input = { up: false, down: false, left: true, right: false };   // flee left
   const x0 = a.x;
   w.doSkill(a, 1);
@@ -259,7 +259,7 @@ test('mage projectile hits a merchant after a tick', () => {
   p.spawnProtectUntil = 0; p.attackReadyAt = 0;
   const before = m.hp;
   w.doAttack(p);
-  // tick until projectile resolves (mage projSpeed 470 → ~10 ticks to cover 200px)
+  // tick until projectile resolves (mage projSpeed 470 鈫?~10 ticks to cover 200px)
   for (let i = 0; i < 30 && w.projectiles.size > 0; i++) w.update(0.033);
   assert.ok(m.hp < before, 'mage projectile actually damages the merchant');
 });
@@ -288,7 +288,7 @@ test('lethal merchant damage queues the merchant for respawn', () => {
   w.bosses.clear(); w.items.clear(); w.obstacles.length = 0;
   const p = w.addPlayer('P', 'warrior');
   const m = [...w.merchants.values()][0];
-  // warrior is melee_aoe, so a single doAttack() resolves the hit — no need to tick projectiles
+  // warrior is melee_aoe, so a single doAttack() resolves the hit 鈥?no need to tick projectiles
   m.x = p.x + 30; m.y = p.y;
   p.spawnProtectUntil = 0; p.attackReadyAt = 0;
   m.hp = 1; m.state = 'idle';
@@ -310,7 +310,7 @@ test('permanentBuy() validates merchant proximity, gold, and ownership', () => {
   const m = [...w.merchants.values()][0]; m.x = p.x; m.y = p.y;
   p.gold = 0;
   assert.equal(w.permanentBuy(p, 'eq_hp1').ok, false, 'rejected: not enough gold');
-  // pay up — equipment piece applies bonus and tracks ownership
+  // pay up 鈥?equipment piece applies bonus and tracks ownership
   p.gold = 9999;
   const r = w.permanentBuy(p, 'eq_hp1');
   assert.equal(r.ok, true, 'succeeds near a merchant with gold');
@@ -351,7 +351,7 @@ test('viewFor hides invisible rivals but not self or reveal-holders', () => {
   assert.ok(!w.viewFor(rect, a).players.some(p => p.id === b.id), 'invisible rival hidden from A');
   assert.ok(w.viewFor(rect, b).players.some(p => p.id === b.id), 'a player always sees itself');
 
-  a.buffs.reveal = Date.now() + 10000;                  // A gains 洞察之眼
+  a.buffs.reveal = Date.now() + 10000;                  // A gains 娲炲療涔嬬溂
   w.prepareSnapshot();
   assert.ok(w.viewFor(rect, a).players.some(p => p.id === b.id), 'reveal surfaces the invisible rival');
 });
@@ -389,7 +389,7 @@ test('BOSS nearestPlayer skips stealthed heroes', () => {
   visible.spawnProtectUntil = 0; hidden.spawnProtectUntil = 0;
   boss.x = 1000; boss.y = 1000;
   visible.x = 1080; visible.y = 1000;       // 80 px away
-  hidden.x = 1020; hidden.y = 1000;          // 20 px away — closer, but cloaked
+  hidden.x = 1020; hidden.y = 1000;          // 20 px away 鈥?closer, but cloaked
   hidden.buffs.invis = Date.now() + 5000;
   const target = w.nearestPlayer(boss, 500);
   assert.equal(target && target.id, visible.id, 'stealthed hero is skipped');
@@ -439,7 +439,7 @@ test('bossSlam and bossDrain skip stealthed heroes', () => {
 test('handleDeath clears buffs so respawn body has no leftover stealth/speed/reveal', () => {
   // A hero who dies while cloaked / hasted / reveal-buffed must respawn
   // without those timers. The pre-fix bug let them keep their invis for the
-  // remaining time on respawn — visible to the server, invisible to rivals.
+  // remaining time on respawn 鈥?visible to the server, invisible to rivals.
   const { w, a } = duel();
   a.buffs.invis = Date.now() + 10000;
   a.buffs.speed = Date.now() + 8000;
@@ -448,7 +448,7 @@ test('handleDeath clears buffs so respawn body has no leftover stealth/speed/rev
   w.damageEntity(a, 99999, null);
   assert.equal(a.dead, true);
   assert.equal(Object.keys(a.buffs).length, 0, 'buffs cleared on lethal death');
-  // respawn body (next tick past respawnAt) — still empty.
+  // respawn body (next tick past respawnAt) 鈥?still empty.
   a.respawnAt = Date.now() - 1;
   w.update(0.033);
   assert.equal(a.dead, false, 'respawned');
@@ -456,9 +456,9 @@ test('handleDeath clears buffs so respawn body has no leftover stealth/speed/rev
 });
 
 test('extra-life revive also clears buffs (no stealth-on-revive exploit)', () => {
-  // The 复活之心 in-place revive should also reset combat state; otherwise
+  // The 澶嶆椿涔嬪績 in-place revive should also reset combat state; otherwise
   // a player would pop right back into invis with a half-tick left on their
-  // 影遁 cloak.
+  // 褰遍亖 cloak.
   const { w, a } = duel();
   a.extraLives = 1;
   a.buffs.invis = Date.now() + 10000;
@@ -469,7 +469,7 @@ test('extra-life revive also clears buffs (no stealth-on-revive exploit)', () =>
 
 test('overview() masks invisible player x/y when nobody has reveal', () => {
   // Anti-cheat: the 200ms minimap stream shouldn't leak precise coords for a
-  // cloaked player. Without anyone holding 洞察之眼, x/y must be nulled.
+  // cloaked player. Without anyone holding 娲炲療涔嬬溂, x/y must be nulled.
   const w = new World();
   w.merchants.clear(); w.items.clear(); w.obstacles.length = 0;
   const cloaked = w.addPlayer('Cloak', 'warrior');
@@ -483,8 +483,8 @@ test('overview() masks invisible player x/y when nobody has reveal', () => {
 });
 
 test('overview() reveals invisible player x/y once anyone holds reveal', () => {
-  // Once any hero has 洞察之眼, stealth's "hide from everyone" promise is
-  // already broken for that frame — no point masking (and doing so would
+  // Once any hero has 娲炲療涔嬬溂, stealth's "hide from everyone" promise is
+  // already broken for that frame 鈥?no point masking (and doing so would
   // even create a side channel: the reveal-holder's own dot would still
   // appear, letting anyone infer the masking by checking who vanished).
   const w = new World();
@@ -503,7 +503,7 @@ test('overview() reveals invisible player x/y once anyone holds reveal', () => {
 test('prepareSnapshot includes slowUntil / slowMul for client prediction', () => {
   // predictSelf on the client mirrors effSpeed(), which includes the slow
   // debuff. The snapshot must carry both fields or the client will predict
-  // full speed until the server corrects (a visible jitter on 霜雪新星 hit).
+  // full speed until the server corrects (a visible jitter on 闇滈洩鏂版槦 hit).
   const w = new World();
   w.merchants.clear(); w.items.clear(); w.obstacles.length = 0;
   const p = w.addPlayer('P', 'mage');
