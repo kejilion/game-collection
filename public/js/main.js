@@ -56,8 +56,15 @@
 
   function onSpectatorCount(m) {
     G.spectatorCount = m.count;
-    const menuEl = document.getElementById('menuSpecCount');
-    if (menuEl) menuEl.textContent = m.count > 0 ? '\uD83D\uDC41 ' + m.count + ' \u4EBA\u89C2\u6218\u4E2D' : '';
+    // show spectator count inside the menu's spectate button
+    const btn = document.getElementById('spectateBtn');
+    const cnt = document.getElementById('specBtnCount');
+    if (btn && cnt) {
+      const show = m.count > 0;
+      btn.classList.toggle('has-spec', show);
+      cnt.hidden = !show;
+      cnt.textContent = '\uD83D\uDC41 ' + m.count + ' \u89C2\u6218\u4E2D';
+    }
     const badge = document.getElementById('specCountBadge');
     if (badge) {
       badge.textContent = '\uD83D\uDC41 \u89C2\u6218 ' + m.count;

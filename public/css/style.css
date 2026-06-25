@@ -44,32 +44,44 @@ button{font-family:inherit;cursor:pointer;border:none;color:inherit}
 /* Two drifting aurora veils — large soft radial blobs, transform-only,
    32s/28s so motion is barely perceptible but breathes life into the scene */
 .aurora{position:absolute;top:-30%;left:-20%;width:140%;height:90%;
-  filter:blur(40px);opacity:.55;will-change:transform;mix-blend-mode:screen;pointer-events:none}
+  opacity:.6;will-change:transform,opacity;mix-blend-mode:screen;pointer-events:none}
 .aurora-a{
   background:
-    radial-gradient(40% 45% at 22% 30%,rgba(91,140,255,.42) 0%,transparent 62%),
-    radial-gradient(38% 40% at 70% 24%,rgba(163,104,255,.34) 0%,transparent 62%);
-  animation:auroraDriftA 32s ease-in-out infinite alternate}
+    radial-gradient(46% 50% at 22% 30%,rgba(91,140,255,.5) 0%,transparent 60%),
+    radial-gradient(44% 46% at 70% 24%,rgba(163,104,255,.42) 0%,transparent 60%);
+  animation:auroraA 36s ease-in-out infinite alternate}
 .aurora-b{
   background:
-    radial-gradient(42% 46% at 78% 70%,rgba(255,93,158,.28) 0%,transparent 64%),
-    radial-gradient(36% 38% at 26% 74%,rgba(91,200,255,.26) 0%,transparent 64%);
-  animation:auroraDriftB 28s ease-in-out infinite alternate}
-@keyframes auroraDriftA{to{transform:translate3d(8%,6%,0) rotate(2deg)}}
-@keyframes auroraDriftB{to{transform:translate3d(-7%,-5%,0) rotate(-2deg)}}
+    radial-gradient(48% 52% at 78% 70%,rgba(255,93,158,.36) 0%,transparent 62%),
+    radial-gradient(42% 44% at 26% 74%,rgba(91,200,255,.34) 0%,transparent 62%);
+  animation:auroraB 30s ease-in-out infinite alternate}
+.aurora-c{
+  background:radial-gradient(50% 50% at 50% 60%,rgba(255,200,110,.2) 0%,transparent 60%);
+  animation:auroraC 44s ease-in-out infinite alternate}
+@keyframes auroraA{0%{transform:translate3d(-2%,-1%,0) rotate(-1deg) scale(1);opacity:.45}100%{transform:translate3d(8%,6%,0) rotate(2deg) scale(1.08);opacity:.7}}
+@keyframes auroraB{0%{transform:translate3d(2%,1%,0) rotate(1deg) scale(1.05);opacity:.4}100%{transform:translate3d(-7%,-5%,0) rotate(-2deg) scale(1);opacity:.65}}
+@keyframes auroraC{0%{transform:translate3d(0,3%,0) scale(1);opacity:.25}100%{transform:translate3d(0,-4%,0) scale(1.12);opacity:.45}}
 
 /* Starfield — six pinpoint motes, gentle twinkle via opacity on a slow loop.
    Single element, paint-once; opacity animation is GPU-composited. */
 .stars{position:absolute;inset:0;
   background:
-    radial-gradient(2px 2px at 18% 22%,rgba(255,224,180,.7),transparent 60%),
-    radial-gradient(1.6px 1.6px at 72% 18%,rgba(190,210,255,.65),transparent 60%),
-    radial-gradient(1.6px 1.6px at 84% 62%,rgba(255,190,215,.55),transparent 60%),
-    radial-gradient(2px 2px at 12% 72%,rgba(190,230,255,.55),transparent 60%),
-    radial-gradient(1.6px 1.6px at 48% 88%,rgba(255,224,180,.5),transparent 60%),
-    radial-gradient(1.4px 1.4px at 60% 42%,rgba(220,210,255,.5),transparent 60%);
-  animation:starsTwinkle 6s ease-in-out infinite alternate;will-change:opacity}
-@keyframes starsTwinkle{0%{opacity:.6}100%{opacity:1}}
+    radial-gradient(2px 2px at 18% 22%,rgba(255,224,180,.75),transparent 60%),
+    radial-gradient(1.6px 1.6px at 72% 18%,rgba(190,210,255,.7),transparent 60%),
+    radial-gradient(2px 2px at 84% 62%,rgba(255,190,215,.6),transparent 60%),
+    radial-gradient(2px 2px at 12% 72%,rgba(190,230,255,.6),transparent 60%),
+    radial-gradient(1.6px 1.6px at 48% 88%,rgba(255,224,180,.55),transparent 60%),
+    radial-gradient(1.4px 1.4px at 60% 42%,rgba(220,210,255,.55),transparent 60%);
+  animation:starsTwinkle 7s ease-in-out infinite alternate;will-change:opacity}
+.stars::after{content:"";position:absolute;inset:0;
+  background:
+    radial-gradient(1.2px 1.2px at 32% 38%,rgba(200,220,255,.5),transparent 60%),
+    radial-gradient(1.2px 1.2px at 88% 28%,rgba(255,210,170,.45),transparent 60%),
+    radial-gradient(1px 1px at 22% 52%,rgba(255,255,255,.4),transparent 60%),
+    radial-gradient(1.2px 1.2px at 66% 76%,rgba(200,220,255,.45),transparent 60%);
+  animation:starsTwinkleB 5.5s ease-in-out infinite alternate;will-change:opacity}
+@keyframes starsTwinkle{0%{opacity:.55}100%{opacity:1}}
+@keyframes starsTwinkleB{0%{opacity:1}100%{opacity:.5}}
 
 /* Card — layered translucent glass, no backdrop-filter. Warm halo + top
    highlight + base gradient. contain:paint isolates it from the bg. */
@@ -104,8 +116,9 @@ button{font-family:inherit;cursor:pointer;border:none;color:inherit}
   -webkit-background-clip:text;background-clip:text;color:transparent;
   -webkit-text-fill-color:transparent;
   filter:drop-shadow(0 6px 24px rgba(255,140,80,.28));
-  animation:logoSheen 7s ease-in-out infinite alternate}
+  animation:logoSheen 7s ease-in-out infinite alternate,logoBreath 4.8s ease-in-out infinite alternate}
 @keyframes logoSheen{0%{background-position:0% 50%}100%{background-position:100% 50%}}
+@keyframes logoBreath{0%{transform:scale(1);filter:drop-shadow(0 6px 24px rgba(255,140,80,.22))}100%{transform:scale(1.03);filter:drop-shadow(0 8px 30px rgba(255,140,80,.4))}}
 .logo span{display:block;font-size:12px;font-weight:700;letter-spacing:9px;margin-top:11px;
   color:#9fb0d8;-webkit-text-fill-color:#9fb0d8;padding-left:9px;opacity:.9}
 
@@ -205,7 +218,7 @@ button{font-family:inherit;cursor:pointer;border:none;color:inherit}
 
 /* respect reduced-motion preferences —disable continuous animations */
 @media (prefers-reduced-motion: reduce){
-  .menu-card,.aurora-a,.aurora-b,.stars,.logo,.class-card.sel::after,.conn-status::before{animation:none!important}
+  .menu-card,.aurora-a,.aurora-b,.aurora-c,.stars,.stars::after,.logo,.class-card.sel::after,.conn-status::before{animation:none!important}
   .menu-card{animation-duration:.01ms!important}
   .play-btn::before{transition:none}
 }
@@ -503,17 +516,28 @@ body.chat-open .chat-form input{opacity:1;font-size:16px;padding:12px 14px}
 
 /* ---- Spectator Mode ---- */
 .spectate-btn {
-  display: block; width: 100%; margin-top: 8px; padding: 10px 0;
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  width: 100%; margin-top: 8px; padding: 10px 14px;
   background: rgba(100,140,255,.15); border: 1px solid rgba(100,140,255,.4);
   color: #9ab8ff; font-size: .95rem; border-radius: 8px; cursor: pointer;
-  transition: background .2s, color .2s;
+  transition: background .2s, color .2s, border-color .2s;
 }
+.spectate-btn.has-spec { border-color: rgba(120,160,255,.55); }
+.spec-btn-count {
+  display: none; align-items: center; gap: 4px;
+  font-size: .78rem; font-weight: 600; letter-spacing: .2px;
+  padding: 2px 8px; line-height: 1;
+  color: #cfe0ff;
+  background: rgba(120,160,255,.18);
+  border: 1px solid rgba(120,160,255,.3);
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.spectate-btn.has-spec .spec-btn-count { display: inline-flex; }
+.spectate-btn:hover .spec-btn-count { background: rgba(140,175,255,.28); color:#fff; }
 .spectate-btn:hover { background: rgba(100,140,255,.3); color: #fff; }
 
-.menu-spec-count {
-  position: absolute; bottom: 60px; left: 50%; transform: translateX(-50%);
-  color: rgba(180,200,255,.6); font-size: .82rem;
-}
+
 
 .spectator-bar {
   display: none; position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
@@ -710,5 +734,4 @@ body:not(.is-touch) .spectator-list.collapsed .sl-player { display: flex; }
   /* nudges the floating connection badge up so it doesn't sit under footer */
   .conn-status{bottom:calc(54px + env(safe-area-inset-bottom))}
   #menu{padding-bottom:72px}
-  .menu-spec-count{bottom:calc(70px + env(safe-area-inset-bottom))}
 }
