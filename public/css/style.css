@@ -21,62 +21,168 @@ button{font-family:inherit;cursor:pointer;border:none;color:inherit}
 /* ============================ MENU ============================ */
 #menu{display:none;place-items:center;overflow:auto}
 #menu.show{display:grid}
-.menu-bg{position:fixed;inset:0;
+
+/* Layered, painterly background — replaces blur+float with a static layered
+   gradient + a one-time-painted SVG grain + 5 GPU-cheap drifting motes.
+   Eliminates the filter:blur(6px) repaint cost entirely. */
+.menu-bg{position:fixed;inset:0;pointer-events:none;overflow:hidden;
   background:
-    radial-gradient(40% 30% at 15% 20%,rgba(91,140,255,.25),transparent 70%),
-    radial-gradient(40% 30% at 85% 15%,rgba(163,104,255,.22),transparent 70%),
-    radial-gradient(50% 40% at 50% 100%,rgba(239,91,82,.18),transparent 70%);
-  filter:blur(6px);animation:float 14s ease-in-out infinite alternate}
-@keyframes float{to{transform:translateY(-18px) scale(1.05)}}
-.menu-card{position:relative;width:min(560px,92vw);margin:24px;padding:30px 30px 24px;
-  background:var(--panel);backdrop-filter:blur(14px);
-  border:1px solid var(--line);border-radius:26px;
-  box-shadow:0 30px 80px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.08);text-align:center}
-.logo{font-size:46px;font-weight:800;letter-spacing:1px;line-height:1;
-  background:linear-gradient(90deg,#ffd23f,#ff8a5b,#ff5d9e,#9b7bff,#5bc8ff);
+    /* top spotlight pulls the eye toward the card */
+    radial-gradient(120% 90% at 50% -10%,rgba(48,64,128,.55) 0%,transparent 60%),
+    /* color auras at 3 corners */
+    radial-gradient(48% 36% at 14% 18%,rgba(91,140,255,.28) 0%,transparent 65%),
+    radial-gradient(46% 34% at 86% 16%,rgba(163,104,255,.24) 0%,transparent 65%),
+    radial-gradient(60% 42% at 50% 108%,rgba(239,91,82,.18) 0%,transparent 70%),
+    /* base night gradient */
+    linear-gradient(180deg,#13193b 0%,#0c1130 55%,#070a22 100%);
+}
+/* film-grain texture, painted once — single 160×160 SVG tile; mix-blend-mode
+   isolates it from anything painted above (the menu-card) */
+.menu-bg::after{content:"";position:absolute;inset:0;opacity:.07;mix-blend-mode:overlay;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 .7 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>")}
+/* five slow-drifting motes — transform-only animation, GPU-accelerated,
+   24-second period so the motion is barely perceptible but adds life */
+.menu-bg::before{content:"";position:absolute;inset:0;
+  background:
+    radial-gradient(2px 2px at 18% 22%,rgba(255,210,160,.6),transparent 60%),
+    radial-gradient(1.6px 1.6px at 72% 18%,rgba(180,200,255,.55),transparent 60%),
+    radial-gradient(1.6px 1.6px at 84% 62%,rgba(255,180,210,.5),transparent 60%),
+    radial-gradient(2px 2px at 12% 72%,rgba(180,230,255,.5),transparent 60%),
+    radial-gradient(1.6px 1.6px at 48% 88%,rgba(255,210,160,.45),transparent 60%);
+  animation:menuDrift 24s ease-in-out infinite alternate;
+  will-change:transform;
+}
+@keyframes menuDrift{to{transform:translate3d(-14px,-18px,0)}}
+
+/* Card — layered translucent, no backdrop-filter (GPU cost). Three stacked
+   layers deliver glassy depth: warm halo + top highlight + base gradient.
+   `contain:paint` isolates it from the bg for fewer invalidations. */
+.menu-card{position:relative;width:min(560px,92vw);margin:24px;padding:34px 30px 26px;
+  background:
+    radial-gradient(70% 45% at 14% 0%,rgba(255,210,63,.08),transparent 65%),
+    linear-gradient(180deg,rgba(255,255,255,.07) 0%,rgba(255,255,255,0) 26%),
+    linear-gradient(180deg,rgba(24,32,68,.82) 0%,rgba(14,20,48,.9) 100%);
+  border:1px solid rgba(255,255,255,.09);
+  border-radius:24px;
+  box-shadow:
+    0 32px 80px -20px rgba(0,0,0,.65),
+    0 0 0 1px rgba(255,255,255,.04) inset,
+    0 1px 0 rgba(255,255,255,.1) inset;
+  text-align:center;
+  contain:paint;
+  animation:menuIn .55s cubic-bezier(.2,.8,.25,1) both;
+}
+@keyframes menuIn{
+  from{opacity:0;transform:translateY(10px) scale(.985)}
+  to{opacity:1;transform:translateY(0) scale(1)}
+}
+/* gradient accent bar at top — 1px hairline, no paint cost beyond itself */
+.menu-card::before{content:"";position:absolute;top:0;left:18%;right:18%;height:1px;
+  background:linear-gradient(90deg,transparent,rgba(255,210,100,.75) 30%,rgba(255,180,210,.6) 55%,rgba(180,200,255,.6) 80%,transparent);
+  border-radius:1px;opacity:.85}
+
+.logo{font-size:48px;font-weight:800;letter-spacing:.5px;line-height:1;
+  background:linear-gradient(95deg,#ffd23f 0%,#ff8a5b 26%,#ff5d9e 50%,#9b7bff 74%,#5bc8ff 100%);
   -webkit-background-clip:text;background-clip:text;color:transparent;
-  text-shadow:0 6px 30px rgba(255,140,80,.25)}
-.logo span{display:block;font-size:15px;letter-spacing:8px;margin-top:6px;color:var(--dim);
-  -webkit-text-fill-color:var(--dim)}
-.tagline{color:var(--dim);font-size:14px;margin:12px 0 20px}
-.field{display:block;text-align:left;margin-bottom:18px}
-.field span{font-size:13px;color:var(--dim);margin-left:6px}
-.field input{width:100%;margin-top:6px;padding:13px 16px;font-size:16px;font-weight:600;
-  background:rgba(0,0,0,.28);border:1.5px solid var(--line);border-radius:14px;color:var(--text);outline:none}
-.field input:focus{border-color:#5bc8ff;box-shadow:0 0 0 3px rgba(91,200,255,.18)}
+  text-shadow:0 8px 32px rgba(255,140,80,.22)}
+.logo span{display:block;font-size:12px;font-weight:700;letter-spacing:9px;margin-top:10px;
+  color:#9fb0d8;-webkit-text-fill-color:#9fb0d8;padding-left:9px;opacity:.85}
 
-.class-pick{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:20px}
-.class-card{position:relative;padding:16px 10px 14px;border-radius:18px;cursor:pointer;
-  background:rgba(0,0,0,.25);border:2px solid var(--line);transition:.16s;text-align:center}
-.class-card:hover{transform:translateY(-3px)}
-.class-card.sel{border-color:var(--cc);box-shadow:0 8px 26px var(--ccs),inset 0 0 22px var(--ccs)}
-.class-card .ava{width:96px;height:96px;margin:0 auto 8px;border-radius:50%;
-  display:block;background:radial-gradient(circle at 35% 30%,#fff3,transparent 55%),var(--cc);
-  box-shadow:0 6px 16px var(--ccs),inset 0 -8px 18px rgba(0,0,0,.25)}
-.class-card h4{font-size:17px;font-weight:800}
-.class-card .role{font-size:11px;color:var(--dim);margin-top:2px;min-height:28px;line-height:1.25}
-.class-card .tag{position:absolute;top:8px;right:8px;font-size:10px;padding:2px 7px;border-radius:8px;
-  background:var(--cc);color:#fff;font-weight:700}
+.tagline{color:#aebadb;font-size:13.5px;margin:14px 0 22px;letter-spacing:.3px;line-height:1.4}
 
-.play-btn{width:100%;padding:15px;font-size:19px;font-weight:800;border-radius:16px;letter-spacing:1px;
-  color:#2a1500;background:linear-gradient(180deg,#ffd64a,#ff9f2e);
-  box-shadow:0 10px 26px rgba(255,160,40,.4),inset 0 1px 0 #fff7;transition:.15s}
-.play-btn:hover{transform:translateY(-2px);filter:brightness(1.06)}
+.field{display:block;text-align:left;margin-bottom:20px}
+.field span{display:block;font-size:11px;font-weight:700;letter-spacing:1.5px;
+  color:#9fb0d8;margin-left:4px;margin-bottom:9px;text-transform:uppercase;opacity:.85}
+.field input{width:100%;padding:14px 16px;font-size:16px;font-weight:600;
+  background:rgba(0,0,0,.32);border:1.5px solid rgba(255,255,255,.1);border-radius:14px;
+  color:var(--text);outline:none;
+  box-shadow:inset 0 2px 4px rgba(0,0,0,.25);
+  transition:border-color .18s,box-shadow .18s,background .18s}
+.field input::placeholder{color:rgba(159,176,216,.5);font-weight:500}
+.field input:hover{border-color:rgba(255,255,255,.2);background:rgba(0,0,0,.36)}
+.field input:focus{border-color:rgba(91,200,255,.7);background:rgba(0,0,0,.42);
+  box-shadow:inset 0 2px 4px rgba(0,0,0,.25),0 0 0 4px rgba(91,200,255,.14)}
+
+.class-pick{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:22px}
+.class-card{position:relative;padding:18px 10px 14px;border-radius:18px;cursor:pointer;
+  background:linear-gradient(180deg,rgba(255,255,255,.04) 0%,rgba(0,0,0,.22) 100%);
+  border:1px solid rgba(255,255,255,.08);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.06),0 4px 14px rgba(0,0,0,.32);
+  transition:transform .18s,border-color .18s,box-shadow .22s;will-change:transform;
+  text-align:center;overflow:hidden}
+.class-card:hover{transform:translateY(-2px);border-color:rgba(255,255,255,.2)}
+.class-card.sel{border-color:var(--cc);
+  box-shadow:0 12px 28px -8px var(--ccs),inset 0 0 0 1px var(--ccs),inset 0 -10px 18px rgba(0,0,0,.18)}
+.class-card.sel::after{content:"";position:absolute;inset:0;border-radius:18px;pointer-events:none;
+  background:radial-gradient(60% 50% at 50% 0%,var(--ccs),transparent 70%);
+  animation:cardBreath 3.2s ease-in-out infinite alternate}
+@keyframes cardBreath{to{opacity:.5}}
+.class-card .ava{width:96px;height:96px;margin:0 auto 10px;border-radius:50%;
+  display:block;background:radial-gradient(circle at 35% 30%,rgba(255,255,255,.45),transparent 55%),var(--cc);
+  box-shadow:inset 0 -8px 16px rgba(0,0,0,.3),0 0 0 2px rgba(255,255,255,.08),0 8px 18px var(--ccs);
+  position:relative;z-index:1}
+.class-card h4{font-size:17px;font-weight:800;letter-spacing:.5px}
+.class-card .role{font-size:11px;color:var(--dim);margin-top:3px;min-height:30px;line-height:1.3;
+  letter-spacing:.2px}
+.class-card .tag{position:absolute;top:10px;right:10px;font-size:10px;font-weight:800;
+  padding:3px 8px;border-radius:8px;background:var(--cc);color:#fff;
+  box-shadow:0 2px 8px var(--ccs),inset 0 1px 0 rgba(255,255,255,.3)}
+
+.play-btn{width:100%;padding:16px;font-size:18px;font-weight:800;border-radius:16px;letter-spacing:1.5px;
+  color:#2a1500;
+  background:linear-gradient(180deg,#ffe066 0%,#ffb43a 55%,#ff9f2e 100%);
+  border:1px solid rgba(255,210,100,.6);
+  box-shadow:
+    0 12px 28px -6px rgba(255,160,40,.55),
+    inset 0 1px 0 rgba(255,255,255,.55),
+    inset 0 -1px 0 rgba(120,60,0,.18);
+  transition:transform .14s,filter .14s,box-shadow .22s;
+  position:relative;overflow:hidden}
+.play-btn::before{content:"";position:absolute;top:0;left:-100%;width:55%;height:100%;
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.5),transparent);
+  transition:left .6s ease;pointer-events:none}
+.play-btn:hover{transform:translateY(-1px);filter:brightness(1.05);
+  box-shadow:0 16px 36px -6px rgba(255,160,40,.75),inset 0 1px 0 rgba(255,255,255,.55),inset 0 -1px 0 rgba(120,60,0,.18)}
+.play-btn:hover::before{left:130%}
 .play-btn:active{transform:translateY(1px)}
-.hint{margin-top:14px;font-size:12px;color:var(--dim)}
-.hint b{color:#ffe08a}
+
+.spectate-btn{margin-top:10px;width:100%;padding:11px;font-size:14px;font-weight:700;letter-spacing:.5px;
+  border-radius:14px;color:#bcd0ff;
+  background:rgba(100,140,255,.08);
+  border:1px solid rgba(100,140,255,.25);
+  transition:background .14s,border-color .14s,color .14s,transform .14s}
+.spectate-btn:hover{background:rgba(100,140,255,.16);border-color:rgba(100,140,255,.4);color:#dde7ff}
+.spectate-btn:active{transform:translateY(1px)}
+
+.hint{margin-top:14px;font-size:12px;color:var(--dim);letter-spacing:.2px;line-height:1.6}
+.hint b{color:#ffe08a;font-weight:700}
 .mobile-hint{display:none;margin-top:10px;font-size:12px;color:#9be7ff}
-.menu-board{margin-top:18px;padding-top:14px;border-top:1px solid var(--line)}
-.menu-board h3{font-size:14px;color:var(--dim);margin-bottom:8px}
+
+.menu-board{margin-top:20px;padding-top:14px;border-top:1px solid rgba(255,255,255,.06)}
+.menu-board h3{font-size:11px;font-weight:800;letter-spacing:2px;color:#9fb0d8;margin-bottom:10px;
+  text-transform:uppercase;opacity:.85}
 .mini-board{list-style:none;font-size:13px}
-.mini-board li{display:flex;justify-content:space-between;padding:5px 8px;border-radius:8px}
-.mini-board li:nth-child(odd){background:rgba(255,255,255,.04)}
-.mini-board .empty{justify-content:center;color:var(--dim)}
-.mini-board .nm{font-weight:700}.mini-board .sc{color:var(--gold);font-weight:700}
+.mini-board li{display:flex;justify-content:space-between;padding:6px 10px;border-radius:8px}
+.mini-board li:nth-child(odd){background:rgba(255,255,255,.03)}
+.mini-board .empty{justify-content:center;color:var(--dim);opacity:.7}
+.mini-board .nm{font-weight:700}.mini-board .sc{color:var(--gold);font-weight:800}
 
 .conn-status{position:fixed;bottom:14px;left:50%;transform:translateX(-50%);
-  font-size:12px;color:var(--dim);background:rgba(0,0,0,.4);padding:6px 14px;border-radius:20px;border:1px solid var(--line)}
+  font-size:11px;letter-spacing:.4px;font-weight:700;color:var(--dim);
+  background:rgba(0,0,0,.45);padding:6px 14px;border-radius:20px;
+  border:1px solid rgba(255,255,255,.1);
+  backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);
+  display:inline-flex;align-items:center;gap:6px}
+.conn-status::before{content:"";width:6px;height:6px;border-radius:50%;
+  background:currentColor;box-shadow:0 0 8px currentColor;opacity:.7}
 .conn-status.ok{color:#6ee7a0}.conn-status.bad{color:#ff7a7a}
+
+/* respect reduced-motion preferences — disable continuous animations */
+@media (prefers-reduced-motion: reduce){
+  .menu-card,.menu-bg::before,.class-card.sel::after{animation:none!important}
+  .menu-card{animation-duration:.01ms!important}
+  .play-btn::before{transition:none}
+}
 
 /* ============================ GAME ============================ */
 #game{background:#0a0f24}
@@ -252,6 +358,20 @@ body.chat-open .chat-form input{opacity:1;font-size:16px;padding:12px 14px}
 .set-btn:hover{background:rgba(255,255,255,.16);transform:translateY(-1px)}
 .set-btn.danger{background:rgba(239,91,82,.2);color:#ff9b94}
 .set-btn.danger:hover{background:rgba(239,91,82,.34)}
+
+/* audio toggles inside the settings panel — music / sfx side by side */
+.audio-toggle-row{display:flex;gap:10px;margin-bottom:10px}
+.audio-toggle{position:relative;display:flex;align-items:center;justify-content:center;gap:6px;
+  margin-bottom:0;padding:13px 10px;font-size:15px;font-weight:800;border-radius:14px;
+  background:rgba(255,255,255,.08);transition:.14s}
+.audio-toggle:hover{background:rgba(255,255,255,.16);transform:translateY(-1px)}
+.audio-toggle .at-ic{font-size:18px}
+.audio-toggle .at-nm{flex:none}
+.audio-toggle .at-state{margin-left:2px;padding:1px 8px;border-radius:8px;font-size:12px;
+  background:rgba(124,240,176,.18);color:#7df0b0}
+.audio-toggle[aria-pressed="false"]{opacity:.62}
+.audio-toggle[aria-pressed="false"] .at-state{background:rgba(255,155,148,.18);color:#ff9b94}
+@media(max-width:480px){.audio-toggle-row{gap:8px}.audio-toggle{font-size:14px;padding:12px 6px}}
 
 /* respawn / quit overlays */
 .respawn{position:absolute;inset:0;z-index:30;display:none;place-items:center;background:rgba(6,9,22,.62);backdrop-filter:blur(3px)}
@@ -485,3 +605,35 @@ body:not(.is-touch) .spec-toolbar { display: none !important; }
 body:not(.is-touch) #specJoystick { display: none !important; }
 body:not(.is-touch) .spectator-list .sl-toggle { display: none; }
 body:not(.is-touch) .spectator-list.collapsed .sl-player { display: flex; }
+
+/* ====== minimal audio test panel (menu only) ====== */
+.menu-audio {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  display: flex;
+  gap: 6px;
+  z-index: 5;
+}
+.menu-audio button {
+  font: 700 12px/1 "Baloo 2","Noto Sans SC",sans-serif;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: rgba(20,28,40,.55);
+  border: 1px solid rgba(255,255,255,.18);
+  color: #cfe3ff;
+  cursor: pointer;
+  transition: background .14s, border-color .14s;
+  backdrop-filter: blur(4px);
+}
+.menu-audio button:hover { background: rgba(40,60,90,.7); border-color: rgba(255,255,255,.32); }
+.menu-audio button:active { transform: translateY(1px); }
+.menu-audio button[aria-pressed="true"] {
+  background: rgba(255,93,115,.22);
+  border-color: rgba(255,93,115,.55);
+  color: #ff9b94;
+}
+@media (max-width:680px) {
+  .menu-audio { right: 10px; bottom: 10px; gap: 4px; }
+  .menu-audio button { padding: 7px 9px; font-size: 11px; }
+}

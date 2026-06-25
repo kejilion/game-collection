@@ -127,6 +127,10 @@
     <div class="op-head"><h3>⚙ 游戏设置</h3><button class="op-close" data-close="settings">✕</button></div>
     <button class="set-btn" id="btnResume">继续游戏</button>
     <button class="set-btn" id="btnFullscreen">⛶ 全屏切换</button>
+    <div class="audio-toggle-row" id="audioToggleRow">
+      <button class="set-btn audio-toggle" id="btnToggleMusic" type="button" title="背景音乐开关" aria-pressed="true"><span class="at-ic">🎵</span><span class="at-nm">音乐</span><span class="at-state" id="musicState">开</span></button>
+      <button class="set-btn audio-toggle" id="btnMute" type="button" title="音效开关" aria-pressed="false"><span class="at-ic">🔊</span><span class="at-nm">音效</span><span class="at-state" id="sfxState">开</span></button>
+    </div>
     <button class="set-btn" id="btnReselect">↩ 重新选择角色</button>
     <button class="set-btn danger" id="btnQuit">⏻ 退出游戏</button>
     <p class="op-sub center">提示：方向键移动 · A 攻击 · 1 技能 · E 商店</p>
@@ -183,6 +187,78 @@
 <script src="js/input.js?v=20260623"></script>
 <script src="js/render.js?v=20260627"></script>
 <script src="js/hud.js?v=20260623"></script>
+<script src="js/audio.js?v=20260701"></script>
 <script src="js/main.js?v=20260630"></script>
+<script>
+  // Audio wiring — runs after main.js. The toggle buttons live inside the
+  // settings (quit) panel; music and sfx are independent switches shown side
+  // by side, kept in sync with Audio prefs and persisted across reloads.
+  (function () {
+    if (!Audio.isSupported) return;
+    Audio.loadPrefs();
+
+    var playBtn  = document.getElementById('playBtn');
+    var specBtn  = document.getElementById('spectateBtn');
+    var musicBtn = document.getElementById('btnToggleMusic');
+    var muteBtn  = document.getElementById('btnMute');
+    var MUSIC_KEY = 'arena.audio.music';
+
+    function musicOn() {
+      try { return localStorage.getItem(MUSIC_KEY) !== '0'; }
+      catch (e) { return true; }
+    }
+    function setMusic(on) {
+      try { localStorage.setItem(MUSIC_KEY, on ? '1' : '0'); } catch (e) {}
+    }
+
+    function ensureAudio() {
+      // Must run inside a user-gesture handler so iOS Safari allows audio.
+      Audio.init();
+      Audio.preload();
+    }
+
+    function syncMusic() {
+      if (!musicBtn) return;
+      var on = musicOn();
+      musicBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+      var st = document.getElementById('musicState');
+      if (st) st.textContent = on ? '开' : '关';
+    }
+    function syncSfx() {
+      if (!muteBtn) return;
+      var on = !Audio.isMuted;
+      muteBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+      var st = document.getElementById('sfxState');
+      if (st) st.textContent = on ? '开' : '关';
+    }
+
+    // First user gesture: enter the game. Kick off audio context + preload,
+    // and start the music track if the player left it enabled.
+    [playBtn, specBtn].forEach(function (btn) {
+      if (!btn) return;
+      btn.addEventListener('click', function () {
+        ensureAudio();
+        if (musicOn()) Audio.playMusic('bgm-loop');
+      }, { once: false });
+    });
+
+    if (musicBtn) musicBtn.addEventListener('click', function () {
+      ensureAudio();
+      var on = !musicOn();
+      setMusic(on);
+      if (on) Audio.playMusic('bgm-loop'); else Audio.stopMusic();
+      syncMusic();
+    });
+
+    if (muteBtn) muteBtn.addEventListener('click', function () {
+      ensureAudio();
+      Audio.mute(!Audio.isMuted);
+      syncSfx();
+    });
+
+    syncMusic();
+    syncSfx();
+  })();
+</script>
 </body>
 </html>
