@@ -425,19 +425,52 @@ const Renderer = (() => {
     ctx.fillStyle = 'rgba(0,0,0,.28)';
     ctx.beginPath(); ctx.ellipse(x, y + r * 0.92, r * 0.85, r * 0.4, 0, 0, 7); ctx.fill();
   }
-  function roundBody(x, y, r, fill, line) {
-    const g = ctx.createRadialGradient(x - r * 0.3, y - r * 0.4, r * 0.2, x, y, r);
+  function roundBody(x, y, r, fill, line, c) {
+    c = c || ctx;
+    const g = c.createRadialGradient(x - r * 0.3, y - r * 0.4, r * 0.2, x, y, r);
     g.addColorStop(0, lighten(fill, 30)); g.addColorStop(1, fill);
-    ctx.fillStyle = g; ctx.strokeStyle = line; ctx.lineWidth = 3;
-    ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill(); ctx.stroke();
+    c.fillStyle = g; c.strokeStyle = line; c.lineWidth = 3;
+    c.beginPath(); c.arc(x, y, r, 0, 7); c.fill(); c.stroke();
   }
-  function eyes(x, y, r, facing, scale = 1) {
+  function eyes(x, y, r, facing, scale = 1, c) {
+    c = c || ctx;
     const dx = Math.cos(facing) * r * 0.22, dy = Math.sin(facing) * r * 0.18;
     for (const s of [-1, 1]) {
       const ex = x + s * r * 0.32, ey = y - r * 0.12;
-      ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(ex, ey, r * 0.2 * scale, 0, 7); ctx.fill();
-      ctx.fillStyle = '#1a1a2e'; ctx.beginPath(); ctx.arc(ex + dx, ey + dy, r * 0.1 * scale, 0, 7); ctx.fill();
+      c.fillStyle = '#fff'; c.beginPath(); c.arc(ex, ey, r * 0.2 * scale, 0, 7); c.fill();
+      c.fillStyle = '#1a1a2e'; c.beginPath(); c.arc(ex + dx, ey + dy, r * 0.1 * scale, 0, 7); c.fill();
     }
+  }
+
+  // ---- portrait (menu / class picker) -------------------------------------
+  // Re-uses the same primitives as drawPlayer (roundBody / drawHeadgear /
+  // drawWeapon / eyes) so the class-picker shows the actual in-game sprite
+  // instead of an emoji glyph. The caller drives `tick` so this stays a
+  // pure paint — no per-frame closure here.
+  function drawPortrait(canvas, clsId, tick) {
+    if (!canvas || !canvas.getContext) return;
+    if (tick == null) tick = 0;
+    const pc = canvas.getContext('2d');
+    const W = canvas.width, H = canvas.height;
+    // Prefer HUD's class def, since Renderer.setWorld only runs after
+    // onWelcome (player joined a match). Without this fallback the menu
+    // would paint every class with #888.
+    const cls = CLASSES[clsId] || (typeof HUD !== 'undefined' && HUD.getClasses && HUD.getClasses()[clsId]) || { color: '#888', name: '?' };
+    const r = Math.min(W, H) * 0.28;
+    const cx = W / 2;
+    // idle bob + facing sway — same math as drawPlayer so it looks identical
+    const bob = Math.sin(tick / 90) * 2.2;
+    const facing = Math.sin(tick / 1100) * 0.25;       // gentle look-around
+    const y = H / 2 + bob + 4;
+    const x = cx;
+    pc.clearRect(0, 0, W, H);
+    // soft floor shadow
+    pc.fillStyle = 'rgba(0,0,0,.28)';
+    pc.beginPath(); pc.ellipse(x, y + r * 0.95, r * 0.9, r * 0.42, 0, 0, 7); pc.fill();
+    drawWeapon(x, y, r, facing, clsId, cls.color, pc);
+    roundBody(x, y, r, cls.color, '#1c2140', pc);
+    drawHeadgear(x, y, r, clsId, cls, pc);
+    eyes(x, y, r, facing, 1, pc);
   }
 
   function drawPlayer(p, isSelf) {
@@ -497,30 +530,32 @@ const Renderer = (() => {
     if (p.chat) chatBubble(x, p.y - r - (isSelf ? 50 : 44), p.chat);
   }
 
-  function drawWeapon(x, y, r, facing, clsId, color) {
-    ctx.save(); ctx.translate(x, y); ctx.rotate(facing);
-    ctx.lineCap = 'round';
+  function drawWeapon(x, y, r, facing, clsId, color, c) {
+    c = c || ctx;
+    c.save(); c.translate(x, y); c.rotate(facing);
+    c.lineCap = 'round';
     if (clsId === 'warrior') {                 // big sword
-      ctx.strokeStyle = '#dfe6f5'; ctx.lineWidth = 6; ctx.beginPath(); ctx.moveTo(r * 0.4, 8); ctx.lineTo(r + 18, 8); ctx.stroke();
-      ctx.strokeStyle = '#8a6a3a'; ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(r * 0.2, 8); ctx.lineTo(r * 0.5, 8); ctx.stroke();
+      c.strokeStyle = '#dfe6f5'; c.lineWidth = 6; c.beginPath(); c.moveTo(r * 0.4, 8); c.lineTo(r + 18, 8); c.stroke();
+      c.strokeStyle = '#8a6a3a'; c.lineWidth = 4; c.beginPath(); c.moveTo(r * 0.2, 8); c.lineTo(r * 0.5, 8); c.stroke();
     } else if (clsId === 'mage') {              // staff with orb
-      ctx.strokeStyle = '#a9763f'; ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(0, 6); ctx.lineTo(r + 12, 6); ctx.stroke();
-      ctx.fillStyle = '#7fb0ff'; ctx.shadowColor = '#7fb0ff'; ctx.shadowBlur = 10; ctx.beginPath(); ctx.arc(r + 14, 6, 6, 0, 7); ctx.fill(); ctx.shadowBlur = 0;
+      c.strokeStyle = '#a9763f'; c.lineWidth = 4; c.beginPath(); c.moveTo(0, 6); c.lineTo(r + 12, 6); c.stroke();
+      c.fillStyle = '#7fb0ff'; c.shadowColor = '#7fb0ff'; c.shadowBlur = 10; c.beginPath(); c.arc(r + 14, 6, 6, 0, 7); c.fill(); c.shadowBlur = 0;
     } else {                                    // dagger
-      ctx.strokeStyle = '#e6d4ff'; ctx.lineWidth = 5; ctx.beginPath(); ctx.moveTo(r * 0.3, 7); ctx.lineTo(r + 8, 7); ctx.stroke();
+      c.strokeStyle = '#e6d4ff'; c.lineWidth = 5; c.beginPath(); c.moveTo(r * 0.3, 7); c.lineTo(r + 8, 7); c.stroke();
     }
-    ctx.restore();
+    c.restore();
   }
-  function drawHeadgear(x, y, r, clsId, cls) {
+  function drawHeadgear(x, y, r, clsId, cls, c) {
+    c = c || ctx;
     if (clsId === 'mage') {                      // pointed hat
-      ctx.fillStyle = darken(cls.color, 18); ctx.strokeStyle = '#1c2140'; ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.moveTo(x - r * 0.7, y - r * 0.5); ctx.lineTo(x + r * 0.7, y - r * 0.5); ctx.lineTo(x, y - r * 1.7); ctx.closePath(); ctx.fill(); ctx.stroke();
-      ctx.fillStyle = '#ffe08a'; ctx.beginPath(); ctx.arc(x, y - r * 1.7, 3, 0, 7); ctx.fill();
+      c.fillStyle = darken(cls.color, 18); c.strokeStyle = '#1c2140'; c.lineWidth = 2;
+      c.beginPath(); c.moveTo(x - r * 0.7, y - r * 0.5); c.lineTo(x + r * 0.7, y - r * 0.5); c.lineTo(x, y - r * 1.7); c.closePath(); c.fill(); c.stroke();
+      c.fillStyle = '#ffe08a'; c.beginPath(); c.arc(x, y - r * 1.7, 3, 0, 7); c.fill();
     } else if (clsId === 'warrior') {            // helmet band
-      ctx.strokeStyle = '#cdd6ea'; ctx.lineWidth = 4; ctx.beginPath(); ctx.arc(x, y - r * 0.1, r * 0.92, Math.PI * 1.15, Math.PI * 1.85); ctx.stroke();
+      c.strokeStyle = '#cdd6ea'; c.lineWidth = 4; c.beginPath(); c.arc(x, y - r * 0.1, r * 0.92, Math.PI * 1.15, Math.PI * 1.85); c.stroke();
     } else {                                     // assassin hood
-      ctx.fillStyle = darken(cls.color, 22);
-      ctx.beginPath(); ctx.arc(x, y - r * 0.2, r * 0.95, Math.PI * 1.05, Math.PI * 1.95); ctx.lineTo(x, y - r * 0.2); ctx.fill();
+      c.fillStyle = darken(cls.color, 22);
+      c.beginPath(); c.arc(x, y - r * 0.2, r * 0.95, Math.PI * 1.05, Math.PI * 1.95); c.lineTo(x, y - r * 0.2); c.fill();
     }
   }
 
@@ -893,5 +928,5 @@ const Renderer = (() => {
     for (const [k, v] of itemSeen) if (t - (v.last || 0) > 1500) itemSeen.delete(k);
   }, 1000);
 
-  return { init, resize, setWorld, setObstacles, spawnFx, draw, get cam() { return { x: camX, y: camY }; } };
+  return { init, resize, setWorld, setObstacles, spawnFx, draw, drawPortrait, get cam() { return { x: camX, y: camY }; } };
 })();

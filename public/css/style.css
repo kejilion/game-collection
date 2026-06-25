@@ -50,9 +50,9 @@ button{font-family:inherit;cursor:pointer;border:none;color:inherit}
   background:rgba(0,0,0,.25);border:2px solid var(--line);transition:.16s;text-align:center}
 .class-card:hover{transform:translateY(-3px)}
 .class-card.sel{border-color:var(--cc);box-shadow:0 8px 26px var(--ccs),inset 0 0 22px var(--ccs)}
-.class-card .ava{width:62px;height:62px;margin:0 auto 8px;border-radius:50%;
-  display:grid;place-items:center;font-size:30px;background:radial-gradient(circle at 35% 30%,#fff3,transparent),var(--cc);
-  box-shadow:0 6px 16px var(--ccs)}
+.class-card .ava{width:96px;height:96px;margin:0 auto 8px;border-radius:50%;
+  display:block;background:radial-gradient(circle at 35% 30%,#fff3,transparent 55%),var(--cc);
+  box-shadow:0 6px 16px var(--ccs),inset 0 -8px 18px rgba(0,0,0,.25)}
 .class-card h4{font-size:17px;font-weight:800}
 .class-card .role{font-size:11px;color:var(--dim);margin-top:2px;min-height:28px;line-height:1.25}
 .class-card .tag{position:absolute;top:8px;right:8px;font-size:10px;padding:2px 7px;border-radius:8px;
@@ -309,7 +309,7 @@ body.chat-open .chat-form input{opacity:1;font-size:16px;padding:12px 14px}
 
 @media(max-width:680px), (hover:none) and (pointer:coarse){
   .menu-card{width:min(560px,calc(100vw - 24px));margin:12px;padding:22px 16px 18px}
-  .class-pick{gap:8px}.class-card{padding:12px 5px 10px}.class-card .ava{width:50px;height:50px;font-size:25px}
+  .class-pick{gap:8px}.class-card{padding:12px 5px 10px}.class-card .ava{width:64px;height:64px}
   .class-card h4{font-size:15px}.class-card .role{font-size:10px}.logo{font-size:36px}
   .mobile-hint{display:block}
   #canvas{cursor:default;touch-action:none}

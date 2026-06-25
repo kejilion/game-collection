@@ -36,11 +36,16 @@ const HUD = (() => {
   function setDefs(classes, items, permShop) { CLASSES = classes; ITEMS = items; PERM_SHOP = permShop || null; }
 
   // ---- menu class picker --------------------------------------------------
+  // Each card paints a small in-game sprite via Renderer.drawPortrait on a
+  // <canvas class="ava"> (replacing the old emoji glyph). One rAF loop drives
+  // every portrait at the same time — stopPickerAnim() must run before
+  // rebuilding so hot-reloads don't leak frames.
+  let _pickerRaf = 0;
+  function stopPickerAnim() { if (_pickerRaf) { cancelAnimationFrame(_pickerRaf); _pickerRaf = 0; } }
   function buildClassPicker(onSelect) {
     const wrap = id('classPick'); wrap.innerHTML = '';
     let sel = 'warrior';
     const tags = { warrior: '坦克', mage: '爆发', assassin: '刺杀' };
-    const ava = { warrior: '🛡', mage: '🔮', assassin: '🗡' };
     Object.values(CLASSES).forEach(c => {
       const el = document.createElement('div');
       el.className = 'class-card' + (c.id === sel ? ' sel' : '');
@@ -48,7 +53,7 @@ const HUD = (() => {
       el.style.setProperty('--ccs', hexA(c.color, .45));
       el.innerHTML =
         `<span class="tag">${tags[c.id]}</span>
-         <div class="ava">${ava[c.id]}</div>
+         <canvas class="ava" width="96" height="96" data-cls="${c.id}"></canvas>
          <h4>${c.name}</h4>
          <div class="role">${c.desc.split('·')[1] || c.desc}</div>`;
       el.addEventListener('click', () => {
@@ -58,6 +63,16 @@ const HUD = (() => {
       });
       wrap.appendChild(el);
     });
+    stopPickerAnim();
+    const start = performance.now();
+    const tick = () => {
+      const t = performance.now() - start;
+      wrap.querySelectorAll('canvas.ava').forEach(cv => {
+        if (Renderer && Renderer.drawPortrait) Renderer.drawPortrait(cv, cv.dataset.cls, t);
+      });
+      _pickerRaf = requestAnimationFrame(tick);
+    };
+    _pickerRaf = requestAnimationFrame(tick);
     onSelect(sel);
   }
 
@@ -394,7 +409,7 @@ const HUD = (() => {
   function hexA(hex, a) { hex = hex.replace('#', ''); if (hex.length === 3) hex = hex.split('').map(c => c + c).join(''); const n = parseInt(hex, 16); return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`; }
 
   return {
-    init, setDefs, buildClassPicker, buildSkillbar, triggerCd, renderSkillbar,
+    init, setDefs, getClasses: () => CLASSES, buildClassPicker, buildSkillbar, triggerCd, renderSkillbar,
     updatePlayer, updateLeaderboard, updateMenuHistory, addChat, toast,
     setPermShop, buildPermanentShop, updatePermShopGold, markPermanentOwned,
     killFeed
