@@ -60,17 +60,17 @@ const Renderer = (() => {
   // init time). play() is a silent no-op until buffers finish decoding, so
   // SFX missed during the first ~hundred ms are dropped — that's fine for
   // a 1-shot sfx library of this size.
-  function sfx(name) { const A = window.Audio; if (A) A.play(name); }
+  function sfx(name, opts) { const A = window.Audio; if (A) A.play(name, opts); }
 
   function spawnFx(e) {
     switch (e.t) {
       case 'dmg': floaters.push({ x: e.x, y: e.y, v: e.v, crit: e.crit, life: 0.9, vy: -42, dmg: true }); break;
-      case 'swing': slashes.push({ x: e.x, y: e.y, ang: e.ang, range: e.range, arc: e.arc, color: e.color, life: 0.22, max: 0.22 }); sfx('swing'); break;
+      case 'swing': slashes.push({ x: e.x, y: e.y, ang: e.ang, range: e.range, arc: e.arc, color: e.color, life: 0.22, max: 0.22 }); break; // no sfx — basic attacks fire too often; the swoosh became noise
       case 'slash': burst(e.x, e.y, e.color || '#fff', e.crit ? 14 : 8, e.crit ? 3.4 : 2.4); if (e.crit) shake = Math.max(shake, 5); sfx('slash'); break;
       case 'hit': burst(e.x, e.y, e.color || '#fff', 7, 2.2); break;
       case 'cast': for (let i = 0; i < (e.big ? 16 : 8); i++) burst(e.x, e.y, '#7fb0ff', 1, 2); sfx('fireball'); break;
       case 'explosion': rings.push({ x: e.x, y: e.y, r: 8, max: e.radius, life: 0.45, color: '#ff8a3d', fill: true }); burst(e.x, e.y, '#ffb347', 26, 4); shake = Math.max(shake, 9); sfx('explosion'); break;
-      case 'whirlwind': rings.push({ x: e.x, y: e.y, r: 8, max: e.radius, life: 0.5, color: e.color }); for (let i = 0; i < 22; i++) burst(e.x, e.y, e.color, 1, 4); shake = Math.max(shake, 6); sfx('swing'); break;
+      case 'whirlwind': rings.push({ x: e.x, y: e.y, r: 8, max: e.radius, life: 0.5, color: e.color }); for (let i = 0; i < 22; i++) burst(e.x, e.y, e.color, 1, 4); shake = Math.max(shake, 6); sfx('swing', { vol: 0.5 }); break; // ability cue: reuse the swing sample at a set volume (the bare swing is silent)
       // warrior 铁壁战吼: golden brace ring + a shield bloom + rising green heal motes
       case 'warcry':
         rings.push({ x: e.x, y: e.y, r: 10, max: e.radius, life: 0.5, color: '#ffd766', fill: true });

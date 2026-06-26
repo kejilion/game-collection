@@ -36,6 +36,20 @@ const Audio = (() => {
     'bgm-loop':   'audio/music/bgm-loop.mp3?v=' + ASSET_VERSION,
   };
 
+  // Per-SFX mix. Combat here is constant — melee slashes and mage casts fire
+  // many times a second — so those cues are turned down and rate-limited
+  // (`minGap` = min ms between repeats) to keep them from stacking into a wall
+  // of noise. Rare, meaningful cues (pickup) are boosted so they cut through
+  // the mix instead of getting buried. The basic-attack swing is the spammiest
+  // of all and is silenced at the call site (render.js), not here. Any sound
+  // with no entry plays at full volume with no throttle.
+  const SFX_MIX = {
+    'slash':     { gain: 0.35, minGap: 90 },  // melee impact — one per landed hit
+    'fireball':  { gain: 0.5,  minGap: 90 },  // mage cast — one per shot
+    'explosion': { gain: 0.6,  minGap: 70 },  // fireball detonation
+    'pickup':    { gain: 1.3,  minGap: 0  },  // rare + important — louder than combat
+  };
+
   const PREF_KEYS = {
     master: 'arena.audio.master',
     muted:  'arena.audio.muted',
@@ -47,6 +61,7 @@ const Audio = (() => {
   let ctx = null;
   let masterGain = null;
   const buffers = new Map();   // name -> AudioBuffer
+  const lastPlay = new Map();   // name -> last trigger time (ms), for SFX_MIX throttling
   let musicSource = null;      // the looping source, if any
   let musicGain = null;
   let masterVol = 0.8;
@@ -121,7 +136,23 @@ const Audio = (() => {
     const buf = buffers.get(name);
     if (!buf) return; // not loaded yet — silent no-op
     opts = opts || {};
-    const vol = clamp01(opts.vol == null ? 1 : opts.vol);
+    const mix = SFX_MIX[name];
+
+    // Throttle spammy combat cues: drop a repeat that lands within minGap ms of
+    // the previous one so rapid-fire attacks don't stack the same sample.
+    if (mix && mix.minGap) {
+      const now = ctx.currentTime * 1000;
+      if (now - (lastPlay.get(name) || -Infinity) < mix.minGap) return;
+      lastPlay.set(name, now);
+    }
+
+    // Final gain: an explicit opts.vol wins (lets an ability deliberately reuse a
+    // toned-down sample at its own level); otherwise use the per-sound mix gain,
+    // defaulting to 1. Capped at 1.5 so a boosted cue (pickup) has headroom.
+    const base = opts.vol == null ? (mix ? mix.gain : 1) : opts.vol;
+    const vol = Math.max(0, Math.min(1.5, base));
+    if (vol <= 0) return;
+
     const src = ctx.createBufferSource();
     src.buffer = buf;
     if (opts.loop) src.loop = true;
