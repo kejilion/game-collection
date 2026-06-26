@@ -11,6 +11,13 @@ const Input = (() => {
   let initialized = false;
   let joystickPointerId = null;
   let attackPointerId = null;
+  // ---- dynamic (floating) joystick state ----
+  // The movement stick spawns wherever the thumb first touches the left
+  // half of the screen, so the finger never runs off a fixed pad and the
+  // move action stays uninterrupted even when dragging toward center.
+  const JOY_RADIUS = 42;     // max knob travel (px), matches CSS travel
+  const JOY_HALF = 66;       // half visual stick size (132px pad / 2)
+  let joystickOrigin = null; // {x,y} client coords of the press point
 
   const MOVE = {
     ArrowUp: 'up', KeyW: 'up',
@@ -65,34 +72,54 @@ const Input = (() => {
     setKeys({ up: false, down: false, left: false, right: false });
     stopAttackLoop(); sendMove();
     joystickPointerId = null; attackPointerId = null;
+    resetJoystickVisual();
+  }
+
+  // Reset stick to hidden + knob centered.
+  function resetJoystickVisual() {
     const knob = document.getElementById('moveJoystickKnob');
     if (knob) knob.style.transform = 'translate(0, 0)';
+    const stick = document.getElementById('moveJoystick');
+    if (stick) stick.classList.remove('active');
   }
 
   function updateJoystick(e) {
-    const stick = document.getElementById('moveJoystick');
     const knob = document.getElementById('moveJoystickKnob');
-    if (!stick || !knob) return;
-    const rect = stick.getBoundingClientRect();
-    let x = (e.clientX - rect.left - rect.width / 2) / (rect.width / 2);
-    let y = (e.clientY - rect.top - rect.height / 2) / (rect.height / 2);
-    const length = Math.hypot(x, y);
-    if (length > 1) { x /= length; y /= length; }
-    knob.style.transform = `translate(${x * 38}px, ${y * 38}px)`;
+    if (!knob || !joystickOrigin) return;
+    let dx = e.clientX - joystickOrigin.x;
+    let dy = e.clientY - joystickOrigin.y;
+    let len = Math.hypot(dx, dy);
+    if (len > JOY_RADIUS) { dx = dx / len * JOY_RADIUS; dy = dy / len * JOY_RADIUS; len = JOY_RADIUS; }
+    knob.style.transform = `translate(${dx}px, ${dy}px)`;
+    const x = dx / JOY_RADIUS, y = dy / JOY_RADIUS;
     const deadzone = 0.24;
     setKeys({ up: y < -deadzone, down: y > deadzone, left: x < -deadzone, right: x > deadzone });
   }
 
   function clearJoystick() {
     joystickPointerId = null;
+    joystickOrigin = null;
     setKeys({ up: false, down: false, left: false, right: false });
-    const knob = document.getElementById('moveJoystickKnob');
-    if (knob) knob.style.transform = 'translate(0, 0)';
+    resetJoystickVisual();
   }
 
   function onJoystickDown(e) {
+    // Floating stick: ignore presses on interactive controls / right half.
+    if (e.target.closest('[data-touch-action]')) return;
+    if (e.target.closest('#skillbar')) return;
+    if (e.target.closest('#mobileBtns')) return;
+    if (e.target.closest('.overlay-panel')) return;
+    if (e.target.id !== 'mobileControls' && e.target.id !== 'canvas') return;
+    if (e.clientX > window.innerWidth * 0.5) return; // right half reserved for actions
     e.preventDefault();
     joystickPointerId = e.pointerId;
+    joystickOrigin = { x: e.clientX, y: e.clientY };
+    const stick = document.getElementById('moveJoystick');
+    if (stick) {
+      stick.style.left = (e.clientX - JOY_HALF) + 'px';
+      stick.style.top = (e.clientY - JOY_HALF) + 'px';
+      stick.classList.add('active');
+    }
     e.currentTarget.setPointerCapture(e.pointerId);
     updateJoystick(e);
   }
@@ -126,10 +153,12 @@ const Input = (() => {
 
   function bindTouchControls() {
     const stick = document.getElementById('moveJoystick');
-    if (stick) {
-      stick.addEventListener('pointerdown', onJoystickDown);
-      stick.addEventListener('pointermove', onJoystickMove);
-    }
+    // Floating joystick: the stick is no longer a fixed hit target, so we
+    // listen on document (capture-phase) and let onJoystickDown decide if
+    // the press is in the left-half move hot-zone. Skill buttons keep their
+    // own handlers via onPointerDown below.
+    document.addEventListener('pointerdown', onJoystickDown, true);
+    document.addEventListener('pointermove', onJoystickMove);
     document.addEventListener('pointerdown', onPointerDown);
     document.addEventListener('pointerup', onPointerEnd);
     document.addEventListener('pointercancel', onPointerEnd);
