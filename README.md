@@ -1,4 +1,4 @@
-﻿# 🎮 Game Collection
+# 🎮 Game Collection
 
 A growing collection of web-based games by kejilion.
 
@@ -7,7 +7,7 @@ A growing collection of web-based games by kejilion.
 | Game | Path | Status | Play |
 |------|------|--------|------|
 | 大乱斗 Arena Brawl | [`games/arena-brawl`](games/arena-brawl) | ✅ Active | [Live](https://github.com/kejilion/game-collection/tree/main/games/arena-brawl) |
-| _More coming soon_ | | 🚧 | |
+| 敲冰块大逃脱 Ice Climber Arena | [`games/ice-climber-arena`](games/ice-climber-arena) | ✅ Active | [Live](https://github.com/kejilion/game-collection/tree/main/games/ice-climber-arena) |
 
 ## Getting Started
 

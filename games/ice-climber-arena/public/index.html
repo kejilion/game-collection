@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>敲冰块大逃杀 · Ice-Climber Arena</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="stylesheet" href="/css/style.css" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ctext y='26' font-size='26'%3E%F0%9F%A7%97%3C/text%3E%3C/svg%3E" />
+</head>
+<body>
+  <!-- ===================== MENU / CHARACTER CREATOR ===================== -->
+  <div id="menu" class="screen">
+    <div class="snow-layer" aria-hidden="true"></div>
+    <div class="menu-card">
+      <header class="menu-head">
+        <h1>敲冰块大逃杀</h1>
+        <p class="subtitle">Ice-Climber Arena · 多人攀塔求生</p>
+        <p class="round-banner">开服后第 <span id="menu-round">…</span> 局进行中 · 在线 <span id="menu-online">0</span> 人</p>
+      </header>
+
+      <div class="menu-body">
+        <!-- character creator -->
+        <section class="creator">
+          <div class="preview-wrap">
+            <canvas id="preview" width="200" height="240"></canvas>
+            <div class="preview-stage"></div>
+          </div>
+          <div class="creator-fields">
+            <label class="field">
+              <span>名字</span>
+              <input id="name-input" maxlength="12" placeholder="给你的攀登者起名" autocomplete="off" />
+            </label>
+
+            <div class="field">
+              <span>帽子样式</span>
+              <div id="style-row" class="chip-row"></div>
+            </div>
+
+            <div class="field">
+              <span>肤色</span>
+              <div id="skin-row" class="swatch-row"></div>
+            </div>
+
+            <div class="field">
+              <span>服饰颜色</span>
+              <div id="outfit-row" class="swatch-row"></div>
+            </div>
+
+            <div class="field">
+              <span>帽子颜色</span>
+              <div id="hat-row" class="swatch-row"></div>
+            </div>
+
+            <button id="start-btn" class="start-btn">开始攀登 ▶</button>
+            <p class="hint">方向键 ← → 移动 · ↑ 跳跃 · A 攻击</p>
+          </div>
+        </section>
+
+        <!-- leaderboard -->
+        <section class="leaderboard">
+          <h2>🏆 历史最快纪录</h2>
+          <ol id="menu-board" class="board-list">
+            <li class="board-empty">尚无纪录，去创造第一个吧！</li>
+          </ol>
+          <p class="board-note">按逃生用时排名 · 记录创造时所在局数</p>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================== GAME =============================== -->
+  <div id="game" class="screen hidden">
+    <div class="stage">
+      <canvas id="view" width="960" height="600"></canvas>
+
+      <!-- HUD overlay -->
+      <div class="hud">
+        <div class="hud-tl">
+          <div class="hud-stat"><span class="lbl">第</span><b id="hud-round">1</b><span class="lbl">局</span></div>
+          <div class="hud-stat"><span class="lbl">楼层</span><b id="hud-floor">1</b><span class="lbl">/10</span></div>
+          <div class="hp">
+            <div class="hp-bar"><div id="hp-fill" class="hp-fill"></div></div>
+            <span id="hp-text">100</span>
+          </div>
+          <div id="buffs" class="buffs"></div>
+        </div>
+
+        <div class="hud-tc">
+          <div class="timer" id="timer">00:00</div>
+        </div>
+
+        <div class="hud-tr">
+          <div class="rank-head">实时排行</div>
+          <div class="rank-body">
+            <canvas id="mini" width="64" height="184"></canvas>
+            <ol id="rank-list" class="rank-list"></ol>
+          </div>
+        </div>
+
+        <div id="toasts" class="toasts"></div>
+
+        <div class="hud-bc" id="controls-hint">← → 移动 · ↑ 跳 · A 攻击</div>
+      </div>
+
+      <!-- round-end / intermission overlay -->
+      <div id="round-overlay" class="overlay hidden">
+        <div class="overlay-card">
+          <h2 id="ov-title">本局结束</h2>
+          <ol id="ov-results" class="results"></ol>
+          <div class="ov-board">
+            <h3>历史最快纪录</h3>
+            <ol id="ov-board" class="board-list small"></ol>
+          </div>
+          <p class="ov-next">下一局 <span id="ov-count">8</span> 秒后开始…</p>
+        </div>
+      </div>
+
+      <!-- personal victory banner -->
+      <div id="win-banner" class="win-banner hidden">
+        <div class="win-inner">
+          <div class="win-emoji">✈️</div>
+          <h2>逃生成功！</h2>
+          <p id="win-detail">第 1 名 · 用时 00:00</p>
+        </div>
+      </div>
+
+      <div id="conn-status" class="conn-status">连接中…</div>
+    </div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script type="module" src="/js/main.js"></script>
+</body>
+</html>

@@ -694,18 +694,22 @@ const Renderer = (() => {
     ctx.font = '800 11px "Noto Sans SC"';
     ctx.fillStyle = m.idle ? '#6ee7a0' : '#9aa3b2';
     ctx.fillText(m.idle ? '● 营业中' : '… 赶路中', x, m.y - r - 30);
-    // "Press E" speech bubble when the local player is within shopping range
-    // and the merchant is alive — a steady hint, not a fading toast.
+    // "Press E" / "Tap 🛒" speech bubble when the local player is within
+    // shopping range and the merchant is alive — a steady hint, not a fading
+    // toast. The mobile copy points at the on-screen cart button so phone
+    // players don't have to hunt for the (non-existent) E key.
     if (self && m.hp != null && m.hp > 0) {
       const dx = self.x - m.x, dy = self.y - m.y;
       if (dx * dx + dy * dy <= 140 * 140) {
+        const isTouch = G.isTouch || (window.matchMedia && window.matchMedia('(hover:none) and (pointer:coarse)').matches);
         const bob = Math.sin(performance.now() / 320) * 2;
         const by = m.y - r - 70 + bob;
         const padX = 9, padY = 5;
         ctx.font = '800 13px "Noto Sans SC"';
-        const label = '按 E 购买';
+        const label = isTouch ? '点击 🛒 购买' : '按 E 购买';
         const tw = ctx.measureText(label).width;
-        const bw = tw + padX * 2, bh = 22;
+        const kc = 18, kcX0 = padX;
+        const bw = (isTouch ? 0 : kc + 5) + tw + padX * 2, bh = 22;
         const bx = x - bw / 2;
         // pill background
         ctx.fillStyle = 'rgba(0,0,0,.55)';
@@ -714,16 +718,20 @@ const Renderer = (() => {
         ctx.strokeStyle = 'rgba(255,210,63,.65)'; ctx.lineWidth = 1.5;
         roundRect(bx, by, bw, bh, 11);
         ctx.stroke();
-        // keycap "E"
-        const kc = 18, kcX = bx + 6, kcY = by + (bh - kc) / 2;
-        ctx.fillStyle = '#ffd23f';
-        roundRect(kcX, kcY, kc, kc, 4);
-        ctx.fill();
-        ctx.fillStyle = '#1a1208'; ctx.font = '800 13px sans-serif'; ctx.textAlign = 'center';
-        ctx.fillText('E', kcX + kc / 2, kcY + 13);
+        let textX = bx + padX;
+        if (!isTouch) {
+          // keycap "E" — desktop only
+          const kcX = bx + kcX0, kcY = by + (bh - kc) / 2;
+          ctx.fillStyle = '#ffd23f';
+          roundRect(kcX, kcY, kc, kc, 4);
+          ctx.fill();
+          ctx.fillStyle = '#1a1208'; ctx.font = '800 13px sans-serif'; ctx.textAlign = 'center';
+          ctx.fillText('E', kcX + kc / 2, kcY + 13);
+          textX = kcX + kc + 5;
+        }
         // text
         ctx.fillStyle = '#fff'; ctx.textAlign = 'left';
-        ctx.fillText(label, kcX + kc + 5, by + 15);
+        ctx.fillText(label, textX, by + 15);
         ctx.textAlign = 'center';
       }
     }

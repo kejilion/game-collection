@@ -476,9 +476,21 @@
       let near = false;
       for (const mm of m.merchants) if (dist2(self.x, self.y, mm.x, mm.y) <= 140 * 140) { near = true; break; }
       G.nearMerchant = near;
+      // Pulse the mobile 🛒 button when the player is in shopping range so
+      // the affordance is impossible to miss on a phone screen.
+      if (G._mobileShopBtn) G._mobileShopBtn.classList.toggle('near', near);
       if (near) {
         G.shopCloseAt = 0;                 // back in range — cancel any pending auto-close
-        if (!G.merchantHinted) { HUD.toast('靠近商人，按 E（或点击🛒）打开商店', '#6ee7a0'); G.merchantHinted = true; }
+        // Re-prompt each time the player newly enters the merchant's range so
+        // the "how do I buy?" hint isn't lost to the toast queue. The mobile
+        // variant points at the on-screen 🛒 button; desktop points at E.
+        const isTouch = G.isTouch || (window.matchMedia && window.matchMedia('(hover:none) and (pointer:coarse)').matches);
+        const hint = isTouch ? '靠近商人，点击屏幕右侧的 🛒 按钮打开商店' : '靠近商人，按 E 打开商店';
+        const now = recv;
+        if (!G.merchantHinted || now - (G.merchantHintedAt || 0) > 8000) {
+          HUD.toast(hint, '#6ee7a0');
+          G.merchantHinted = true; G.merchantHintedAt = now;
+        }
       } else {
         G.merchantHinted = false;
         if (G.shopOpen && !G.shopCloseAt) G.shopCloseAt = recv + 4000;  // grace period before it closes
@@ -765,7 +777,7 @@
     const mFs = document.getElementById('mobileFs');
     if (mFs) mFs.addEventListener('click', toggleFullscreen);
     const mShop = document.getElementById('mobileShop');
-    if (mShop) mShop.addEventListener('click', toggleShopUI);
+    if (mShop) { mShop.addEventListener('click', toggleShopUI); G._mobileShopBtn = mShop; }
     const mChat = document.getElementById('mobileChat');
     if (mChat) mChat.addEventListener('click', () => { document.body.classList.add('chat-open'); document.getElementById('chatInput').focus(); });
     document.getElementById('btnBackMenu').addEventListener('click', () => {

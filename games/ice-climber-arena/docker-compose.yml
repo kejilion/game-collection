@@ -1,0 +1,13 @@
+services:
+  ice-climber:
+    build: .
+    image: ice-climber-arena
+    container_name: ice-climber-arena
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+    volumes:
+      # persist the historical leaderboard across redeploys
+      - ./server/data:/app/server/data

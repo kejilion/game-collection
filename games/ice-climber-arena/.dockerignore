@@ -1,0 +1,10 @@
+node_modules
+npm-debug.log*
+.git
+.gitignore
+.claude
+test
+*.md
+server/data/*.json
+server/data/*.tmp
+.DS_Store

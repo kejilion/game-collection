@@ -1,0 +1,14 @@
+node_modules/
+npm-debug.log*
+yarn-error.log*
+
+# runtime leaderboard data (keep the folder, ignore the file)
+server/data/*.json
+server/data/*.tmp
+
+# editor / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.log
