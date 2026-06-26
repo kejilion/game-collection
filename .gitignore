@@ -1,11 +1,22 @@
-﻿node_modules/
+﻿# dependencies
+node_modules/
+
+# runtime data
 data/
-.claude/
-.env
-.env.*
-*.log
 
 # local runtime process id
 .devpid.txt
+
 # local audio backup directory
 public/audio/sfx/.bak/
+games/*/public/audio/sfx/.bak/
+
+# claude / agents
+.claude/
+.agents/
+.backups/
+
+# env
+.env
+.env.*
+*.log

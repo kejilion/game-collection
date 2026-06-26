@@ -1,0 +1,10 @@
+﻿node_modules
+data
+.git
+.env
+*.log
+.claude
+.agents
+.backups
+.devpid.txt
+public/audio/sfx/.bak
