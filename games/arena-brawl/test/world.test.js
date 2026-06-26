@@ -326,6 +326,20 @@ test('permanentBuy() validates merchant proximity, gold, and ownership', () => {
   assert.equal(p.cosmetic.skin, 'crimson', 'skin applied to cosmetic state');
 });
 
+test('permanentBuy() haste glove lowers attack cooldown (multiplier, not addition)', () => {
+  const w = new World();
+  const p = w.addPlayer('Buyer', 'warrior');
+  const m = [...w.merchants.values()][0]; m.x = p.x; m.y = p.y;
+  p.gold = 9999;
+  const before = p.effAttackCd(Date.now());
+  const r = w.permanentBuy(p, 'eq_atkspd1');
+  assert.equal(r.ok, true, 'haste glove purchase succeeds');
+  const after = p.effAttackCd(Date.now());
+  assert.equal(p.equip.attackCdMul, 0.85, 'attackCdMul accumulates by multiplication (1 * 0.85)');
+  assert.ok(after < before, 'attack cooldown shrinks after buying the haste glove');
+  assert.ok(Math.abs(after - before * 0.85) < 1e-6, 'cooldown reduced by exactly 15%');
+});
+
 // ---- area-of-interest serialization ---------------------------------------
 test('viewFor culls entities outside the rect but keeps global fx', () => {
   const { w, a, b } = duel();

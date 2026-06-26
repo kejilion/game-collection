@@ -670,7 +670,13 @@ class World {
       if (p.gold < eq.price) return { ok: false, msg: '金币不足' };
       p.gold -= eq.price;
       p.boughtEquipment.add(itemId);
-      for (const k in eq.bonus) p.equip[k] = (p.equip[k] || 0) + eq.bonus[k];
+      for (const k in eq.bonus) {
+        // attackCdMul is a multiplier (1 = base, 0.85 = 15% faster);
+        // accumulate by multiplication so the haste glove shortens the
+        // cooldown instead of (1 + 0.85) which would slow attacks down.
+        if (k === 'attackCdMul') p.equip[k] = (p.equip[k] == null ? 1 : p.equip[k]) * eq.bonus[k];
+        else p.equip[k] = (p.equip[k] || 0) + eq.bonus[k];
+      }
       this.pushFx({ t: 'buy', x: p.x, y: p.y });
       return { ok: true, msg: `永久解锁 ${eq.name}` };
     }
