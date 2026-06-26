@@ -6,7 +6,7 @@
 import {
   PLAYER_W, PLAYER_H, RUN_SPEED, RUN_ACCEL, AIR_ACCEL, GROUND_FRICTION,
   ICE_FRICTION, SPEED_TILE_MULT, GRAVITY, TERMINAL_VY, JUMP_VEL,
-  WORLD_WIDTH, FLOOR_SPACING, FALL_SAFE_FLOORS, Tile,
+  WORLD_WIDTH, FLOOR_SPACING, FALL_SAFE_FLOORS, Tile, BRICK_CELL_W,
 } from './constants.js';
 
 function approach(cur, target, maxStep) {
@@ -23,29 +23,75 @@ export function aabb(ax, ay, aw, ah, bx, by, bw, bh) {
  * Build the list of solid collision rects for a given moment in the round.
  * Moving platforms are a pure function of `t` (seconds since round start) so
  * the client and server compute identical positions without extra packets.
- * Broken ice tiles (ids in `broken`) are excluded.
+ *
+ * Breakable ICE walls subdivide into vertical cells (BRICK_CELL_W wide). A
+ * shattered cell is recorded in `broken` as the key `${id}:${col}` and produces
+ * NO rect, so a head-bonk only ever opens one small cell-wide hole instead of
+ * removing the whole brick. Each emitted ICE cell rect carries `parentId` +
+ * `col` so the bonk handler can mark exactly that cell as broken.
  */
 export function buildRects(platforms, broken, t) {
   const out = [];
   for (const p of platforms) {
-    if (p.type === Tile.ICE && broken && broken.has(p.id)) continue;
     let x = p.x;
     let vx = 0;
     if (p.type === Tile.MOVING) {
       x = p.x + Math.sin(t * p.speed + p.phase) * p.range;
       vx = Math.cos(t * p.speed + p.phase) * p.range * p.speed;
     }
+
+    if (p.type === Tile.ICE) {
+      const cellW = p.cellW || BRICK_CELL_W;
+      const cols = Math.ceil(p.w / cellW);
+      for (let col = 0; col < cols; col++) {
+        if (broken && broken.has(`${p.id}:${col}`)) continue;
+        const cx = x + col * cellW;
+        const cw = Math.min(cellW, p.x + p.w - cx);
+        if (cw <= 0) break;
+        out.push({
+          id: `${p.id}:${col}`, parentId: p.id, col,
+          x: cx, y: p.y, w: cw, h: p.h, type: Tile.ICE, vx: 0, solid: true,
+        });
+      }
+      continue;
+    }
+
     out.push({ id: p.id, x, y: p.y, w: p.w, h: p.h, type: p.type, vx, solid: true });
   }
   return out;
 }
 
-/**
- * Advance one player by a fixed `dt`. Mutates `s`.
- * `s` fields used: x,y,vx,vy,facing,onGround,jumpHeld,fallStartY,supportType,supportId
- * `opts`: { frozen, jumpMul, speedMul }
- * Returns: { bonk:[rects], landed:bool, fallFloors:number, leftGround:bool }
- */
+/** Find the ICE cell key directly above a world-x on a given wall parentId. */
+export function cellKeyAt(platform, bx) {
+  const p = platform;
+  if (!p || p.type !== Tile.ICE) return null;
+  const cellW = p.cellW || BRICK_CELL_W;
+  const localX = bx - p.x;
+  if (localX < 0 || localX > p.w) return null;
+  const cols = Math.ceil(p.w / cellW);
+  const col = Math.max(0, Math.min(cols - 1, Math.floor(localX / cellW)));
+  return `${p.id}:${col}`;
+}
+
+/** Is the ICE cell `(parentId,col)` still intact (not in broken)? */
+export function cellIntact(broken, parentId, col) {
+  return broken ? !broken.has(`${parentId}:${col}`) : true;
+}
+
+/** Collapsed ICE wall above (y above the wall surface) entity support check:
+ *  returns the wall platform whose top surface an entity at (bx, footY)
+ *  stands on, or null if that exact cell is gone. */
+export function supportWallCell(platforms, broken, bx, footY) {
+  for (const p of platforms) {
+    if (p.type !== Tile.ICE) continue;
+    if (footY < p.y - 2 || footY > p.y + 6) continue;
+    if (bx < p.x || bx > p.x + p.w) continue;
+    const key = cellKeyAt(p, bx);
+    if (key && broken && broken.has(key)) return null; // cell gone -> no support
+    return p;
+  }
+  return null;
+}
 export function stepPlayer(s, input, rects, dt, opts = {}) {
   const ev = { bonk: [], landed: false, fallFloors: 0, leftGround: false };
   const frozen = !!opts.frozen;

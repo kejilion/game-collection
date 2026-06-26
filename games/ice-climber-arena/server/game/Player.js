@@ -6,6 +6,7 @@
 import {
   PLAYER_MAX_HP, PLAYER_H, floorTopY, floorAtY,
   SKIN_TONES, OUTFIT_COLORS, HAT_COLORS, BODY_STYLES,
+  DEATH_DURATION,
 } from '../../public/shared/constants.js';
 
 function validColor(c, list, fallback) {
@@ -34,6 +35,7 @@ export class Player {
     this.invuln = 0; // i-frames timer
     this.stun = 0; // CC timer
     this.deaths = 0;
+    this.deadTimer = 0; // >0 表示正在死亡动画/等待重生
 
     // combat
     this.attackCd = 0;
@@ -51,12 +53,15 @@ export class Player {
     this.finishMs = 0;
     this.rank = 0;
     this.lifting = false; // being picked up animation flag
+    this.startMs = Date.now(); // per-player timer start (spawn -> rescue)
 
     // networking
     this.input = { left: false, right: false, jump: false, attack: false };
     this.lastSeq = 0;
     this.lastInputAt = Date.now();
     this.connected = true;
+    this.chat = null;              // { text, until } displayed as a speech bubble
+    this.chatReadyAt = 0;          // server-side throttle timestamp (anti-spam)
   }
 
   spawn(x, y) {
@@ -67,7 +72,9 @@ export class Player {
     this.invuln = 1.0; this.stun = 0;
     this.attackCd = 0; this.attackAnim = 0; this.fireCd = 0;
     this.rescued = false; this.lifting = false;
+    this.deadTimer = 0;
     this.finishMs = 0; this.rank = 0;
+    this.chat = null;
   }
 
   /** Reset for a brand-new round (also clears buffs & progress). */
@@ -75,6 +82,8 @@ export class Player {
     this.spawn(x, y);
     this.jumpBuff = 0; this.fireBuff = 0;
     this.maxFloor = 0; this.floor = 0; this.deaths = 0;
+    this.startMs = Date.now(); // restart per-player timer for the new round
+    this.finishMs = 0; this.rank = 0; this.rescued = false;
   }
 
   updateFloor() {
@@ -102,7 +111,11 @@ export class Player {
       fb: this.fireBuff > 0 ? 1 : 0,
       res: this.rescued ? 1 : 0,
       lift: this.lifting ? 1 : 0,
+      dead: this.deadTimer > 0 ? Math.round(this.deadTimer * 100) / 100 : 0,
+      st: this.startMs || 0,
+      fn: this.rescued ? (this.finishMs || 0) : 0,
       seq: this.lastSeq,
+      chat: this.chat ? this.chat.text : null,
     };
   }
 }

@@ -7,7 +7,7 @@ import { Input } from './input.js';
 import { LocalPredictor } from './prediction.js';
 import { Renderer } from './renderer.js';
 import { buildRects } from '../shared/physics.js';
-import { FLOOR_COUNT } from '../shared/constants.js';
+import { FLOOR_COUNT, WORLD_WIDTH } from '../shared/constants.js';
 import {
   setupCreator, randomLook, randomName, fmtTime, renderLeaderboard, escapeHtml,
 } from './ui.js';
@@ -25,12 +25,117 @@ const app = {
   ranking: [],
   planeActive: false,
   started: false,
+  localStartMs: 0,  // per-player timer start (server ms)
+  finalMs: null,    // frozen finish time once rescued
 };
 
 const net = new Net();
 const input = new Input();
 const predictor = new LocalPredictor();
 let renderer = null;
+
+// --------------------------------------------------------- viewport scaling
+// The game world is authored in a fixed 1600×900 (16:9) space.  Rather than
+// stretch that to the window (which distorts on any non-16:9 screen), we fit
+// the largest 16:9 frame inside the viewport (letterbox), render the canvas at
+// device-pixel resolution for crispness, and scale the HUD layer by the same
+// factor.  Result: pixel-accurate, never stretched, at any size or DPR.
+const VIEW_W = 1600, VIEW_H = 900, VIEW_AR = VIEW_W / VIEW_H;
+const IS_TOUCH = window.matchMedia('(pointer: coarse)').matches
+  || (navigator.maxTouchPoints || 0) > 0;
+
+function fitViewport() {
+  const game = $('game');
+  if (!game || game.classList.contains('hidden')) return; // only while playing
+  const stage = $('frame').parentElement; // .stage spans the whole viewport
+  const availW = stage.clientWidth, availH = stage.clientHeight;
+  if (availW < 1 || availH < 1) return;
+
+  // largest 16:9 box that fits inside the viewport
+  let w = availW, h = Math.round(availW / VIEW_AR);
+  if (h > availH) { h = availH; w = Math.round(availH * VIEW_AR); }
+
+  $('frame').style.width = w + 'px';
+  $('frame').style.height = h + 'px';
+  $('ui').style.setProperty('--ui-scale', w / VIEW_W);
+
+  if (renderer) renderer.resize(w, h, Math.min(2, window.devicePixelRatio || 1));
+
+  // on a phone held upright the 16:9 frame is a thin strip — nudge to rotate
+  if (IS_TOUCH) {
+    const portrait = availH > availW;
+    $('rotate-hint').classList.toggle('show', portrait);
+    if (portrait) input.releaseAll();
+  }
+}
+
+window.addEventListener('resize', fitViewport);
+window.addEventListener('orientationchange', fitViewport);
+if (window.visualViewport) window.visualViewport.addEventListener('resize', fitViewport);
+
+// Wire the on-screen buttons to the same input state the keyboard drives, so
+// touch and key controls are fully interchangeable.
+function initTouch() {
+  if (!IS_TOUCH) return;
+  document.body.classList.add('is-touch');
+  const bind = (id, key) => {
+    const el = $(id);
+    if (!el) return;
+    const press = (e) => {
+      e.preventDefault();
+      input.setControl(key, true);
+      el.classList.add('pressed');
+      try { el.setPointerCapture(e.pointerId); } catch { /* some pointers can't be captured */ }
+    };
+    const release = () => { input.setControl(key, false); el.classList.remove('pressed'); };
+    el.addEventListener('pointerdown', press);
+    el.addEventListener('pointerup', release);
+    el.addEventListener('pointercancel', release);
+    el.addEventListener('lostpointercapture', release);
+    el.addEventListener('contextmenu', (e) => e.preventDefault());
+  };
+  bind('tc-left', 'left');
+  bind('tc-right', 'right');
+  bind('tc-jump', 'jump');
+  bind('tc-attack', 'attack');
+}
+
+// ----------------------------------------------------------------- chat
+function wireChat() {
+  // Enter (when not typing) opens the chat input.
+  window.addEventListener('keydown', (e) => {
+    if (e.code !== 'Enter') return;
+    const ae = document.activeElement;
+    if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA')) return;
+    const ci = chatInput;
+    if (ci && game && !game.classList.contains('hidden')) {
+      e.preventDefault(); ci.focus();
+    }
+  });
+
+  const form = chatForm;
+  if (form) {
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const ci = chatInput;
+      const text = (ci.value || '').trim();
+      if (text) net.sendChat(text);
+      ci.value = ''; ci.blur(); document.body.classList.remove('chat-open');
+    });
+  }
+  const ci = chatInput;
+  if (ci) {
+    ci.addEventListener('keydown', (e) => { if (e.key === 'Escape') e.target.blur(); });
+    ci.addEventListener('blur', () => document.body.classList.remove('chat-open'));
+  }
+  const mChat = tc-chat;
+  if (mChat) {
+    mChat.addEventListener('click', () => {
+      document.body.classList.add('chat-open');
+      const el = chatInput; if (el) el.focus();
+    });
+  }
+}
 
 // ---------------------------------------------------------------- menu setup
 function initMenu() {
@@ -72,6 +177,7 @@ async function startGame() {
   $('menu').classList.add('hidden');
   $('game').classList.remove('hidden');
   renderer = new Renderer($('view'));
+  fitViewport();                 // size the canvas + HUD to this screen (no stretch)
   input.enable(true);
   requestAnimationFrame(loop);
 }
@@ -93,14 +199,34 @@ function wireNet() {
     app.level = d.level; app.round = d.round; app.roundStartMs = d.roundStartMs;
     app.brokenIce = new Set();
     app.planeActive = false;
+    app.localStartMs = d.roundStartMs;
+    app.finalMs = null;
     $('hud-round').textContent = d.round;
-    hideOverlay(); hideWin();
+    hideOverlay(); hideWin(); hideDeathBanner(); hideCountdownBig();
+    // 新一局开始：显示醒目 banner，并 toast 提示。
+    showRoundStartBanner(d.round);
     toast(`第 ${d.round} 局开始！`, 'good');
   });
   net.on('roundEnd', onRoundEnd);
   net.on('rescued', onRescued);
   net.on('plane', () => toast('✈️ 救援飞机来了！跳上去逃生！', 'good'));
-  net.on('system', (d) => { if (d && d.msg) toast(d.msg); });
+  net.on('system', (d) => {
+    if (!d || !d.msg) return;
+    // 冠亚季军总结、新局开始、普通系统消息都进聊天桦，保证所有人看到。
+    addChat('', d.msg, '', true);
+    // 最后5秒的权威倒数：显示居中大字 5/4/3/2/1。
+    if (d.kind === 'countdown') {
+      if (d.seq === 5) toast(d.msg, 'good'); // 5 秒那条含冠亚季军，走 toast 重点展示
+      showCountdownBig(d.seq);
+      return;
+    }
+    // 新一局开始的系统消息不重复 toast（下面 roundStart 事件会显示 banner）；
+    // 其它系统消息（加入/离开/冠亚季军）走 toast。
+    if (d.kind === 'roundStart') return;
+    toast(d.msg, d.kind === 'roundEnd' ? 'good' : '');
+  });
+  net.on('chat', (d) => addChat(d.name, d.text, outfitColor(d)));
+  net.on('playerDied', onPlayerDied);
 }
 
 function onSnapshot(data) {
@@ -115,13 +241,21 @@ function onSnapshot(data) {
     const age = Math.max(0, (net.now() - data.t) / 1000); // how stale this snapshot is
     predictor.reconcile(self, age);
     app.localServer = self;
+    if (self.res) { if (app.finalMs == null && self.fn) app.finalMs = self.fn; }
+    else if (data.phase === "intermission") app.localStartMs = null; // round over, not finished
+    else app.localStartMs = self.st || app.roundStartMs; // live per-player timer
+    if (!self.res) app.finalMs = null; // still climbing: live timer
     updateHud(self);
+    if (!self.dead && app.deathShown) hideDeathBanner();
   }
 
   if (data.fx && renderer) {
     for (const fx of data.fx) {
       renderer.addFx(fx);
-      if (fx.t === 'death' && fx.id === net.selfId) toast(deathMsg(fx.cause), 'bad');
+      if (fx.t === 'death' && fx.id === net.selfId) {
+        renderer.addShake(22);
+        showDeathBanner(fx.cause);
+      }
     }
   }
 
@@ -129,6 +263,9 @@ function onSnapshot(data) {
 }
 
 function onRoundEnd(d) {
+  // round over: players who did not finish get no time this round
+  if (app.finalMs == null) app.localStartMs = null;
+  hideCountdownBig(); // 本局结束，先清掉残留的大字倒数
   const ov = $('round-overlay');
   $('ov-title').textContent = `第 ${d.round} 局结束`;
   const ol = $('ov-results');
@@ -159,6 +296,7 @@ function onRoundEnd(d) {
 
 function onRescued(d) {
   if (d.id === net.selfId) {
+    app.finalMs = d.timeMs;
     $('win-detail').textContent =
       `第 ${d.rank} 名 · 用时 ${fmtTime(d.timeMs, true)}` +
       (d.allTimeRank <= 20 ? ` · 历史第 ${d.allTimeRank} 名！` : '');
@@ -202,8 +340,9 @@ function loop(now) {
       remote: net.renderState(),
     }, dt);
 
-    // live timer
-    $('timer').textContent = fmtTime(net.now() - app.roundStartMs);
+    // live per-player timer (frozen once rescued)
+    const ms = app.finalMs != null ? app.finalMs : (app.localStartMs ? Math.max(0, net.now() - app.localStartMs) : 0);
+    $('timer').textContent = fmtTime(ms);
   }
  } catch (err) {
    // a single bad frame shouldn't freeze the client — log and keep going
@@ -268,7 +407,7 @@ function drawMiniTower(ranking) {
   for (const p of ranking) {
     const fl = p.rescued ? FLOOR_COUNT - 1 : p.floor;
     const y = H - 8 - (fl / (FLOOR_COUNT - 1)) * (H - 16);
-    const x = 10 + ((p.x || 480) / 960) * (W - 20);
+    const x = 10 + ((p.x || WORLD_WIDTH / 2) / WORLD_WIDTH) * (W - 20);
     ctx.fillStyle = (p.look && p.look.outfit) || '#5ad1ff';
     ctx.beginPath(); ctx.arc(x, y - 3, p.id === net.selfId ? 4 : 3, 0, 7); ctx.fill();
     if (p.id === net.selfId) { ctx.strokeStyle = '#ffd84a'; ctx.lineWidth = 1.5; ctx.stroke(); }
@@ -285,6 +424,29 @@ function toast(msg, kind = '') {
   setTimeout(() => el.remove(), 2900);
 }
 
+// ---- chat ----
+// Derive a chat color from a snapshot/chat player's outfit look.
+function outfitColor(d) {
+  const ranking = app.ranking || [];
+  const p = d && d.id ? ranking.find((r) => r.id === d.id) : null;
+  return (p && p.look && p.look.outfit) || '#5ad1ff';
+}
+
+function addChat(name, text, color, sys) {
+  const log = chatLog;
+  if (!log) return;
+  const line = document.createElement('div');
+  line.className = 'line' + (sys ? ' sys' : '');
+  if (sys || !name) {
+    line.textContent = text;
+  } else {
+    line.innerHTML = '<span class="who" style="color:' + (color || '#9be7ff') + '">' + escapeHtml(name) + '：</span>' + escapeHtml(text);
+  }
+  log.appendChild(line);
+  while (log.children.length > 40) log.removeChild(log.firstChild);
+  log.scrollTop = log.scrollHeight;
+}
+
 function deathMsg(cause) {
   const m = {
     fall: '摔得太狠了！回到第一层',
@@ -297,8 +459,77 @@ function deathMsg(cause) {
   return m[cause] || '你倒下了！回到第一层';
 }
 
+function onPlayerDied(d) {
+  if (d.id === net.selfId) {
+    renderer && renderer.addShake(22);
+    showDeathBanner(d.cause);
+  } else {
+    toast(`💀 ${d.name} 倒下了`, 'bad');
+  }
+}
+
+function deathLabel(cause) {
+  const m = {
+    fall: '摔得太狠了',
+    monster: '被怪物击倒',
+    icicle: '被冰锥砸中',
+    fire: '被火球击倒',
+    freeze: '被冰冻击倒',
+    pvp: '被其他玩家击败',
+  };
+  return m[cause] || '你倒下了';
+}
+
+function showDeathBanner(cause) {
+  if (app.deathShown) return;
+  app.deathShown = true;
+  const el = $('death-banner');
+  if (!el) return;
+  $('death-reason').textContent = deathLabel(cause);
+  el.classList.remove('hidden');
+}
+
+function hideDeathBanner() {
+  app.deathShown = false;
+  const el = $('death-banner');
+  if (el) el.classList.add('hidden');
+}
+
 function hideOverlay() { $('round-overlay').classList.add('hidden'); }
 function hideWin() { $('win-banner').classList.add('hidden'); }
+function hideCountdownBig() {
+  const el = $('countdown-big');
+  if (el) el.classList.add('hidden');
+  clearTimeout(app._cdTimer);
+}
+// 显示居中大字倒数：每次重启 pop 动画。
+function showCountdownBig(seq) {
+  const el = $('countdown-big');
+  if (!el) return;
+  const num = $('cd-num');
+  num.textContent = seq;
+  el.classList.remove('hidden');
+  // 重启动画：clone 节点是最稳定的方式。
+  const span = num;
+  span.style.animation = 'none';
+  // 强制重排，触发重绘后再应用动画。
+  void span.offsetWidth;
+  span.style.animation = '';
+  clearTimeout(app._cdTimer);
+  // 动画 .9s 后保持显示，由下一个 seq 或 roundStart 负责清除。
+}
+// 显示新一局开始 banner，约2.6s 后自动隐藏。
+function showRoundStartBanner(round) {
+  const el = $('round-start-banner');
+  if (!el) return;
+  $('rs-title').textContent = `第 ${round} 局开始！`;
+  el.classList.remove('hidden');
+  // 重启出场动画。
+  const inner = el.querySelector('.rs-inner');
+  if (inner) { inner.style.animation = 'none'; void inner.offsetWidth; inner.style.animation = ''; }
+  clearTimeout(app._rsTimer);
+  app._rsTimer = setTimeout(() => el.classList.add('hidden'), 2600);
+}
 function setConn(text, cls) {
   const el = $('conn-status');
   el.textContent = text;
@@ -306,3 +537,5 @@ function setConn(text, cls) {
 }
 
 initMenu();
+initTouch();
+wireChat();

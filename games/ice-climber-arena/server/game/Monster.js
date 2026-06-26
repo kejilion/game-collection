@@ -6,11 +6,11 @@
 // ============================================================================
 import {
   MonsterKind, MONSTER_HP, MONSTER_SPEED, MONSTER_AGGRO_SPEED,
-  MONSTER_DETECT,
+  MONSTER_DETECT, GRAVITY, TERMINAL_VY,
 } from '../../public/shared/constants.js';
 
-export const MONSTER_W = 30;
-export const MONSTER_H = 30;
+export const MONSTER_W = 48;
+export const MONSTER_H = 48;
 
 let nextId = 1;
 
@@ -27,19 +27,47 @@ export class Monster {
     this.hp = MONSTER_HP;
     this.alive = true;
     this.castCd = 1.5;
+    // falling state: set by GameRoom when the ice cell under the monster is shattered
+    this.vy = 0;
+    this.falling = false;
+    this.supportY = spec.y; // y of the surface currently under its feet
   }
 
   /** @returns {null | {x,y,vx,vy}} a freeze bolt to spawn this tick */
-  update(dt, players) {
+  /** @param {{y:number,minX:number,maxX:number}|null} support surface under feet this tick
+   *  @returns {null | {x,y,vx,vy}} a freeze bolt to spawn this tick */
+  update(dt, players, support) {
     if (!this.alive) return null;
     this.castCd -= dt;
+
+    // --- falling when the cell beneath is gone ---
+    if (!support) {
+      this.falling = true;
+      this.vy = Math.min(this.vy + GRAVITY * dt, TERMINAL_VY);
+      this.y += this.vy * dt;
+      return null;
+    }
+    // landed on a new surface -> snap feet to it and resume patrolling
+    if (this.falling) {
+      this.falling = false;
+      this.vy = 0;
+      this.y = support.y;
+      // confine patrol bounds to the new (possibly narrower) ledge band
+      this.minX = Math.max(this.minX, support.minX);
+      this.maxX = Math.min(this.maxX, support.maxX);
+      if (this.minX > this.maxX) { this.minX = this.maxX = (support.minX+support.maxX)/2; }
+      this.x = Math.max(this.minX, Math.min(this.maxX, this.x));
+    } else {
+      this.y = support.y; // keep feet glued to a stable ledge
+    }
+
 
     // nearest valid target on roughly the same floor
     let target = null;
     let best = MONSTER_DETECT;
     for (const p of players) {
       if (!p.alive || p.rescued || p.invuln > 0) continue;
-      if (Math.abs(p.y - this.y) > 95) continue;
+      if (Math.abs(p.y - this.y) > 150) continue;
       const d = Math.abs(p.x - this.x);
       if (d < best) { best = d; target = p; }
     }
@@ -56,9 +84,9 @@ export class Monster {
         if (this.castCd <= 0) {
           this.castCd = 2.3;
           const dx = target.x - this.x;
-          const dy = (target.y - 12) - (this.y - MONSTER_H / 2);
+          const dy = (target.y - 20) - (this.y - MONSTER_H / 2);
           const len = Math.hypot(dx, dy) || 1;
-          const spd = 300;
+          const spd = 360;
           fire = { x: this.x, y: this.y - MONSTER_H / 2, vx: (dx / len) * spd, vy: (dy / len) * spd };
         }
       } else {

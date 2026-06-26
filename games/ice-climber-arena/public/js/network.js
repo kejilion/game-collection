@@ -34,6 +34,7 @@ export class Net {
     s.on('rescued', (d) => this._emit('rescued', d));
     s.on('planeIncoming', (d) => this._emit('plane', d));
     s.on('system', (d) => this._emit('system', d));
+    s.on('chat', (d) => this._emit('chat', d));
     this._clockTimer = setInterval(() => this._syncClock(), 2500);
   }
 
@@ -48,6 +49,8 @@ export class Net {
   }
 
   sendInput(msg) { if (this.socket) this.socket.volatile.emit('input', msg); }
+
+  sendChat(text) { if (this.socket) this.socket.emit('chat', text); }
 
   now() { return Date.now() + this.offset; }
 

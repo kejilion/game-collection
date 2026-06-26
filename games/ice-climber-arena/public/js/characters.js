@@ -242,6 +242,61 @@ function drawFrozen(ctx) {
   ctx.restore();
 }
 
+/**
+ * 倒地死亡绘制：角色向后倾倒旋转 + X 眼 + 随进度渐隐。
+ * progress: 1 = 刚死, 0 = 即将重生。脚部仍在 (0,0)。
+ */
+export function drawDeadClimber(ctx, look, t, progress, scale = 1) {
+  const { skin = '#ffd9b3', outfit = '#3498db', hat = '#c0392b', style = 'beanie' } = look;
+  const p = Math.max(0, Math.min(1, progress));
+  const tilt = (1 - p) * (Math.PI / 2); // 0 -> 90deg 倒地
+  const fade = Math.min(1, p * 1.6);    // 后半段渐隐
+  ctx.save();
+  ctx.scale(0.96 * scale, 0.96 * scale);
+  ctx.globalAlpha = fade;
+  ctx.rotate(-tilt);  // 向后倒
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+
+  const outDark = shade(outfit, -38), outLite = shade(outfit, 34), skinDark = shade(skin, -34);
+
+  // legs + boots (瘫软)
+  drawLeg(ctx, -6, 10, outDark, skinDark);
+  drawLeg(ctx, 6, -10, outDark, skinDark);
+  // back arm
+  drawArm(ctx, 11, 12, outfit, outDark, skin, false, 0);
+
+  // torso
+  ctx.fillStyle = outfit; ctx.strokeStyle = outDark; ctx.lineWidth = 2;
+  rr(ctx, -13, -34, 26, 24, 11); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = outLite; rr(ctx, -9, -31, 9, 17, 6); ctx.fill();
+
+  // head
+  const headY = -42;
+  ctx.fillStyle = skin; ctx.strokeStyle = skinDark; ctx.lineWidth = 1.6;
+  circle(ctx, 0, headY, 11.5); ctx.fill(); ctx.stroke();
+
+  // X 眼
+  ctx.strokeStyle = '#21303f'; ctx.lineWidth = 1.8;
+  const ex = [-4.5, 4.5];
+  for (const cx of ex) {
+    ctx.beginPath();
+    ctx.moveTo(cx - 2.4, headY - 1.4); ctx.lineTo(cx + 2.4, headY + 3.4);
+    ctx.moveTo(cx + 2.4, headY - 1.4); ctx.lineTo(cx - 2.4, headY + 3.4);
+    ctx.stroke();
+  }
+  // 张嘴
+  ctx.strokeStyle = '#b15a4a'; ctx.lineWidth = 1.6;
+  ctx.beginPath(); ctx.arc(0.6, headY + 5, 3.2, 0.1 * Math.PI, 0.9 * Math.PI); ctx.stroke();
+
+  drawHat(ctx, headY, hat, style);
+  // front arm
+  drawArm(ctx, -11, 14, outfit, outDark, skin, true, 0);
+
+  ctx.restore();
+  ctx.globalAlpha = 1;
+}
+
 /** Small standalone icon used in the creator chip row. */
 export function drawHeadIcon(ctx, look, style, x, y, s) {
   ctx.save();

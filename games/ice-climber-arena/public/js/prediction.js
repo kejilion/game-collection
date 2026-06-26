@@ -68,6 +68,11 @@ export class LocalPredictor {
       this.ex = 0; this.ey = 0;
       return;
     }
+    if (server.dead > 0) { // dead — hold the death spot, no prediction
+      this.s.x = server.x; this.s.y = server.y; this.s.vx = 0; this.s.vy = 0;
+      this.ex = 0; this.ey = 0;
+      return;
+    }
     const age = Math.max(0, Math.min(0.2, ageSec));
     const sx = server.x + (server.vx || 0) * age;
     const sy = server.y + (server.vy || 0) * age;

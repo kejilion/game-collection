@@ -18,6 +18,15 @@ export class Input {
 
   enable(on) { this.enabled = on; if (!on) this._clear(); }
 
+  /** Set a control from an external source (on-screen touch buttons). */
+  setControl(key, on) {
+    if (!this.enabled) return;
+    if (key in this.state) this._set(key, on);
+  }
+
+  /** Release every held control (e.g. when the rotate-to-landscape nudge shows). */
+  releaseAll() { this._clear(); }
+
   _typing() {
     const el = document.activeElement;
     return el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA');

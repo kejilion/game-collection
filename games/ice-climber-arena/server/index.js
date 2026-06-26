@@ -1,5 +1,5 @@
 // ============================================================================
-//  Server entry — Express static host + Socket.IO realtime gateway.
+//  Server entry �?Express static host + Socket.IO realtime gateway.
 //  One process, one shared GameRoom; every browser that opens the URL joins
 //  the same live tower.
 // ============================================================================
@@ -27,7 +27,16 @@ const leaderboard = await new Leaderboard().load();
 const room = new GameRoom(io, leaderboard);
 room.start();
 
-app.use(express.static(PUBLIC_DIR, { extensions: ['html'] }));
+app.use(express.static(PUBLIC_DIR, {
+  extensions: ['html'],
+  // dev: never cache JS/CSS so code changes show after a refresh
+  setHeaders(res, filePath) {
+    if (/\.(js|css|mjs)$/.test(filePath)) {
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+    }
+  },
+}));
 app.get('/health', (_req, res) => {
   res.json({ ok: true, players: room.players.size, round: room.round, phase: room.phase });
 });
@@ -57,6 +66,18 @@ io.on('connection', (socket) => {
 
   socket.on('input', (msg) => room.setInput(socket.id, msg));
 
+  // chat message: server thottles + trims, then broadcasts to everyone so a
+  // speech bubble appears over the sender and the line shows in the chat log.
+  socket.on('chat', (text) => {
+    const p = room.players.get(socket.id);
+    if (!p || typeof text !== 'string') return;
+    const clean = String(text).trim().slice(0, 80);
+    if (!clean) return;
+    if (room.setChat(socket.id, clean)) {
+      io.emit('chat', { id: p.id, name: p.name, text: clean });
+    }
+  });
+
   // round-trip clock sync probe
   socket.on('timesync', (t0, ack) => {
     if (typeof ack === 'function') ack({ t0, ts: Date.now() });
@@ -69,7 +90,7 @@ io.on('connection', (socket) => {
   });
 });
 
-server.listen(PORT, () => {
+server.listen(PORT, '::', () => {
   console.log(`\n  🧗 敲冰块大逃杀 / Ice-Climber Arena`);
-  console.log(`  ▶  http://localhost:${PORT}\n`);
+  console.log(`  �? http://localhost:${PORT}\n`);
 });

@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <title>敲冰块大逃杀 · Ice-Climber Arena</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="stylesheet" href="/css/style.css" />
@@ -72,7 +72,14 @@
   <!-- ============================== GAME =============================== -->
   <div id="game" class="screen hidden">
     <div class="stage">
-      <canvas id="view" width="960" height="600"></canvas>
+      <!-- 16:9 play frame — JS sizes it to the largest box that fits the
+           viewport, so the canvas scales uniformly (letterboxed) not stretched -->
+      <div class="frame" id="frame">
+        <canvas id="view" width="1600" height="900"></canvas>
+
+        <!-- UI layer: authored in the same 1600×900 space as the canvas and
+             scaled by the same factor, so the HUD never stretches either -->
+        <div class="ui" id="ui">
 
       <!-- HUD overlay -->
       <div class="hud">
@@ -101,6 +108,14 @@
         <div id="toasts" class="toasts"></div>
 
         <div class="hud-bc" id="controls-hint">← → 移动 · ↑ 跳 · A 攻击</div>
+
+        <!-- bottom-left chat -->
+        <div class="panel-chat">
+          <div class="chat-log" id="chatLog"></div>
+          <form id="chatForm" class="chat-form" autocomplete="off">
+            <input id="chatInput" maxlength="80" placeholder="按 Enter 聊天…" inputmode="text" />
+          </form>
+        </div>
       </div>
 
       <!-- round-end / intermission overlay -->
@@ -126,6 +141,51 @@
       </div>
 
       <div id="conn-status" class="conn-status">连接中…</div>
+
+      <!-- personal death banner -->
+      <div id="death-banner" class="death-banner hidden">
+        <div class="death-inner">
+          <div class="death-emoji">💀</div>
+          <h2>你倒下了</h2>
+          <p id="death-reason">意外坠落</p>
+          <p class="death-tip">即将在起点重生…</p>
+        </div>
+      </div>
+
+      <!-- 本局结束倒数5秒大字 -->
+      <div id="countdown-big" class="countdown-big hidden"><span id="cd-num">5</span></div>
+
+      <!-- 新一局开始 banner -->
+      <div id="round-start-banner" class="round-start-banner hidden">
+        <div class="rs-inner"><div class="rs-emoji">🚀</div>
+          <h2 id="rs-title">第 1 局开始！</h2>
+          <p id="rs-sub">冲上顶高，争夺冠军</p>
+        </div>
+      </div>
+      </div><!-- .ui -->
+      </div><!-- .frame -->
+
+      <!-- on-screen touch controls (mobile only; viewport-space, never scaled) -->
+      <div id="touch-controls" aria-hidden="true">
+        <div class="tc-cluster tc-left">
+          <button class="tc-btn" id="tc-left" aria-label="左移">◀</button>
+          <button class="tc-btn" id="tc-right" aria-label="右移">▶</button>
+        </div>
+        <div class="tc-cluster tc-right">
+          <button class="tc-btn tc-attack" id="tc-attack" aria-label="攻击">✊</button>
+          <button class="tc-btn tc-jump" id="tc-jump" aria-label="跳跃">▲</button>
+        </div>
+        <button class="tc-btn tc-chat" id="tc-chat" aria-label="聊天">💬</button>
+      </div>
+
+      <!-- portrait nudge (mobile only) -->
+      <div id="rotate-hint" aria-hidden="true">
+        <div class="rotate-inner">
+          <div class="rotate-icon">📱</div>
+          <p>请横屏游戏</p>
+          <span>横向握持手机以获得最佳体验</span>
+        </div>
+      </div>
     </div>
   </div>
 

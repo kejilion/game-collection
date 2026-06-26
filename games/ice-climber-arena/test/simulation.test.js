@@ -71,8 +71,8 @@ test('leaderboard sorts by time and remembers the round', () => {
 
 test('GameRoom runs many ticks with players without crashing', () => {
   const room = new GameRoom(mockIo(), new Leaderboard({ persist: false }));
-  const p1 = room.addPlayer('s1', '甲', { outfit: '#e74c3c' });
-  const p2 = room.addPlayer('s2', '乙', { outfit: '#2ecc71' });
+  const p1 = room.addPlayer('s1', 'P1', { outfit: '#e74c3c' });
+  const p2 = room.addPlayer('s2', 'P2', { outfit: '#2ecc71' });
 
   room.setInput('s1', { left: false, right: true, jump: true, attack: true, seq: 1 });
   room.setInput('s2', { left: true, right: false, jump: false, attack: false, seq: 1 });
@@ -90,13 +90,14 @@ test('GameRoom runs many ticks with players without crashing', () => {
 
 test('GameRoom: rescuing players ends the round and records times', () => {
   const room = new GameRoom(mockIo(), new Leaderboard({ persist: false }));
-  const p = room.addPlayer('solo', '独行者', {});
+  const p = room.addPlayer('solo', 'Solo', {});
   room.activatePlane();
+  room.planeY = -20; // simulate the plane diving down to grab range
   // place the player airborne inside the pickup zone
   p.floor = FLOOR_COUNT - 1;
   p.onGround = false;
   p.x = room.planeX;
-  p.y = floorTopY(FLOOR_COUNT - 1) - 40;
+  p.y = 40; // dangles inside the dive rescue zone (planeY -10 -> zone ~10..70)
   room._checkRescue(p, Date.now());
   assert.ok(p.rescued, 'player got rescued');
   assert.equal(room.phase, 'intermission', 'round ended (solo target reached)');

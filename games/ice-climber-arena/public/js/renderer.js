@@ -6,40 +6,45 @@
 // ============================================================================
 import {
   WORLD_WIDTH, WORLD_HEIGHT, FLOOR_COUNT, GROUND_THICKNESS, PLAYER_H, PLAYER_W,
-  floorTopY, Tile, PLANE_Y, PICKUP_W, PICKUP_H, ItemKind,
+  floorTopY, Tile, PICKUP_W, PICKUP_H, ItemKind, BRICK_CELL_W,
+  RESCUE_ZONE_TOP_OFFSET, RESCUE_ZONE_BOTTOM_OFFSET, ROPE_KNOT_OFFSET, PLANE_Y_HIGH,
 } from '../shared/constants.js';
 import { buildRects } from '../shared/physics.js';
-import { drawClimber } from './characters.js';
+import { drawClimber, drawDeadClimber } from './characters.js';
 
-const VIEW_W = 960;
-const VIEW_H = 600;
+const VIEW_W = 1600;
+const VIEW_H = 900;
+// characters are authored for a 34px-tall player; rescale to the live PLAYER_H.
+const CHAR_SCALE = PLAYER_H / 34;
+// monsters/items were authored for a 30px box; rescale to the live monster size.
+const MON_SCALE = 48 / 30;
 
 export class Renderer {
   constructor(canvas) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d');
     this.particles = [];
-    this.phases = new Map(); // id → run-cycle phase
-    this.flakes = Array.from({ length: 70 }, () => ({
+    this.phases = new Map(); // id �?run-cycle phase
+    this.flakes = Array.from({ length: 150 }, () => ({
       x: Math.random() * VIEW_W, y: Math.random() * VIEW_H,
       r: 0.6 + Math.random() * 2, sp: 12 + Math.random() * 26, drift: Math.random() * 2 - 1,
     }));
     // --- ambient backdrop layers (screen-space, parallax-free) ---
-    // twinkling stars — only shown in the dark lower reaches
-    this.stars = Array.from({ length: 90 }, () => ({
+    // twinkling stars �?only shown in the dark lower reaches
+    this.stars = Array.from({ length: 170 }, () => ({
       x: Math.random() * VIEW_W, y: Math.random() * VIEW_H * 0.82,
       r: 0.5 + Math.random() * 1.5, tw: 1 + Math.random() * 3, ph: Math.random() * 7,
       b: 0.5 + Math.random() * 0.5,
       c: Math.random() < 0.25 ? '#bcd2ff' : (Math.random() < 0.5 ? '#ffe7c0' : '#ffffff'),
     }));
-    // slow aurora ribbons — dreamy near the bottom, faint up high
+    // slow aurora ribbons �?dreamy near the bottom, faint up high
     this.aurora = [
       { y: 0.18, sp: 0.26, ph: 0.0, a: 0.50, c: '#54ffcf' },
       { y: 0.30, sp: 0.18, ph: 2.2, a: 0.42, c: '#8a7bff' },
       { y: 0.12, sp: 0.33, ph: 4.1, a: 0.30, c: '#74d4ff' },
     ];
     // drifting dreamy light motes (soft bokeh that rises and wraps)
-    this.motes = Array.from({ length: 26 }, () => ({
+    this.motes = Array.from({ length: 44 }, () => ({
       x: Math.random() * VIEW_W, y: Math.random() * VIEW_H,
       r: 14 + Math.random() * 42, sp: 5 + Math.random() * 16,
       a: 0.10 + Math.random() * 0.22, pls: 0.4 + Math.random() * 1.5, ph: Math.random() * 7,
@@ -47,8 +52,27 @@ export class Renderer {
     }));
     this.cameraY = 0;
     this.t = 0;
-    this._p = 0; // altitude progress 0(bottom)…1(top), set each frame
+    this.shake = 0; this.shakeX = 0; this.shakeY = 0;
+    this._p = 0; // altitude progress 0(bottom)�?(top), set each frame
+    // backing-store scale: logical 1600×900 units �?device pixels (set by resize)
+    this.scale = (canvas.width || VIEW_W) / VIEW_W;
   }
+
+  /**
+   * Size the backing store to the displayed CSS size × devicePixelRatio so the
+   * 16:9 logical space stays crisp on HiDPI screens.  The frame is locked to
+   * 16:9 by the layout, so X and Y share one uniform scale �?no distortion.
+   */
+  resize(cssW, cssH, dpr = 1) {
+    const w = Math.max(1, Math.round(cssW * dpr));
+    const h = Math.max(1, Math.round(cssH * dpr));
+    if (this.canvas.width !== w) this.canvas.width = w;
+    if (this.canvas.height !== h) this.canvas.height = h;
+    this.scale = w / VIEW_W;
+  }
+
+  /** Trigger / boost screen shake (px magnitude). */
+  addShake(amt) { this.shake = Math.max(this.shake, amt); }
 
   // ----- particle FX --------------------------------------------------------
   addFx(fx) {
@@ -70,10 +94,17 @@ export class Renderer {
       case 'mdeath':
         for (let i = 0; i < 12; i++) P.push(spark(fx.x, fx.y, '#9fd9ff'));
         break;
-      case 'death':
-        for (let i = 0; i < 16; i++) P.push(spark(fx.x, fx.y - PLAYER_H / 2, '#cfe6ff'));
-        P.push(dmgText(fx.x, fx.y - PLAYER_H, '💥', '#fff', 22));
+      case 'death': {
+        // 大爆炸：冰晶碎片 + 暖色火星 + 冲击波环 + 飘字
+        for (let i = 0; i < 28; i++) P.push(shard(fx.x, fx.y - PLAYER_H / 2, i % 2 ? '#bfeaff' : '#eaffff'));
+        for (let i = 0; i < 20; i++) P.push(spark(fx.x, fx.y - PLAYER_H / 2, '#ff7a5a'));
+        for (let i = 0; i < 10; i++) P.push(sparkle(fx.x, fx.y - PLAYER_H / 2, '#fff2c0'));
+        P.push(ring(fx.x, fx.y - PLAYER_H / 2, '#ffffff'));
+        P.push(dmgText(fx.x, fx.y - PLAYER_H, '🔥', '#ff6a3c', 26));
+        P.push(dmgText(fx.x, fx.y - PLAYER_H - 18, 'KO!', '#ff3b3b', 20));
+        this.addShake(14);
         break;
+      }
       case 'pickup': {
         const c = fx.kind === ItemKind.FIRE ? '#ff7a3c' : fx.kind === ItemKind.HEAL ? '#ff5a7a' : '#5ad1ff';
         for (let i = 0; i < 12; i++) P.push(sparkle(fx.x, fx.y, c));
@@ -93,6 +124,11 @@ export class Renderer {
 
   update(dt) {
     this.t += dt;
+    if (this.shake > 0) {
+      this.shake = Math.max(0, this.shake - dt * 40);
+      this.shakeX = (Math.random() * 2 - 1) * this.shake;
+      this.shakeY = (Math.random() * 2 - 1) * this.shake;
+    } else { this.shakeX = 0; this.shakeY = 0; }
     for (const f of this.flakes) {
       f.y += f.sp * dt; f.x += f.drift * 12 * dt;
       if (f.y > VIEW_H) { f.y = -4; f.x = Math.random() * VIEW_W; }
@@ -115,22 +151,38 @@ export class Renderer {
   // ----- main draw ----------------------------------------------------------
   draw(scene, dt) {
     const ctx = this.ctx;
+    // map logical 1600×900 �?backing pixels (replaces the implicit identity
+    // transform); everything below keeps drawing in clean 1600×900 units.
+    ctx.setTransform(this.scale, 0, 0, this.scale, 0, 0);
     const { level, brokenIce, tEst, local } = scene;
 
-    // camera follows local climber (or stays low before we have one)
+    // camera follows local climber (or stays low before we have one).
+    // Once the climber reaches the upper tower (or the rescue plane is out),
+    // the camera lifts to a dedicated "summit" framing that shows the top
+    // pad, the dangling rope and the patrolling plane together.
     const focusY = local ? local.y : floorTopY(0);
-    const targetCam = clamp(focusY - VIEW_H * 0.62, 0, WORLD_HEIGHT - VIEW_H);
-    this.cameraY += (targetCam - this.cameraY) * Math.min(1, dt * 8);
+    const planeOut = !!(scene.remote && scene.remote.plane);
+    const nearTop = focusY < floorTopY(FLOOR_COUNT - 2) + 40;
+    const summitFraming = planeOut || nearTop;
+    // summit cam lifts into the sky (negative allowed) so the high plane + rope
+    // sit around the upper-middle of the screen while the top pad stays visible
+    const summitCam = clamp(PLANE_Y_HIGH - VIEW_H * 0.22, -300, WORLD_HEIGHT - VIEW_H);
+    const followCam = clamp(focusY - VIEW_H * 0.62, 0, WORLD_HEIGHT - VIEW_H);
+    const targetCam = summitFraming ? Math.min(followCam, summitCam) : followCam;
+    this.cameraY += (targetCam - this.cameraY) * Math.min(1, dt * (summitFraming ? 5 : 8));
     const cam = this.cameraY;
 
     this._background(ctx, cam);
 
     ctx.save();
-    ctx.translate(0, -cam);
+    ctx.translate(this.shakeX, -cam + this.shakeY);
 
     this._floorLabels(ctx);
     const rects = buildRects(level.platforms, brokenIce, tEst);
-    for (const r of rects) this._platform(ctx, r);
+    // ICE walls render from the raw brick list so each split cell can be
+    // removed individually, leaving a snug hole; other tiles use the rects.
+    for (const r of rects) { if (r.type === Tile.ICE) continue; this._platform(ctx, r); }
+    for (const p of level.platforms) { if (p.type === Tile.ICE) this._iceWall(ctx, p, brokenIce); }
 
     if (scene.remote) {
       for (const it of scene.remote.items) this._item(ctx, it);
@@ -156,6 +208,8 @@ export class Renderer {
         inv: scene.localServer.inv, atk: scene.localServer.atk,
         jb: scene.localServer.jb, fb: scene.localServer.fb,
         res: scene.localServer.res, lift: scene.localServer.lift,
+        dead: scene.localServer.dead || 0,
+        chat: scene.localServer.chat,
         id: scene.selfId,
       }, scene.localLook, scene.localName, dt, true);
     }
@@ -173,11 +227,11 @@ export class Renderer {
   //  the climb brightens floor by floor into a hopeful dawn at the summit.
   _background(ctx, cam) {
     const maxCam = Math.max(1, WORLD_HEIGHT - VIEW_H);
-    const p = clamp(1 - cam / maxCam, 0, 1); // 0 = bottom (dark) → 1 = top (bright)
+    const p = clamp(1 - cam / maxCam, 0, 1); // 0 = bottom (dark) �?1 = top (bright)
     this._p = p;
     const ease = p * p * (3 - 2 * p); // smoothstep
 
-    // sky: deep dreamy night → bright hopeful dawn
+    // sky: deep dreamy night �?bright hopeful dawn
     const g = ctx.createLinearGradient(0, 0, 0, VIEW_H);
     g.addColorStop(0, mix('#0a0e2a', '#5fb0ff', ease));
     g.addColorStop(0.55, mix('#1a1640', '#b9e6ff', ease));
@@ -197,7 +251,7 @@ export class Renderer {
       ctx.globalAlpha = 1;
     }
 
-    // aurora ribbons — strongest in the dreamy depths, a faint shimmer up top
+    // aurora ribbons �?strongest in the dreamy depths, a faint shimmer up top
     const auroraA = clamp(0.8 - p * 0.62, 0.1, 0.8);
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
@@ -259,7 +313,7 @@ export class Renderer {
     ctx.restore();
     ctx.globalAlpha = 1;
 
-    // parallax peaks — dark silhouettes below, bright snowy ridges up high
+    // parallax peaks �?dark silhouettes below, bright snowy ridges up high
     this._peaks(ctx, cam * 0.18, mix('#171f4a', '#cfe7f6', ease), 360, 150, ease);
     this._peaks(ctx, cam * 0.32, mix('#221a44', '#bcdcf0', ease), 300, 230, ease);
   }
@@ -276,7 +330,7 @@ export class Renderer {
     ctx.lineTo(VIEW_W, VIEW_H);
     ctx.closePath();
     ctx.fill();
-    // snow caps — bright at the hopeful summit, dim in the dark depths
+    // snow caps �?bright at the hopeful summit, dim in the dark depths
     ctx.fillStyle = `rgba(255,255,255,${0.22 + 0.55 * ease})`;
     for (let x = -100; x <= VIEW_W + 100; x += base) {
       const px = x + base / 2; const py = y - height + Math.sin(x) * 12;
@@ -293,7 +347,7 @@ export class Renderer {
   }
 
   _floorLabels(ctx) {
-    ctx.font = '700 12px system-ui';
+    ctx.font = '700 20px system-ui';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
     for (let i = 0; i < FLOOR_COUNT; i++) {
@@ -310,7 +364,7 @@ export class Renderer {
     if (r.type === Tile.GROUND) return this._ground(ctx, r);
     const { x, y, w, h } = r;
     if (r.type === Tile.ICE) {
-      // a breakable ice brick — a row of these forms a wall to bust through
+      // a breakable ice brick �?a row of these forms a wall to bust through
       roundRect(ctx, x, y, w, h, 4);
       ctx.fillStyle = 'rgba(173, 230, 255, .9)';
       ctx.fill();
@@ -326,26 +380,31 @@ export class Renderer {
       ctx.moveTo(x + w * 0.7, y + 5); ctx.lineTo(x + w * 0.6, y + h - 3);
       ctx.stroke();
     } else if (r.type === Tile.MOVING) {
-      roundRect(ctx, x, y, w, h, 6);
-      ctx.fillStyle = '#8a6b4a'; ctx.fill();
-      ctx.strokeStyle = '#5e4730'; ctx.lineWidth = 2; ctx.stroke();
-      ctx.fillStyle = '#a98257'; roundRect(ctx, x + 2, y + 2, w - 4, 6, 3); ctx.fill();
-      // bolts + chevrons
-      ctx.fillStyle = '#3c2e1f';
-      circle(ctx, x + 6, y + h - 6, 1.7); ctx.fill();
-      circle(ctx, x + w - 6, y + h - 6, 1.7); ctx.fill();
+      // wood lift �?square bricks (every ledge reads as a row of square blocks)
+      this._brickCols(x, w, h, (cx, cw) => {
+        roundRect(ctx, cx + 0.5, y, cw - 1, h, 6);
+        ctx.fillStyle = '#8a6b4a'; ctx.fill();
+        ctx.strokeStyle = '#5e4730'; ctx.lineWidth = 2; ctx.stroke();
+        ctx.fillStyle = '#a98257'; roundRect(ctx, cx + 2, y + 2, cw - 4, 5, 3); ctx.fill();
+        ctx.fillStyle = '#3c2e1f';
+        circle(ctx, cx + 5, y + h - 6, 1.6); ctx.fill();
+        circle(ctx, cx + cw - 5, y + h - 6, 1.6); ctx.fill();
+      });
+      // travel-direction chevron centred on the whole lift
       ctx.strokeStyle = 'rgba(255,255,255,.5)'; ctx.lineWidth = 2;
       const cx = x + w / 2; const dir = r.vx >= 0 ? 1 : -1;
       ctx.beginPath();
       ctx.moveTo(cx - 5 * dir, y + h / 2 - 4); ctx.lineTo(cx + 3 * dir, y + h / 2);
       ctx.lineTo(cx - 5 * dir, y + h / 2 + 4); ctx.stroke();
     } else if (r.type === Tile.SPEED) {
-      roundRect(ctx, x, y, w, h, 6);
-      const g = ctx.createLinearGradient(0, y, 0, y + h);
-      g.addColorStop(0, '#7fe6ff'); g.addColorStop(1, '#2aa9e0');
-      ctx.fillStyle = g; ctx.fill();
-      ctx.strokeStyle = '#1d87bd'; ctx.lineWidth = 2; ctx.stroke();
-      // motion chevrons
+      // acceleration strip �?square bricks under flowing motion chevrons
+      this._brickCols(x, w, h, (cx, cw) => {
+        roundRect(ctx, cx + 0.5, y, cw - 1, h, 6);
+        const g = ctx.createLinearGradient(0, y, 0, y + h);
+        g.addColorStop(0, '#7fe6ff'); g.addColorStop(1, '#2aa9e0');
+        ctx.fillStyle = g; ctx.fill();
+        ctx.strokeStyle = '#1d87bd'; ctx.lineWidth = 2; ctx.stroke();
+      });
       ctx.strokeStyle = 'rgba(255,255,255,.8)'; ctx.lineWidth = 2.4;
       const phase = (this.t * 60) % 24;
       for (let cx = x + 6 - phase; cx < x + w - 4; cx += 24) {
@@ -353,16 +412,52 @@ export class Renderer {
         ctx.moveTo(cx, y + 6); ctx.lineTo(cx + 7, y + h / 2); ctx.lineTo(cx, y + h - 6);
         ctx.stroke();
       }
-    } else { // SOLID rock — an unbreakable brick, route around it
-      roundRect(ctx, x, y, w, h, 4);
-      ctx.fillStyle = '#8b95a1'; ctx.fill();
-      ctx.strokeStyle = '#5f6976'; ctx.lineWidth = 2; ctx.stroke();
-      // thin frosted top + pebble speckle
-      ctx.fillStyle = '#eef6fb';
-      roundRect(ctx, x + 1, y, w - 2, 5, 3); ctx.fill();
-      ctx.fillStyle = 'rgba(60,70,85,.5)';
-      circle(ctx, x + w * 0.3, y + h - 8, 2); ctx.fill();
-      circle(ctx, x + w * 0.65, y + h - 7, 1.6); ctx.fill();
+    } else { // SOLID rock �?unbreakable square bricks, route around them
+      this._brickCols(x, w, h, (cx, cw) => {
+        roundRect(ctx, cx + 0.5, y, cw - 1, h, 4);
+        ctx.fillStyle = '#8b95a1'; ctx.fill();
+        ctx.strokeStyle = '#5f6976'; ctx.lineWidth = 2; ctx.stroke();
+        ctx.fillStyle = '#eef6fb';
+        roundRect(ctx, cx + 2, y + 1, cw - 4, 4, 2); ctx.fill();
+        ctx.fillStyle = 'rgba(60,70,85,.5)';
+        circle(ctx, cx + cw * 0.5, y + h - 8, 1.8); ctx.fill();
+      });
+    }
+  }
+
+  // Tile a ledge's width into ~square cells (cellW = h, the ledge thickness)
+  // and invoke draw(cx, cw) per cell, so solid / speed / moving platforms read
+  // as a row of square bricks instead of one long bar (matching the ICE wall).
+  _brickCols(x, w, h, draw) {
+    const cols = Math.ceil(w / h);
+    for (let c = 0; c < cols; c++) {
+      const cx = x + c * h;
+      const cw = Math.min(h, x + w - cx);
+      if (cw <= 0) break;
+      draw(cx, cw);
+    }
+  }
+
+  // An ICE wall is a single wide brick subdivided into BRICK_CELL_W vertical
+  // cells. Each intact cell is drawn as a small frosted block; a shattered
+  // cell (key `${id}:${col}` in brokenIce) is skipped -> a snug hole mid-wall.
+  _iceWall(ctx, p, brokenIce) {
+    const cellW = p.cellW || BRICK_CELL_W;
+    const cols = Math.ceil(p.w / cellW);
+    const { y, h } = p;
+    for (let col = 0; col < cols; col++) {
+      const cx = p.x + col * cellW;
+      const cw = Math.min(cellW, p.x + p.w - cx);
+      if (cw <= 0) break;
+      const key = `${p.id}:${col}`;
+      if (brokenIce && brokenIce.has(key)) continue; // shattered cell -> leave the hole
+      roundRect(ctx, cx + 0.5, y, cw - 1, h, 3);
+      ctx.fillStyle = 'rgba(173, 230, 255, .9)'; ctx.fill();
+      ctx.strokeStyle = '#7fc6ef'; ctx.lineWidth = 2; ctx.stroke();
+      ctx.fillStyle = 'rgba(255,255,255,.55)';
+      roundRect(ctx, cx + 2, y + 2, cw - 4, 4, 2); ctx.fill();
+      ctx.fillStyle = 'rgba(96,160,205,.35)';
+      ctx.fillRect(cx + 1, y + h - 4, cw - 2, 3);
     }
   }
 
@@ -385,11 +480,11 @@ export class Renderer {
     ctx.save();
     // glow
     const c = it.kind === ItemKind.FIRE ? '#ff7a3c' : it.kind === ItemKind.HEAL ? '#ff5a7a' : '#5ad1ff';
-    ctx.shadowColor = c; ctx.shadowBlur = 14;
+    ctx.shadowColor = c; ctx.shadowBlur = 22;
     ctx.fillStyle = 'rgba(255,255,255,.92)';
-    circle(ctx, x, y, 13); ctx.fill();
+    circle(ctx, x, y, 22); ctx.fill();
     ctx.shadowBlur = 0;
-    ctx.font = '16px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.font = '26px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     const icon = it.kind === ItemKind.FIRE ? '🔥' : it.kind === ItemKind.HEAL ? '❤️' : '🦅';
     ctx.fillText(icon, x, y + 1);
     ctx.restore();
@@ -401,7 +496,7 @@ export class Renderer {
     const wob = Math.sin(ph) * 2;
     ctx.save();
     ctx.translate(x, y);
-    ctx.scale(m.f || 1, 1);
+    ctx.scale((m.f || 1) * MON_SCALE, MON_SCALE);
     const caster = m.kind === 'caster';
     const body = caster ? '#b58bff' : '#dff1ff';
     const dark = caster ? '#7d54d6' : '#9cc4dd';
@@ -430,21 +525,21 @@ export class Renderer {
     }
     ctx.restore();
     // hp bar
-    if (m.hp != null) this._bar(ctx, x - 14, y - 36, 28, 4, m.hp / 40, '#ff6b6b');
+    if (m.hp != null) this._bar(ctx, x - 22, y - 58, 44, 6, m.hp / 40, '#ff6b6b');
   }
 
   _proj(ctx, pr) {
     ctx.save();
     if (pr.kind === 'fire') {
-      ctx.shadowColor = '#ff7a2c'; ctx.shadowBlur = 14;
-      ctx.fillStyle = '#ffb24a'; circle(ctx, pr.x, pr.y, 7); ctx.fill();
-      ctx.fillStyle = '#ff6a2c'; circle(ctx, pr.x, pr.y, 4); ctx.fill();
+      ctx.shadowColor = '#ff7a2c'; ctx.shadowBlur = 22;
+      ctx.fillStyle = '#ffb24a'; circle(ctx, pr.x, pr.y, 11); ctx.fill();
+      ctx.fillStyle = '#ff6a2c'; circle(ctx, pr.x, pr.y, 6); ctx.fill();
     } else {
-      ctx.shadowColor = '#7fe3ff'; ctx.shadowBlur = 12;
+      ctx.shadowColor = '#7fe3ff'; ctx.shadowBlur = 18;
       ctx.fillStyle = '#d7f6ff';
       ctx.translate(pr.x, pr.y);
       ctx.beginPath();
-      ctx.moveTo(0, -7); ctx.lineTo(5, 0); ctx.lineTo(0, 7); ctx.lineTo(-5, 0);
+      ctx.moveTo(0, -11); ctx.lineTo(8, 0); ctx.lineTo(0, 11); ctx.lineTo(-8, 0);
       ctx.closePath(); ctx.fill();
     }
     ctx.restore();
@@ -453,11 +548,11 @@ export class Renderer {
   _icicle(ctx, ic) {
     ctx.save();
     ctx.fillStyle = 'rgba(220, 248, 255, .92)';
-    ctx.strokeStyle = '#9fdcff'; ctx.lineWidth = 1.4;
+    ctx.strokeStyle = '#9fdcff'; ctx.lineWidth = 2.2;
     ctx.beginPath();
-    ctx.moveTo(ic.x - 6, ic.y - 10);
-    ctx.lineTo(ic.x + 6, ic.y - 10);
-    ctx.lineTo(ic.x, ic.y + 12);
+    ctx.moveTo(ic.x - 10, ic.y - 16);
+    ctx.lineTo(ic.x + 10, ic.y - 16);
+    ctx.lineTo(ic.x, ic.y + 19);
     ctx.closePath();
     ctx.fill(); ctx.stroke();
     ctx.restore();
@@ -466,6 +561,24 @@ export class Renderer {
   // ----- players ------------------------------------------------------------
   _player(ctx, e, look, name, dt, isLocal) {
     const feetY = e.y + PLAYER_H / 2;
+
+    // ---- 死亡倒地：单独绘制，后续不再画血�?buff ----
+    if (e.dead > 0) {
+      ctx.save();
+      ctx.translate(e.x, feetY);
+      ctx.scale(e.f || 1, 1);
+      drawDeadClimber(ctx, look || {}, this.t, e.dead > 1 ? 1 : e.dead, CHAR_SCALE);
+      ctx.restore();
+      // 名字仍显示，标记 KO
+      const topY = feetY - 56 * CHAR_SCALE - 14;
+      ctx.font = '700 12px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+      ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(80,0,0,.85)';
+      ctx.strokeText((name || '') + '  KO', e.x, topY);
+      ctx.fillStyle = '#ff5a5a';
+      ctx.fillText((name || '') + '  KO', e.x, topY);
+      return;
+    }
+
     const moving = Math.abs(e.vx || 0) > 22;
     let anim = 'idle';
     if (e.res || e.lift) anim = 'idle';
@@ -485,7 +598,7 @@ export class Renderer {
       attack: e.atk ? 1 : 0,
       frozen: !!e.stun,
       blink: anim === 'idle' && Math.sin(this.t * 1.7 + hash(e.id)) > 0.985,
-    }, 0.96);
+    }, CHAR_SCALE * 0.96);
     ctx.restore();
 
     // floating rescue ring
@@ -495,36 +608,48 @@ export class Renderer {
     }
 
     // name + hp + buff chips
-    const topY = feetY - PLAYER_H - 16;
-    ctx.font = '700 11px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-    ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(20,40,60,.85)';
+    const topY = feetY - 56 * CHAR_SCALE - 14;
+    ctx.font = '700 18px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+    ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(20,40,60,.85)';
     ctx.strokeText(name || '', e.x, topY);
     ctx.fillStyle = isLocal ? '#fff7c8' : '#fff';
     ctx.fillText(name || '', e.x, topY);
-    if (e.hp != null && !e.res) this._bar(ctx, e.x - 16, topY + 2, 32, 4, e.hp / 100, '#56d06f');
+    if (e.hp != null && !e.res) this._bar(ctx, e.x - 28, topY + 4, 56, 7, e.hp / 100, '#56d06f');
 
+    if (e.chat) this._chatBubble(ctx, e.x, topY - 6, e.chat);
     let bx = e.x + 18;
-    if (e.fb) { ctx.font = '12px system-ui'; ctx.textAlign = 'left'; ctx.fillText('🔥', bx, topY + 2); bx += 14; }
-    if (e.jb) { ctx.font = '12px system-ui'; ctx.textAlign = 'left'; ctx.fillText('🟢', bx, topY + 2); }
+    if (e.fb) { ctx.font = '20px system-ui'; ctx.textAlign = 'left'; ctx.fillText('🔥', bx, topY + 4); bx += 24; }
+    if (e.jb) { ctx.font = '20px system-ui'; ctx.textAlign = 'left'; ctx.fillText('🟢', bx, topY + 4); }
   }
 
   _plane(ctx, plane, local) {
     const x = plane.x, y = plane.y;
-    // pickup glow zone
+    const knotY = y + ROPE_KNOT_OFFSET;
+    const zoneTop = y + RESCUE_ZONE_TOP_OFFSET, zoneH = RESCUE_ZONE_BOTTOM_OFFSET - RESCUE_ZONE_TOP_OFFSET;
+    const zx = x - PICKUP_W / 2, zy = zoneTop;
+    // pickup glow zone (the rope's grab reach) �� travels with the plane
     ctx.save();
     ctx.setLineDash([6, 5]);
-    ctx.strokeStyle = 'rgba(255, 230, 120, .85)';
-    ctx.lineWidth = 2;
-    const zx = x - PICKUP_W / 2, zy = PLANE_Y + 24;
-    roundRect(ctx, zx, zy, PICKUP_W, PICKUP_H, 8); ctx.stroke();
+    ctx.strokeStyle = 'rgba(255, 230, 120, .9)';
+    ctx.lineWidth = 2.5;
+    roundRect(ctx, zx, zy, PICKUP_W, zoneH, 10); ctx.stroke();
     ctx.setLineDash([]);
-    ctx.fillStyle = 'rgba(255, 230, 120, .12)';
+    ctx.fillStyle = 'rgba(255, 230, 120, .14)';
     ctx.fill();
-    // rope
-    ctx.strokeStyle = '#caa15f'; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.moveTo(x, y + 12); ctx.lineTo(x, zy + PICKUP_H - 6); ctx.stroke();
-    ctx.fillStyle = '#caa15f';
-    for (let ry = y + 18; ry < zy + PICKUP_H; ry += 10) { ctx.fillRect(x - 5, ry, 10, 2); }
+    ctx.restore();
+
+    // rope hanging from the plane belly down to the knot handle
+    ctx.save();
+    ctx.strokeStyle = '#caa15f'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(x, y + 20); ctx.lineTo(x, knotY); ctx.stroke();
+    // braided rungs so the rope reads clearly at a distance
+    ctx.fillStyle = '#a07f43';
+    for (let ry = y + 26; ry < knotY - 6; ry += 14) { ctx.fillRect(x - 9, ry, 18, 4); }
+    // rope-end knot / handle the climber grabs
+    ctx.fillStyle = '#8a6a32'; ctx.strokeStyle = '#5c4720'; ctx.lineWidth = 2;
+    circle(ctx, x, knotY, 9); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#d9b36a';
+    circle(ctx, x, knotY - 2, 3.5); ctx.fill();
     ctx.restore();
 
     // plane body (cartoon rescue plane)
@@ -532,29 +657,31 @@ export class Renderer {
     ctx.translate(x, y);
     ctx.scale(plane.dir >= 0 ? 1 : -1, 1);
     ctx.fillStyle = '#e8503f'; ctx.strokeStyle = '#b5392c'; ctx.lineWidth = 2;
-    roundRect(ctx, -34, -14, 68, 24, 12); ctx.fill(); ctx.stroke();
+    roundRect(ctx, -56, -23, 113, 40, 20); ctx.fill(); ctx.stroke();
     // tail
-    ctx.beginPath(); ctx.moveTo(-30, -10); ctx.lineTo(-46, -22); ctx.lineTo(-30, -2); ctx.closePath();
+    ctx.beginPath(); ctx.moveTo(-50, -17); ctx.lineTo(-77, -37); ctx.lineTo(-50, -3); ctx.closePath();
     ctx.fillStyle = '#e8503f'; ctx.fill(); ctx.stroke();
     // window
     ctx.fillStyle = '#bfe9ff'; ctx.strokeStyle = '#5fa9d6';
-    circle(ctx, 14, -3, 7); ctx.fill(); ctx.stroke();
+    circle(ctx, 23, -5, 12); ctx.fill(); ctx.stroke();
     // wing
-    ctx.fillStyle = '#cf4334'; roundRect(ctx, -6, 6, 26, 7, 3); ctx.fill();
+    ctx.fillStyle = '#cf4334'; roundRect(ctx, -10, 10, 43, 12, 5); ctx.fill();
     // propeller
     ctx.strokeStyle = '#33414f'; ctx.lineWidth = 3;
     const pa = this.t * 30;
     ctx.beginPath();
-    ctx.moveTo(34, -10 + Math.sin(pa) * 8); ctx.lineTo(34, 6 - Math.sin(pa) * 8); ctx.stroke();
+    ctx.moveTo(57, -17 + Math.sin(pa) * 13); ctx.lineTo(57, 10 - Math.sin(pa) * 13); ctx.stroke();
     ctx.restore();
 
     // hint arrow if local is at the top
     if (local && local.y < floorTopY(FLOOR_COUNT - 2)) {
       ctx.save();
-      ctx.fillStyle = 'rgba(255,255,255,.9)';
-      ctx.font = '700 13px system-ui'; ctx.textAlign = 'center';
-      const ay = zy + PICKUP_H + 18 + Math.sin(this.t * 5) * 3;
-      ctx.fillText('↑ 跳进飞机逃生', x, ay);
+      ctx.fillStyle = 'rgba(255,255,255,.92)';
+      ctx.strokeStyle = 'rgba(20,40,60,.6)'; ctx.lineWidth = 3;
+      ctx.font = '700 22px system-ui'; ctx.textAlign = 'center';
+      const ay = y + ROPE_KNOT_OFFSET + 30 + Math.sin(this.t * 5) * 4;
+      const msg = '�� ����ץס���ӣ�';
+      ctx.strokeText(msg, x, ay); ctx.fillText(msg, x, ay);
       ctx.restore();
     }
   }
@@ -584,11 +711,38 @@ export class Renderer {
       } else if (p.kind === 'shard') {
         ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.rot || 0);
         ctx.fillStyle = p.color; ctx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size); ctx.restore();
+      } else if (p.kind === 'ring') {
+        const rr = p.r + (p.maxLife - p.life) * p.vr;
+        ctx.strokeStyle = p.color; ctx.lineWidth = 3 * a;
+        circle(ctx, p.x, p.y, rr); ctx.stroke();
       } else {
         ctx.fillStyle = p.color; circle(ctx, p.x, p.y, p.size); ctx.fill();
       }
     }
     ctx.globalAlpha = 1;
+  }
+
+  // Speech bubble drawn above a player's nameplate while a chat message is
+  // active (driven by the chat field that the server snapshots).
+  _chatBubble(ctx, x, topY, text) {
+    const t = String(text).slice(0, 18);
+    ctx.save();
+    ctx.font = '700 14px system-ui';
+    const w = Math.min(ctx.measureText(t).width + 22, 220);
+    const h = 24;
+    const by = topY - h - 2;
+    ctx.fillStyle = 'rgba(255,255,255,.95)';
+    ctx.strokeStyle = 'rgba(0,0,0,.18)';
+    ctx.lineWidth = 1;
+    roundRect(ctx, x - w / 2, by, w, h, 12);
+    ctx.fill(); ctx.stroke();
+    // little tail
+    ctx.beginPath();
+    ctx.moveTo(x - 6, by + h); ctx.lineTo(x + 6, by + h); ctx.lineTo(x, by + h + 7); ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = '#1a2140'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(t, x, by + h / 2 + 0.5);
+    ctx.restore();
   }
 }
 
@@ -598,6 +752,10 @@ function shard(x, y, color) {
   return { kind: 'shard', x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 40, gravity: 420,
     rot: Math.random() * 6, spin: Math.random() * 8 - 4, size: 3 + Math.random() * 3,
     color, life: 0.6 + Math.random() * 0.3, maxLife: 0.9 };
+}
+function ring(x, y, color) {
+  return { kind: 'ring', x, y, r: 4, vr: 320, color,
+    life: 0.45, maxLife: 0.45 };
 }
 function spark(x, y, color) {
   const a = Math.random() * Math.PI * 2; const s = 40 + Math.random() * 110;

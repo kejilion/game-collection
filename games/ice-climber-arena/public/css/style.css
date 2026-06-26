@@ -139,12 +139,80 @@ html, body {
 .board-note { margin: 10px 2px 0; font-size: 11px; color: #93a7b8; }
 
 /* ================================ GAME ================================== */
+/* Full-viewport backdrop. On screens that aren't exactly 16:9 the leftover
+   space shows here as letterbox bars instead of distorting the game. */
 .stage {
-  position: relative; aspect-ratio: 960 / 600;
-  width: min(960px, 100vw, calc(100vh * 1.6)); height: auto;
-  border-radius: 14px; overflow: hidden; box-shadow: var(--shadow);
+  position: fixed; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  overflow: hidden;
+  background: radial-gradient(130% 130% at 50% 25%, #0e1838 0%, #070a1c 100%);
 }
-#view { display: block; width: 100%; height: 100%; image-rendering: auto; background: #bfe3ff; }
+/* The 16:9 play frame. JS sets its exact pixel size to the largest 16:9 box
+   that fits the viewport; canvas and UI both fill it, so they scale uniformly
+   and never stretch. (1600×900 here is just a pre-fit placeholder.) */
+.frame {
+  position: relative;
+  width: 1600px; height: 900px;
+  overflow: hidden;
+  box-shadow: 0 12px 48px rgba(0, 0, 0, .5);
+}
+#view {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  display: block; background: #bfe3ff;
+}
+/* HUD/overlay layer authored in the same 1600×900 logical space as the canvas
+   and scaled by the identical factor, so the whole interface tracks the art. */
+.ui {
+  position: absolute; top: 0; left: 0;
+  width: 1600px; height: 900px;
+  transform-origin: top left;
+  transform: scale(var(--ui-scale, 1));
+  pointer-events: none;
+}
+
+/* ---------------------------- touch controls ---------------------------- */
+/* Live in VIEWPORT space (not the scaled .ui layer) so thumb targets keep a
+   physical, finger-friendly size on any screen.  Shown only on touch devices. */
+#touch-controls, #rotate-hint { display: none; }
+.stage { touch-action: none; }            /* no scroll/zoom gestures on play area */
+body.is-touch .hud-bc { display: none; }  /* hide the keyboard hint on touch */
+
+body.is-touch #touch-controls {
+  display: block; position: absolute; inset: 0; z-index: 20;
+  pointer-events: none; touch-action: none;
+}
+.tc-cluster {
+  position: absolute;
+  bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+  display: flex; gap: 18px; align-items: flex-end;
+}
+.tc-left  { left:  calc(18px + env(safe-area-inset-left, 0px)); }
+.tc-right { right: calc(18px + env(safe-area-inset-right, 0px)); }
+.tc-btn {
+  pointer-events: auto; touch-action: none; -webkit-tap-highlight-color: transparent;
+  width: 68px; height: 68px; border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, .55);
+  background: rgba(20, 45, 70, .42); backdrop-filter: blur(3px);
+  color: #fff; font-size: 26px; line-height: 1; font-weight: 800;
+  display: grid; place-items: center; user-select: none; cursor: pointer;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, .3);
+  transition: transform .06s ease, background .06s ease;
+}
+.tc-btn.pressed { background: rgba(46, 155, 230, .8); transform: scale(.9); }
+.tc-jump   { width: 80px; height: 80px; font-size: 30px; background: rgba(46, 155, 230, .5); }
+.tc-attack { background: rgba(231, 76, 60, .5); font-size: 27px; }
+
+/* portrait nudge — covers everything and asks the player to rotate */
+body.is-touch #rotate-hint.show {
+  display: grid; place-items: center; position: absolute; inset: 0; z-index: 40;
+  background: radial-gradient(130% 130% at 50% 30%, #0e1838, #06091a);
+  color: #eaf6ff; text-align: center; pointer-events: auto;
+}
+.rotate-inner .rotate-icon { font-size: 64px; animation: rotateNudge 1.7s ease-in-out infinite; }
+.rotate-inner p { font-size: 24px; font-weight: 800; margin: 14px 0 4px; color: #fff; }
+.rotate-inner span { font-size: 14px; color: #9fc4dd; }
+@keyframes rotateNudge { 0%, 100% { transform: rotate(-15deg); } 50% { transform: rotate(15deg); } }
 
 .hud { position: absolute; inset: 0; pointer-events: none; font-weight: 700; }
 .hud > div { position: absolute; }
@@ -240,3 +308,108 @@ html, body {
 }
 .conn-status.ok { background: rgba(40, 150, 90, .6); }
 .conn-status.bad { background: rgba(190, 50, 50, .7); }
+
+
+/* ===== 个人死亡横幅 ===== */
+.death-banner { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; }
+.death-inner {
+  text-align: center;
+  animation: deathPop .4s cubic-bezier(.2,1.2,.4,1), deathPulse 1s ease-in-out .4s infinite alternate;
+  background: rgba(40, 0, 8, .86);
+  padding: 20px 36px; border-radius: 20px;
+  box-shadow: 0 8px 40px rgba(180, 20, 20, .45);
+  border: 2px solid rgba(255, 90, 90, .55);
+}
+.death-inner h2 { margin: 4px 0; color: #ff5a5a; font-size: 34px; letter-spacing: 2px; }
+.death-emoji { font-size: 56px; filter: drop-shadow(0 2px 6px rgba(0,0,0,.5)); animation: deathShake .5s ease-in-out infinite alternate; }
+#death-reason { margin: 2px 0; color: #ffd0d0; font-weight: 700; font-size: 16px; }
+.death-tip { margin: 6px 0 0; color: #ffb0b0; font-size: 13px; opacity: .85; }
+@keyframes deathPop { from { transform: scale(.5) rotate(-6deg); opacity: 0 } to { transform: scale(1) rotate(0); opacity: 1 } }
+@keyframes deathPulse { from { transform: scale(1) } to { transform: scale(1.04) } }
+@keyframes deathShake { from { transform: rotate(-8deg) } to { transform: rotate(8deg) } }
+
+
+/* ===== 本局结束倒数大字 ===== */
+.countdown-big {
+  position: absolute; inset: 0; display: grid; place-items: center;
+  pointer-events: none; z-index: 60;
+}
+.countdown-big.hidden { display: none; }
+.countdown-big span {
+  font-size: 220px; font-weight: 900; line-height: 1;
+  color: #fff; text-shadow: 0 0 24px rgba(90,209,255,.9), 0 8px 0 rgba(0,0,0,.35);
+  animation: cdPop .9s cubic-bezier(.2,1.4,.4,1);
+}
+@keyframes cdPop {
+  0%   { transform: scale(.2); opacity: 0; }
+  30%  { transform: scale(1.15); opacity: 1; }
+  70%  { transform: scale(1); opacity: 1; }
+  100% { transform: scale(.85); opacity: 0; }
+}
+
+/* ===== 新一局开始 banner ===== */
+.round-start-banner {
+  position: absolute; inset: 0; display: grid; place-items: center;
+  pointer-events: none; z-index: 55;
+}
+.round-start-banner.hidden { display: none; }
+.rs-inner {
+  text-align: center;
+  background: rgba(20,45,70,.86);
+  padding: 22px 48px; border-radius: 22px;
+  box-shadow: 0 10px 50px rgba(0,0,0,.5);
+  border: 2px solid rgba(90,209,255,.6);
+  animation: rsIn .45s cubic-bezier(.2,1.4,.4,1), rsOut .4s ease 2.1s forwards;
+}
+.rs-inner h2 { margin: 6px 0; color: #8fe3ff; font-size: 34px; letter-spacing: 1px; }
+.rs-emoji { font-size: 54px; }
+.rs-inner p { margin: 2px 0 0; color: #cfe8ff; font-weight: 700; font-size: 15px; }
+@keyframes rsIn  { from { transform: scale(.6) translateY(10px); opacity: 0; } }
+@keyframes rsOut { to { transform: scale(1.05); opacity: 0; } }
+
+
+
+/* ---------------------------- chat panel ---------------------------- */
+.panel-chat {
+  position: absolute;
+  bottom: 18px; left: 18px;
+  width: 360px;
+  display: flex; flex-direction: column; gap: 6px;
+  pointer-events: auto;
+}
+.chat-log {
+  max-height: 168px; overflow: auto;
+  display: flex; flex-direction: column; gap: 4px;
+}
+.chat-log .line {
+  font-size: 15px; line-height: 1.3;
+  padding: 5px 11px; border-radius: 10px;
+  background: rgba(10,14,34,.6);
+  width: fit-content; max-width: 100%;
+  word-break: break-word; color: #e8efff;
+}
+.chat-log .line .who { font-weight: 800; }
+.chat-log .line.sys { color: #9fb0d8; font-style: italic; }
+.chat-log::-webkit-scrollbar { width: 4px; }
+.chat-log::-webkit-scrollbar-thumb { background: rgba(255,255,255,.25); border-radius: 2px; }
+.chat-form input {
+  width: 100%; padding: 10px 16px;
+  font-size: 15px; border-radius: 12px;
+  border: 1px solid rgba(255,255,255,.18);
+  background: rgba(10,14,34,.55); color: #fff;
+  opacity: .82;
+}
+.chat-form input:focus { opacity: 1; border-color: #5bc8ff; outline: none; }
+.chat-form input::placeholder { color: #9fb0d8; }
+
+/* mobile chat: tapping the 💬 button reveals a centered input */
+body.is-touch .panel-chat { display: none; }
+body.chat-open .panel-chat {
+  display: block; left: 50%; right: auto;
+  bottom: 42%; transform: translateX(-50%);
+  width: min(86vw, 480px); z-index: 40;
+}
+body.chat-open .chat-log { display: none; }
+body.chat-open .chat-form input { opacity: 1; font-size: 18px; padding: 14px 16px; }
+
+.tc-chat { grid-column: 1 / -1; }
