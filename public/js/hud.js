@@ -86,11 +86,11 @@ const HUD = (() => {
     selfCls = clsId; selfLevel = level;
     const cls = CLASSES[clsId];
     if (clsChanged) for (const k in cd) delete cd[k];   // only reset cooldowns when the class actually changes
-    let html = `<div class="skill attack" data-k="A"><span class="key">A</span><span class="ic">⚔</span><span class="nm">攻击</span></div>`;
+    let html = `<div class="skill attack" data-k="A"><span class="key">A</span><span class="ic">${skillIcon('attack')}</span><span class="nm">攻击</span></div>`;
     for (let i = 0; i < 5; i++) {
       const sk = cls.skills[i];
       if (!sk) {                                         // empty slot reserved for a future skill
-        html += `<div class="skill locked"><span class="key">${i + 1}</span><span class="ic">🔒</span><span class="nm">待解锁</span></div>`;
+        html += `<div class="skill locked"><span class="key">${i + 1}</span><span class="ic">${skillIcon('lock')}</span><span class="nm">待解锁</span></div>`;
       } else if (level < (sk.reqLevel || 1)) {           // exists but not yet unlocked — show the requirement
         html += `<div class="skill locked" data-k="${i}"><span class="key">${i + 1}</span><span class="ic">${skillIcon(sk.id)}</span><span class="nm">Lv.${sk.reqLevel}</span></div>`;
       } else {
@@ -99,7 +99,119 @@ const HUD = (() => {
     }
     $.skillbar.innerHTML = html;
   }
-  function skillIcon(idv) { return ({ whirlwind: '🌀', fireball: '🔥', shadowstrike: '💨', warcry: '🛡', frostnova: '❄', shadowveil: '🌫' })[idv] || '✦'; }
+
+  // -------------------------------------------------------------------------
+  //  Skill icon set — hand-tuned SVGs in a 24×24 viewBox.
+  //  Visual rules (kept consistent across the whole set):
+  //    • stroke-width 1.6, round caps & joins → uniform hand-drawn feel
+  //    • 2-color fill or stroke per glyph (foreground + 1 accent)
+  //    • each icon is centered, roughly the same visual mass
+  //    • icon "kind" chooses the palette to match the skill's class color,
+  //      so the warrior / mage / assassin skill reads correctly at a glance
+  // -------------------------------------------------------------------------
+  const ICON_PALETTE = {
+    attack:      { fg: '#ffe28a', ac: '#ffce54', glow: '#ffce54' },   // golden blade
+    warrior:     { fg: '#ffd0cb', ac: '#ef5b52', glow: '#ef5b52' },   // crimson
+    mage:        { fg: '#cfe0ff', ac: '#5b8cff', glow: '#5b8cff' },   // arcane blue
+    assassin:    { fg: '#e6d4ff', ac: '#a368ff', glow: '#a368ff' },   // shadow purple
+    fireball:    { fg: '#ffd23f', ac: '#ff7a3d', glow: '#ff7a3d' },   // molten orange
+    frostnova:   { fg: '#eaf6ff', ac: '#5b8cff', glow: '#7fd8ff' },   // glacial
+    shadowveil:  { fg: '#cdb5ff', ac: '#5a3aa8', glow: '#a368ff' },   // dark violet
+    lock:        { fg: '#9fb0d8', ac: '#5b6a8a', glow: 'none'    },   // neutral
+  };
+  function paletteFor(idv) { return ICON_PALETTE[idv] || ICON_PALETTE.warrior; }
+
+  // shared SVG opening — same viewBox / stroke contract for every icon
+  const SVG_OPEN = '<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" ' +
+    'fill="none" stroke="currentColor" stroke-width="1.6" ' +
+    'stroke-linecap="round" stroke-linejoin="round">';
+  // each renderer is given the palette + a fresh <g> with currentColor resolved
+  function svgWrap(p, body) {
+    return SVG_OPEN + body + '</svg>';
+  }
+
+  // ---- the icons themselves ------------------------------------------------
+  // Every icon returns raw inner SVG markup. The outer wrapper above fixes
+  // viewBox + stroke style. Palettes are applied through CSS `color` on the
+  // host — see .skill[data-icon="..."] rules in style.css.
+  const ICON_BODY = {
+    // 攻击 — diagonal sword, gold + warm core
+    attack:
+      '<path d="M14.5 3.5l6 6-2 2-6-6 2-2z" fill="currentColor" fill-opacity=".18"/>' +
+      '<path d="M14.5 3.5l6 6-2 2-6-6 2-2z"/>' +
+      '<path d="M12 9l-8 8 3 1 1 3 8-8"/>' +
+      '<circle cx="5.5" cy="20.5" r="1" fill="currentColor"/>',
+
+    // 旋风斩 — spinning crescent blades around a center
+    whirlwind:
+      '<path d="M12 3a9 9 0 0 1 8.5 6" fill="currentColor" fill-opacity=".18"/>' +
+      '<path d="M20.5 9a9 9 0 0 1-3 9.5"/>' +
+      '<path d="M3.5 15a9 9 0 0 1 3-9.5"/>' +
+      '<path d="M12 3a9 9 0 0 1 8.5 6M3.5 15a9 9 0 0 0 14 3.5"/>' +
+      '<path d="M2 12l2-1 1 2M22 12l-2-1-1 2"/>' +
+      '<circle cx="12" cy="12" r="1.4" fill="currentColor"/>',
+
+    // 铁壁战吼 — shield with a stamped roar/guard mark
+    warcry:
+      '<path d="M12 2.5l8 2.5v7c0 5-3.4 8.6-8 10-4.6-1.4-8-5-8-10V5l8-2.5z" ' +
+        'fill="currentColor" fill-opacity=".18"/>' +
+      '<path d="M12 2.5l8 2.5v7c0 5-3.4 8.6-8 10-4.6-1.4-8-5-8-10V5l8-2.5z"/>' +
+      '<path d="M9 9l1.5 4 1.5-2 1.5 2 1.5-4"/>' +
+      '<path d="M9 14h6"/>',
+
+    // 火球术 — round flame with twin tongues and an inner core
+    fireball:
+      '<path d="M12 3c1.5 2 1 4-1 5 2-1 4 0 4.5 2 .4 1.6-.5 3-1.5 3.4 ' +
+        '2.5 1 5.5-.5 6.5-3 1-2.7-1-5.5-3-7 0 2-1 2-2 2 0-1.5-1-2.5-2-2.5 ' +
+        '2 0 1-2 0-2.5C11 4 12 3.5 12 3z" fill="currentColor" fill-opacity=".28"/>' +
+      '<path d="M12 3c1.5 2 1 4-1 5 2-1 4 0 4.5 2 .4 1.6-.5 3-1.5 3.4 ' +
+        '2.5 1 5.5-.5 6.5-3 1-2.7-1-5.5-3-7 0 2-1 2-2 2 0-1.5-1-2.5-2-2.5 ' +
+        '2 0 1-2 0-2.5C11 4 12 3.5 12 3z"/>' +
+      '<circle cx="13.5" cy="13" r="2" fill="currentColor"/>',
+
+    // 霜雪新星 — six-pointed snowflake
+    frostnova:
+      '<path d="M12 2v20M3.3 7l17.4 10M3.3 17L20.7 7" fill="currentColor" fill-opacity=".1"/>' +
+      '<path d="M12 2v20M3.3 7l17.4 10M3.3 17L20.7 7"/>' +
+      '<path d="M12 5l-2-2M12 5l2-2M12 19l-2 2M12 19l2 2"/>' +
+      '<path d="M5.5 8.5L4 7.5M5.5 8.5L5 6.8M18.5 8.5L20 7.5M18.5 8.5L19 6.8"/>' +
+      '<path d="M5.5 15.5L4 16.5M5.5 15.5L5 17.2M18.5 15.5L20 16.5M18.5 15.5L19 17.2"/>' +
+      '<circle cx="12" cy="12" r="1.4" fill="currentColor"/>',
+
+    // 影袭 — forward-darting dagger with a speed-streak trail
+    shadowstrike:
+      '<path d="M5 19l3-1 1-3 7-7 3 3-7 7-3 1-1 3-3-3z" fill="currentColor" fill-opacity=".22"/>' +
+      '<path d="M5 19l3-1 1-3 7-7 3 3-7 7-3 1-1 3-3-3z"/>' +
+      '<path d="M16 8l3 3"/>' +
+      '<path d="M2 12l3-1M2 15l4-1M2 18l5-1" />',
+
+    // 影遁 — hooded silhouette with a curling smoke trail
+    shadowveil:
+      '<path d="M6 21c1-3 0-5 0-7 0-3 2.7-6 6-6s6 3 6 6c0 2-1 4 0 7-1.5-1-2.5-1-3-3 ' +
+        '-1 2-2 3-3 3-1 0-2-1-3-3-.5 2-1.5 2-3 3z" fill="currentColor" fill-opacity=".22"/>' +
+      '<path d="M6 21c1-3 0-5 0-7 0-3 2.7-6 6-6s6 3 6 6c0 2-1 4 0 7-1.5-1-2.5-1-3-3 ' +
+        '-1 2-2 3-3 3-1 0-2-1-3-3-.5 2-1.5 2-3 3z"/>' +
+      '<circle cx="9.5" cy="11" r=".9" fill="currentColor"/>' +
+      '<circle cx="14.5" cy="11" r=".9" fill="currentColor"/>' +
+      '<path d="M9 22c.5-1.5 1.5-2 3-2s2.5.5 3 2" />' +
+      '<path d="M19 5c.5 1 0 2-1 2.5M21 9c0 1-.7 1.6-1.5 1.8" />',
+
+    // 锁 — used for "待解锁" placeholder + locked-slot fallback
+    lock:
+      '<rect x="5" y="11" width="14" height="9" rx="2" fill="currentColor" fill-opacity=".18"/>' +
+      '<rect x="5" y="11" width="14" height="9" rx="2"/>' +
+      '<path d="M8 11V8a4 4 0 0 1 8 0v3"/>' +
+      '<circle cx="12" cy="15.5" r="1.2" fill="currentColor"/>' +
+      '<path d="M12 16.7v1.8"/>',
+  };
+
+  // ICON body → map some skill ids onto the same artwork so the palette
+  // switches even when two skills share a glyph family.
+  function skillIcon(idv) {
+    const body = ICON_BODY[idv] || ICON_BODY.attack;
+    // `color` is read from the host element's data-icon palette CSS rule
+    return `<span class="ic-inner" data-icon="${idv}">${SVG_OPEN}${body}</svg></span>`;
+  }
 
   function triggerCd(key, total) { cd[key] = { until: performance.now() + total, total }; }
 

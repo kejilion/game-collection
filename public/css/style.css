@@ -233,7 +233,17 @@ button{font-family:inherit;cursor:pointer;border:none;color:inherit}
   .menu-card,.aurora-a,.aurora-b,.aurora-c,.stars,.stars::after,.logo,.class-card.sel::after,.conn-status::before{animation:none!important}
   .menu-card{animation-duration:.01ms!important}
   .play-btn::before{transition:none}
-  #game.game-enter #canvas,#game.game-enter .hud{animation:none!important;opacity:1!important;transform:none!important}
+  #game.game-enter #canvas{animation:none!important}
+  /* Only kill the entrance transform on HUDs that don't rely on it for
+     horizontal centering. Bars that use `left:50% + translateX(-50%)` keep
+     their translate so the spectator bar / skillbar / toast wrap stay put. */
+  #game.game-enter .hud{animation:none!important;opacity:1!important}
+  #game.game-enter .panel-player,
+  #game.game-enter .panel-right,
+  #game.game-enter .minimap,
+  #game.game-enter .day-night-status,
+  #game.game-enter .panel-chat,
+  #game.game-enter .mobile-btns{transform:none!important}
 }
 /* ============================ GAME ============================ */
 #game{background:#0a0f24}
@@ -276,6 +286,9 @@ button{font-family:inherit;cursor:pointer;border:none;color:inherit}
 #game.game-enter .day-night-status{animation-name:ddnIn}
 #game.game-enter .skillbar{animation-name:skbIn}
 #game.game-enter .toast-wrap{animation-name:twIn}
+#game.game-enter .spectator-bar{animation-name:sbIn}
+#game.game-enter .spec-toolbar{animation-name:sbIn}
+#game.game-enter .conn-status{animation-name:sbIn}
 @keyframes ddnIn{
   from{opacity:0;transform:translate(-50%,14px) scale(.985)}
   to{opacity:1;transform:translate(-50%,0) scale(1)}
@@ -286,6 +299,10 @@ button{font-family:inherit;cursor:pointer;border:none;color:inherit}
 }
 @keyframes twIn{
   from{opacity:0;transform:translate(-50%,14px) scale(.985)}
+  to{opacity:1;transform:translate(-50%,0) scale(1)}
+}
+@keyframes sbIn{
+  from{opacity:0;transform:translate(-50%,-6px) scale(.985)}
   to{opacity:1;transform:translate(-50%,0) scale(1)}
 }
 
@@ -372,7 +389,18 @@ body.chat-open .chat-form input{opacity:1;font-size:16px;padding:12px 14px}
 .skill{position:relative;width:56px;height:56px;padding:0;border-radius:14px;background:var(--panel-solid);
   border:2px solid var(--line);display:grid;place-items:center;box-shadow:0 6px 18px rgba(0,0,0,.4);overflow:hidden;
   appearance:none;-webkit-appearance:none}
-.skill .ic{font-size:24px;z-index:2}
+.skill .ic{font-size:24px;z-index:2;width:34px;height:34px;display:grid;place-items:center}
+.skill .ic .ic-inner{display:inline-grid;width:100%;height:100%;place-items:center;color:var(--ic-fg,#cfe0ff);filter:drop-shadow(0 0 4px var(--ic-glow,transparent))}
+.skill .ic svg{width:100%;height:100%;display:block}
+/* per-icon palette — drive currentColor + glow from data-icon */
+.skill .ic [data-icon="attack"]      {--ic-fg:#ffe28a;--ic-glow:rgba(255,206,84,.55)}
+.skill .ic [data-icon="whirlwind"]   {--ic-fg:#ffd0cb;--ic-glow:rgba(239,91,82,.55)}
+.skill .ic [data-icon="warcry"]      {--ic-fg:#ffd0cb;--ic-glow:rgba(239,91,82,.45)}
+.skill .ic [data-icon="fireball"]    {--ic-fg:#ffd23f;--ic-glow:rgba(255,122,61,.6)}
+.skill .ic [data-icon="frostnova"]   {--ic-fg:#eaf6ff;--ic-glow:rgba(127,216,255,.6)}
+.skill .ic [data-icon="shadowstrike"]{--ic-fg:#e6d4ff;--ic-glow:rgba(163,104,255,.6)}
+.skill .ic [data-icon="shadowveil"]  {--ic-fg:#cdb5ff;--ic-glow:rgba(90,58,168,.55)}
+.skill .ic [data-icon="lock"]        {--ic-fg:#9fb0d8;--ic-glow:transparent}
 .skill .key{position:absolute;top:2px;left:5px;font-size:11px;font-weight:800;color:var(--dim);z-index:2}
 .skill .nm{position:absolute;bottom:2px;left:0;right:0;text-align:center;font-size:9px;color:#cfe0ff;z-index:2;font-weight:700}
 .skill.attack{border-color:#ffce54}

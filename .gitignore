@@ -7,3 +7,5 @@ data/
 
 # local runtime process id
 .devpid.txt
+# local audio backup directory
+public/audio/sfx/.bak/
