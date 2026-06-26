@@ -55,15 +55,22 @@ const Renderer = (() => {
   function setObstacles(list) { obstacles = list || []; }
 
   // ---- effects spawned from server fx events ------------------------------
+  // Sound hooks. The Audio module lives in audio.js, which loads *after*
+  // render.js, so we go through window.Audio at call time (not at IIFE
+  // init time). play() is a silent no-op until buffers finish decoding, so
+  // SFX missed during the first ~hundred ms are dropped — that's fine for
+  // a 1-shot sfx library of this size.
+  function sfx(name) { const A = window.Audio; if (A) A.play(name); }
+
   function spawnFx(e) {
     switch (e.t) {
       case 'dmg': floaters.push({ x: e.x, y: e.y, v: e.v, crit: e.crit, life: 0.9, vy: -42, dmg: true }); break;
-      case 'swing': slashes.push({ x: e.x, y: e.y, ang: e.ang, range: e.range, arc: e.arc, color: e.color, life: 0.22, max: 0.22 }); break;
-      case 'slash': burst(e.x, e.y, e.color || '#fff', e.crit ? 14 : 8, e.crit ? 3.4 : 2.4); if (e.crit) shake = Math.max(shake, 5); break;
+      case 'swing': slashes.push({ x: e.x, y: e.y, ang: e.ang, range: e.range, arc: e.arc, color: e.color, life: 0.22, max: 0.22 }); sfx('swing'); break;
+      case 'slash': burst(e.x, e.y, e.color || '#fff', e.crit ? 14 : 8, e.crit ? 3.4 : 2.4); if (e.crit) shake = Math.max(shake, 5); sfx('slash'); break;
       case 'hit': burst(e.x, e.y, e.color || '#fff', 7, 2.2); break;
-      case 'cast': for (let i = 0; i < (e.big ? 16 : 8); i++) burst(e.x, e.y, '#7fb0ff', 1, 2); break;
-      case 'explosion': rings.push({ x: e.x, y: e.y, r: 8, max: e.radius, life: 0.45, color: '#ff8a3d', fill: true }); burst(e.x, e.y, '#ffb347', 26, 4); shake = Math.max(shake, 9); break;
-      case 'whirlwind': rings.push({ x: e.x, y: e.y, r: 8, max: e.radius, life: 0.5, color: e.color }); for (let i = 0; i < 22; i++) burst(e.x, e.y, e.color, 1, 4); shake = Math.max(shake, 6); break;
+      case 'cast': for (let i = 0; i < (e.big ? 16 : 8); i++) burst(e.x, e.y, '#7fb0ff', 1, 2); sfx('fireball'); break;
+      case 'explosion': rings.push({ x: e.x, y: e.y, r: 8, max: e.radius, life: 0.45, color: '#ff8a3d', fill: true }); burst(e.x, e.y, '#ffb347', 26, 4); shake = Math.max(shake, 9); sfx('explosion'); break;
+      case 'whirlwind': rings.push({ x: e.x, y: e.y, r: 8, max: e.radius, life: 0.5, color: e.color }); for (let i = 0; i < 22; i++) burst(e.x, e.y, e.color, 1, 4); shake = Math.max(shake, 6); sfx('swing'); break;
       // warrior 铁壁战吼: golden brace ring + a shield bloom + rising green heal motes
       case 'warcry':
         rings.push({ x: e.x, y: e.y, r: 10, max: e.radius, life: 0.5, color: '#ffd766', fill: true });
@@ -117,33 +124,37 @@ const Renderer = (() => {
       case 'bossSpawn':
         for (let k = 0; k < 2; k++) rings.push({ x: e.x, y: e.y, r: 8, max: 120 + k * 70, life: 0.7 + k * 0.15, color: e.color || '#ff6a6a' });
         floaters.push({ x: e.x, y: e.y - 60, v: '☠ ' + (e.name || 'BOSS') + ' 降临', life: 1.6, vy: -18, text: true, color: e.color || '#ff6a6a' });
+        sfx('boss-roar');
         break;
       case 'pickup': {
         for (let i = 0; i < 12; i++) burst(e.x, e.y, e.color, 1, 2.8);
         rings.push({ x: e.x, y: e.y, r: 6, max: 38, life: 0.4, color: e.color });
         const nm = (ITEMS[e.type] || {}).name || '';
         floaters.push({ x: e.x, y: e.y - 26, v: (e.icon ? e.icon + ' ' : '') + nm, life: 1.0, vy: -36, text: true, color: e.color });
+        sfx('pickup');
         break;
       }
-      case 'spawn': rings.push({ x: e.x, y: e.y, r: 4, max: 46, life: 0.5, color: e.color }); break;
+      case 'spawn': rings.push({ x: e.x, y: e.y, r: 4, max: 46, life: 0.5, color: e.color }); sfx('spawn'); break;
       case 'death':
         burst(e.x, e.y, e.color, 36, 5); burst(e.x, e.y, '#ffffff', 10, 3);
         rings.push({ x: e.x, y: e.y, r: 6, max: 72, life: 0.5, color: e.color });
         rings.push({ x: e.x, y: e.y, r: 6, max: 44, life: 0.4, color: '#ffffff' });
         floaters.push({ x: e.x, y: e.y - 28, v: 'K.O.', life: 1.1, vy: -28, text: true, color: '#ffffff' });
         shake = Math.max(shake, 11);
+        sfx('death');
         break;
       case 'bossDeath':
         for (let k = 0; k < 3; k++) rings.push({ x: e.x, y: e.y, r: 8, max: 150 + k * 60, life: 0.6 + k * 0.12, color: k % 2 ? '#ffd23f' : '#ff5a3c', fill: k === 0 });
         burst(e.x, e.y, '#ffb347', 50, 6); burst(e.x, e.y, '#fff2b0', 24, 4);
         floaters.push({ x: e.x, y: e.y - 50, v: 'BOSS 倒下！', life: 1.5, vy: -22, text: true, color: '#ffd23f' });
         shake = Math.max(shake, 22);
+        sfx('boss-death');
         break;
       case 'loot':
         for (let i = 0; i < Math.min(40, (e.count || 1) * 4); i++) burst(e.x, e.y, i % 2 ? '#ffd23f' : '#fff2b0', 1, 4.5);
         break;
       case 'revive': rings.push({ x: e.x, y: e.y, r: 4, max: 50, life: 0.5, color: '#ff7ab8' }); break;
-      case 'levelup': rings.push({ x: e.x, y: e.y, r: 6, max: 60, life: 0.7, color: '#ffd23f' }); floaters.push({ x: e.x, y: e.y - 40, v: 'LEVEL UP!', life: 1.2, vy: -26, text: true, color: '#ffd23f' }); break;
+      case 'levelup': rings.push({ x: e.x, y: e.y, r: 6, max: 60, life: 0.7, color: '#ffd23f' }); floaters.push({ x: e.x, y: e.y - 40, v: 'LEVEL UP!', life: 1.2, vy: -26, text: true, color: '#ffd23f' }); sfx('levelup'); break;
       case 'bossCast': rings.push({ x: e.x, y: e.y, r: 10, max: 90, life: 0.4, color: e.color || '#ff5a3c' }); break;
     }
   }

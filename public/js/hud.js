@@ -60,6 +60,7 @@ const HUD = (() => {
         sel = c.id; selfCls = c.id;
         wrap.querySelectorAll('.class-card').forEach(x => x.classList.remove('sel'));
         el.classList.add('sel'); onSelect(c.id);
+        if (window.Audio) window.Audio.play('ui-click');
       });
       wrap.appendChild(el);
     });

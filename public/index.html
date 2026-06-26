@@ -196,7 +196,7 @@
 <script src="js/input.js?v=20260623"></script>
 <script src="js/render.js?v=20260627"></script>
 <script src="js/hud.js?v=20260623"></script>
-<script src="js/audio.js?v=20260701"></script>
+<script src="js/audio.js?v=20260626g"></script>
 <script src="js/main.js?v=20260630"></script>
 <script>
   // Audio wiring — runs after main.js. The toggle buttons live inside the
@@ -243,16 +243,20 @@
 
     // First user gesture: enter the game. Kick off audio context + preload,
     // and start the music track if the player left it enabled.
+    function uiTick() { Audio.play('ui-click'); }
+
     [playBtn, specBtn].forEach(function (btn) {
       if (!btn) return;
       btn.addEventListener('click', function () {
         ensureAudio();
+        uiTick();
         if (musicOn()) Audio.playMusic('bgm-loop');
       }, { once: false });
     });
 
     if (musicBtn) musicBtn.addEventListener('click', function () {
       ensureAudio();
+      uiTick();
       var on = !musicOn();
       setMusic(on);
       if (on) Audio.playMusic('bgm-loop'); else Audio.stopMusic();
@@ -261,6 +265,7 @@
 
     if (muteBtn) muteBtn.addEventListener('click', function () {
       ensureAudio();
+      uiTick();
       Audio.mute(!Audio.isMuted);
       syncSfx();
     });

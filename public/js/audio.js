@@ -18,7 +18,7 @@
 const Audio = (() => {
   'use strict';
 
-  const ASSET_VERSION = '20260701';
+  const ASSET_VERSION = '20260626g';
 
   // Single source of truth — bump both this and the <script> ?v= when assets change.
   const MANIFEST = {
@@ -51,6 +51,8 @@ const Audio = (() => {
   let musicGain = null;
   let masterVol = 0.8;
   let muted = false;
+  let preloadPromise = null;   // resolved when MANIFEST entries are decoded (or skipped)
+  let pendingMusic = null;     // name requested before preload finished
 
   // ---- helpers ----------------------------------------------------------
 
@@ -96,18 +98,22 @@ const Audio = (() => {
 
   async function preload() {
     if (!isSupported) return { loaded: 0, total: 0, skipped: true };
-    // Skip on slow / data-saver connections to avoid burning mobile bandwidth.
-    const conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
-    if (conn && (conn.effectiveType === '2g' || conn.effectiveType === 'slow-2g' || conn.saveData)) {
-      return { loaded: 0, total: 0, skipped: true };
-    }
-    const entries = Object.entries(MANIFEST);
-    let loaded = 0;
-    await Promise.all(entries.map(async ([name, url]) => {
-      try { await _fetchAndDecode(name, url); loaded++; }
-      catch (e) { console.warn('[audio] failed to load', name, e); }
-    }));
-    return { loaded, total: entries.length, skipped: false };
+    if (preloadPromise) return preloadPromise;
+    preloadPromise = (async () => {
+      // Skip on slow / data-saver connections to avoid burning mobile bandwidth.
+      const conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+      if (conn && (conn.effectiveType === '2g' || conn.effectiveType === 'slow-2g' || conn.saveData)) {
+        return { loaded: 0, total: 0, skipped: true };
+      }
+      const entries = Object.entries(MANIFEST);
+      let loaded = 0;
+      await Promise.all(entries.map(async ([name, url]) => {
+        try { await _fetchAndDecode(name, url); loaded++; }
+        catch (e) { console.warn('[audio] failed to load', name, e); }
+      }));
+      return { loaded, total: entries.length, skipped: false };
+    })();
+    return preloadPromise;
   }
 
   function play(name, opts) {
@@ -129,16 +135,42 @@ const Audio = (() => {
 
   function playMusic(name) {
     if (!ctx) return;
+    const buf = buffers.get(name);
+    if (!buf) {
+      // Buffer not decoded yet — usually because the caller fired playMusic in the
+      // same gesture as Audio.preload(). Remember the request and start it as soon
+      // as the decode finishes (or, on the slow-connection skip path, when nothing
+      // arrives — bail in that case so we don't loop on a never-resolving promise).
+      pendingMusic = name;
+      if (preloadPromise) {
+        preloadPromise.then(() => {
+          if (pendingMusic === name) {
+            pendingMusic = null;
+            if (buffers.has(name)) _startMusic(name);
+          }
+        });
+      }
+      return;
+    }
+    _startMusic(name);
+  }
+
+  // BGM is half of the master slider so the music bed doesn't drown out SFX
+  // when the player cranks the volume. Independent of the SFX mute toggle.
+  function _bgmTarget() { return masterVol * 0.5; }
+
+  function _startMusic(name) {
+    if (!ctx) return;
     stopMusic(0);                       // tear down any prior loop instantly
     const buf = buffers.get(name);
-    if (!buf) return;                   // not loaded yet
+    if (!buf) return;
     musicSource = ctx.createBufferSource();
     musicSource.buffer = buf;
     musicSource.loop = true;
     musicSource.connect(musicGain);
     musicGain.gain.cancelScheduledValues(ctx.currentTime);
     musicGain.gain.setValueAtTime(musicGain.gain.value, ctx.currentTime);
-    musicGain.gain.linearRampToValueAtTime(masterVol, ctx.currentTime + 1.5); // BGM ignores SFX mute
+    musicGain.gain.linearRampToValueAtTime(_bgmTarget(), ctx.currentTime + 1.5); // BGM ignores SFX mute
     musicSource.start();
   }
 
@@ -157,7 +189,7 @@ const Audio = (() => {
   function setMaster(v01) {
     masterVol = clamp01(v01);
     if (masterGain) masterGain.gain.value = muted ? 0 : masterVol;
-    if (musicSource && musicGain) musicGain.gain.linearRampToValueAtTime(masterVol, ctx.currentTime + 0.2); // BGM ignores SFX mute
+    if (musicSource && musicGain) musicGain.gain.linearRampToValueAtTime(_bgmTarget(), ctx.currentTime + 0.2); // BGM ignores SFX mute
   }
 
   function mute(shouldMute) {
@@ -177,11 +209,23 @@ const Audio = (() => {
   function persistMaster() { _writePref(PREF_KEYS.master, String(masterVol)); }
 
   // isSupported is exposed as a getter so it reflects the detection at load time.
-  return {
+  const api = {
     init, preload, play, playMusic, stopMusic,
     setMaster, mute, loadPrefs, persistMaster,
     get isSupported() { return isSupported; },
     get isMuted() { return muted; },
     get masterVol() { return masterVol; },
   };
+  // Expose on window so other scripts loaded *before* audio.js (render.js, etc.)
+  // can still reach the module from inside their own IIFEs.
+  if (typeof window !== 'undefined') {
+    window.Audio = api;
+    // Debug surface — lets us peek at decode state from devtools/preview.
+    window.__audioDebug = {
+      get bufferNames() { return Array.from(buffers.keys()); },
+      get ctxState() { return ctx ? ctx.state : 'no-ctx'; },
+      has: (n) => buffers.has(n),
+    };
+  }
+  return api;
 })();
