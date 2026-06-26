@@ -1,4 +1,4 @@
-# ---- Arena Brawl 大乱斗 server image ----
+# ---- Arena Brawl 澶т贡鏂?server image ----
 FROM node:20-alpine
 
 WORKDIR /app
@@ -10,8 +10,9 @@ RUN npm install --omit=dev
 # app source
 COPY server ./server
 COPY public ./public
+COPY scripts ./scripts
 
-# persisted leaderboard lives here — mount a volume to keep it
+# persisted leaderboard lives here 鈥?mount a volume to keep it
 RUN mkdir -p /app/data
 VOLUME ["/app/data"]
 
