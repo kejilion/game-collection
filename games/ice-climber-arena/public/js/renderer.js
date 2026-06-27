@@ -43,13 +43,16 @@ export class Renderer {
     this.ctx = canvas.getContext('2d');
     this.particles = [];
     this.phases = new Map(); // id → run-cycle phase
-    this.flakes = Array.from({ length: 150 }, () => ({
+    // Cache of soft radial-glow sprites keyed by colour, drawn with drawImage
+    // instead of the (very expensive) per-draw ctx.shadowBlur. Filled lazily.
+    this._glowCache = new Map();
+    this.flakes = Array.from({ length: 110 }, () => ({
       x: Math.random() * VIEW_W, y: Math.random() * VIEW_H,
       r: 0.6 + Math.random() * 2, sp: 12 + Math.random() * 26, drift: Math.random() * 2 - 1,
     }));
     // --- ambient backdrop layers (screen-space, parallax-free) ---
     // twinkling stars — only shown in the dark lower reaches
-    this.stars = Array.from({ length: 170 }, () => ({
+    this.stars = Array.from({ length: 120 }, () => ({
       x: Math.random() * VIEW_W, y: Math.random() * VIEW_H * 0.82,
       r: 0.5 + Math.random() * 1.5, tw: 1 + Math.random() * 3, ph: Math.random() * 7,
       b: 0.5 + Math.random() * 0.5,
@@ -62,13 +65,13 @@ export class Renderer {
       { y: 0.12, sp: 0.33, ph: 4.1, a: 0.30, c: '#74d4ff' },
     ];
     // drifting dreamy light motes (soft bokeh that rises and wraps)
-    this.motes = Array.from({ length: 44 }, () => ({
+    this.motes = Array.from({ length: 28 }, () => ({
       x: Math.random() * VIEW_W, y: Math.random() * VIEW_H,
       r: 14 + Math.random() * 42, sp: 5 + Math.random() * 16,
       a: 0.10 + Math.random() * 0.22, pls: 0.4 + Math.random() * 1.5, ph: Math.random() * 7,
       c: ['rgba(150,200,255,0.9)', 'rgba(190,160,255,0.9)', 'rgba(255,220,180,0.85)', 'rgba(160,255,230,0.85)'][(Math.random() * 4) | 0],
     }));
-    this.cameraY = 0;
+    this.cameraY = null; // unset until first draw → snap to spawn framing (no summit→ground pan on join)
     this.t = 0;
     this.shake = 0; this.shakeX = 0; this.shakeY = 0;
     this._p = 0; // altitude progress 0(bottom) → (top), set each frame
@@ -91,6 +94,30 @@ export class Renderer {
 
   /** Trigger / boost screen shake (px magnitude). */
   addShake(amt) { this.shake = Math.max(this.shake, amt); }
+
+  /**
+   * A soft radial-glow sprite for `color`, baked once into an offscreen canvas
+   * and reused via drawImage. This replaces ctx.shadowBlur on the hot per-frame
+   * glows (items, projectiles, motes) — shadowBlur re-blurs the whole draw every
+   * call and is one of the most expensive 2D-canvas operations; a cached sprite
+   * scaled with drawImage is many times cheaper for an identical look.
+   */
+  _glow(color) {
+    let cv = this._glowCache.get(color);
+    if (!cv) {
+      const r = 64;
+      cv = document.createElement('canvas');
+      cv.width = cv.height = r * 2;
+      const g = cv.getContext('2d');
+      const grd = g.createRadialGradient(r, r, 0, r, r, r);
+      grd.addColorStop(0, color);
+      grd.addColorStop(1, 'rgba(255,255,255,0)');
+      g.fillStyle = grd;
+      g.fillRect(0, 0, r * 2, r * 2);
+      this._glowCache.set(color, cv);
+    }
+    return cv;
+  }
 
   // ----- particle FX --------------------------------------------------------
   addFx(fx) {
@@ -175,23 +202,32 @@ export class Renderer {
     const { level, brokenIce, tEst, local } = scene;
 
     // camera follows local climber (or stays low before we have one).
-    // Once the climber reaches the upper tower (or the rescue plane is out),
-    // the camera lifts to a dedicated "summit" framing that shows the top
-    // pad, the dangling rope and the patrolling plane together.
+    // Once the LOCAL climber reaches the upper tower the camera lifts to a
+    // dedicated "summit" framing that shows the top pad, the dangling rope and
+    // the patrolling plane together.
     // a rescued spectator follows the leading climber; everyone else follows self
     const spectateY = scene.spectateY;
     const focusY = spectateY != null ? spectateY : (local ? local.y : floorTopY(0));
-    const planeOut = !!(scene.remote && scene.remote.plane);
+    // Summit framing keys off THIS client's own altitude only. The rescue plane is
+    // a SHARED world entity — it's out for everyone the instant any one climber tops
+    // out — so keying the camera off it would wrongly yank every player's view up to
+    // the summit: people still at the bottom, someone who just died and respawned on
+    // floor 1, even a brand-new joiner. Only lift once the local climber is near top.
     const nearTop = focusY < floorTopY(FLOOR_COUNT - 2) + 40;
     // while spectating a climber, follow them freely instead of locking to the summit
-    const summitFraming = spectateY == null && (planeOut || nearTop);
+    const summitFraming = spectateY == null && nearTop;
     // summit cam lifts into the sky (negative allowed) so the high plane + rope
     // sit around the upper-middle of the screen while the top pad stays visible
     const followCam = clamp(focusY - VIEW_H * 0.62, 0, WORLD_HEIGHT - VIEW_H);
     // summit cam: frame the top pad with the rescue plane + rope visible above it
     const summitCam = floorTopY(FLOOR_COUNT - 1) - VIEW_H * 0.5;
     const targetCam = summitFraming ? Math.min(followCam, summitCam) : followCam;
-    this.cameraY += (targetCam - this.cameraY) * Math.min(1, dt * (summitFraming ? 5 : 8));
+    // First frame after (re)joining: open directly on the spawn framing instead
+    // of easing down from the summit (cameraY starts unset). The old pan-down made
+    // a freshly-joined player's view look like it "scrambled" from the top of the
+    // tower to the ground rather than simply starting at the bottom where they are.
+    if (this.cameraY == null) this.cameraY = targetCam;
+    else this.cameraY += (targetCam - this.cameraY) * Math.min(1, dt * (summitFraming ? 5 : 8));
     const cam = this.cameraY;
 
     this._background(ctx, cam);
@@ -200,7 +236,9 @@ export class Renderer {
     ctx.translate(this.shakeX, -cam + this.shakeY);
 
     this._floorLabels(ctx);
-    const rects = buildRects(level.platforms, brokenIce, tEst);
+    // Prefer the rects the game loop already built for prediction this frame;
+    // only fall back to building our own if a caller didn't pass them.
+    const rects = scene.rects || buildRects(level.platforms, brokenIce, tEst);
     // ICE walls render from the raw brick list so each split cell can be
     // removed individually, leaving a snug hole; other tiles use the rects.
     for (const r of rects) { if (r.type === Tile.ICE) continue; this._platform(ctx, r); }
@@ -326,11 +364,8 @@ export class Renderer {
     ctx.globalCompositeOperation = 'lighter';
     for (const m of this.motes) {
       ctx.globalAlpha = moteA * m.a * (0.6 + 0.4 * Math.sin(this.t * m.pls + m.ph));
-      const rg = ctx.createRadialGradient(m.x, m.y, 0, m.x, m.y, m.r);
-      rg.addColorStop(0, m.c);
-      rg.addColorStop(1, 'rgba(255,255,255,0)');
-      ctx.fillStyle = rg;
-      circle(ctx, m.x, m.y, m.r); ctx.fill();
+      // cached glow sprite scaled to the mote size — no per-frame gradient alloc
+      ctx.drawImage(this._glow(m.c), m.x - m.r, m.y - m.r, m.r * 2, m.r * 2);
     }
     ctx.restore();
     ctx.globalAlpha = 1;
@@ -500,12 +535,11 @@ export class Renderer {
     const bob = Math.sin(this.t * 3 + it.x) * 4;
     const x = it.x, y = it.y + bob;
     ctx.save();
-    // glow
+    // glow (cached sprite instead of shadowBlur)
     const c = it.kind === ItemKind.FIRE ? '#ff7a3c' : it.kind === ItemKind.HEAL ? '#ff5a7a' : '#5ad1ff';
-    ctx.shadowColor = c; ctx.shadowBlur = 22;
+    ctx.drawImage(this._glow(c), x - 30, y - 30, 60, 60);
     ctx.fillStyle = 'rgba(255,255,255,.92)';
     circle(ctx, x, y, 22); ctx.fill();
-    ctx.shadowBlur = 0;
     ctx.font = '26px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     const icon = it.kind === ItemKind.FIRE ? '🔥' : it.kind === ItemKind.HEAL ? '❤️' : '⬆️';
     ctx.fillText(icon, x, y + 1);
@@ -669,11 +703,11 @@ export class Renderer {
   _proj(ctx, pr) {
     ctx.save();
     if (pr.kind === 'fire') {
-      ctx.shadowColor = '#ff7a2c'; ctx.shadowBlur = 22;
+      ctx.drawImage(this._glow('#ff7a2c'), pr.x - 26, pr.y - 26, 52, 52);
       ctx.fillStyle = '#ffb24a'; circle(ctx, pr.x, pr.y, 11); ctx.fill();
       ctx.fillStyle = '#ff6a2c'; circle(ctx, pr.x, pr.y, 6); ctx.fill();
     } else {
-      ctx.shadowColor = '#7fe3ff'; ctx.shadowBlur = 18;
+      ctx.drawImage(this._glow('#7fe3ff'), pr.x - 22, pr.y - 22, 44, 44);
       ctx.fillStyle = '#d7f6ff';
       ctx.translate(pr.x, pr.y);
       ctx.beginPath();

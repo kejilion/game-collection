@@ -229,7 +229,12 @@ function wireNet() {
 function onSnapshot(data) {
   app.round = data.round;
   app.roundStartMs = data.rt;
-  app.brokenIce = new Set(data.broken || []);
+  // Broken ice only ever grows within a round, so rebuild the Set (used by
+  // buildRects every frame) only when the count actually changed — not 30×/sec.
+  const brokenLen = data.broken ? data.broken.length : 0;
+  if (!app.brokenIce || app.brokenIce.size !== brokenLen) {
+    app.brokenIce = new Set(data.broken || []);
+  }
   app.planeActive = !!data.plane;
   app.ranking = data.ranking || [];
   app.rescueDeadline = data.rescueDeadline || null;
@@ -258,7 +263,14 @@ function onSnapshot(data) {
     }
   }
 
-  updateRanking();
+  // The ranking HUD + mini-tower don't need to rebuild their DOM/canvas at the
+  // full 30 Hz snapshot rate; ~7 Hz is visually identical and avoids the per-
+  // snapshot reflow that grows with player count.
+  const tnow = performance.now();
+  if (tnow - (app._lastRankAt || 0) >= 140) {
+    app._lastRankAt = tnow;
+    updateRanking();
+  }
 }
 
 function onRoundEnd(d) {
@@ -340,6 +352,7 @@ function loop(now) {
       level: app.level,
       brokenIce: app.brokenIce,
       tEst,
+      rects, // reuse the collision rects already built for prediction this frame
       local: predictor.view(),
       localServer: app.localServer,
       localLook: app.look,
@@ -404,7 +417,7 @@ function updateRanking() {
   top.forEach((p, i) => {
     const li = document.createElement('li');
     if (p.id === net.selfId) li.classList.add('me');
-    const color = (p.look && p.look.outfit) || '#5ad1ff';
+    const color = p.color || '#5ad1ff';
     const tag = p.rescued ? '✈️' : (i < 3 ? medals[i] : '');
     li.innerHTML =
       `<span class="dot" style="background:${color}"></span>` +
@@ -432,7 +445,7 @@ function drawMiniTower(ranking) {
     const fl = p.rescued ? FLOOR_COUNT - 1 : p.floor;
     const y = H - 8 - (fl / (FLOOR_COUNT - 1)) * (H - 16);
     const x = 10 + ((p.x || WORLD_WIDTH / 2) / WORLD_WIDTH) * (W - 20);
-    ctx.fillStyle = (p.look && p.look.outfit) || '#5ad1ff';
+    ctx.fillStyle = p.color || '#5ad1ff';
     ctx.beginPath(); ctx.arc(x, y - 3, p.id === net.selfId ? 4 : 3, 0, 7); ctx.fill();
     if (p.id === net.selfId) { ctx.strokeStyle = '#ffd84a'; ctx.lineWidth = 1.5; ctx.stroke(); }
   }
@@ -453,7 +466,7 @@ function toast(msg, kind = '') {
 function outfitColor(d) {
   const ranking = app.ranking || [];
   const p = d && d.id ? ranking.find((r) => r.id === d.id) : null;
-  return (p && p.look && p.look.outfit) || '#5ad1ff';
+  return (p && p.color) || '#5ad1ff';
 }
 
 function addChat(name, text, color, sys) {

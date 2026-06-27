@@ -715,10 +715,13 @@ export class GameRoom {
   }
 
   rankingList() {
+    // Lean ranking rows: only what the HUD list + mini-tower need. name/look are
+    // already carried once per player in `players[]`, so we send just the outfit
+    // colour here instead of duplicating the whole look object 30×/sec.
     const list = [...this.players.values()].map((p) => ({
-      id: p.id, name: p.name, floor: p.floor, maxFloor: p.maxFloor,
-      rescued: p.rescued, rank: p.rank, hp: Math.max(0, Math.round(p.hp)),
-      x: Math.round(p.x), y: Math.round(p.y), look: p.look,
+      id: p.id, name: p.name, floor: p.floor,
+      rescued: p.rescued, rank: p.rank,
+      x: Math.round(p.x), y: Math.round(p.y), color: p.look.outfit,
     }));
     list.sort((a, b) => {
       if (a.rescued && b.rescued) return a.rank - b.rank;
