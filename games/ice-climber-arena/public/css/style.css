@@ -245,6 +245,25 @@ body.is-touch #rotate-hint.show {
   text-shadow: 0 2px 0 rgba(27,111,179,.7), 0 4px 12px rgba(0,0,0,.35);
 }
 
+/* final-departure countdown: appears once the first player is rescued */
+.depart {
+  margin-top: 6px; display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 12px; border-radius: 999px;
+  font-size: 15px; font-weight: 700; color: #eaf6ff;
+  background: rgba(20, 45, 70, 0.62); border: 1px solid rgba(120, 200, 255, .45);
+  box-shadow: 0 3px 10px rgba(0,0,0,.3); backdrop-filter: blur(3px);
+}
+.depart .dep-ico { filter: drop-shadow(0 1px 1px rgba(0,0,0,.4)); }
+.depart b { font-variant-numeric: tabular-nums; min-width: 1.4em; text-align: center; }
+.depart.urgent {
+  color: #fff; background: rgba(150, 30, 30, 0.7); border-color: rgba(255, 140, 120, .8);
+  animation: depart-pulse .8s ease-in-out infinite;
+}
+@keyframes depart-pulse {
+  0%, 100% { transform: scale(1); box-shadow: 0 3px 10px rgba(0,0,0,.3); }
+  50% { transform: scale(1.08); box-shadow: 0 0 16px rgba(255,90,70,.7); }
+}
+
 .hud-tr {
   top: 12px; right: 12px; width: 196px;
   background: rgba(20, 45, 70, 0.52); border-radius: 12px; padding: 8px 10px; backdrop-filter: blur(3px);
@@ -327,26 +346,6 @@ body.is-touch #rotate-hint.show {
 @keyframes deathPop { from { transform: scale(.5) rotate(-6deg); opacity: 0 } to { transform: scale(1) rotate(0); opacity: 1 } }
 @keyframes deathPulse { from { transform: scale(1) } to { transform: scale(1.04) } }
 @keyframes deathShake { from { transform: rotate(-8deg) } to { transform: rotate(8deg) } }
-
-
-/* ===== 本局结束倒数大字 ===== */
-.countdown-big {
-  position: absolute; inset: 0; display: grid; place-items: center;
-  pointer-events: none; z-index: 60;
-}
-.countdown-big.hidden { display: none; }
-.countdown-big span {
-  font-size: 220px; font-weight: 900; line-height: 1;
-  color: #fff; text-shadow: 0 0 24px rgba(90,209,255,.9), 0 8px 0 rgba(0,0,0,.35);
-  animation: cdPop .9s cubic-bezier(.2,1.4,.4,1);
-}
-@keyframes cdPop {
-  0%   { transform: scale(.2); opacity: 0; }
-  30%  { transform: scale(1.15); opacity: 1; }
-  70%  { transform: scale(1); opacity: 1; }
-  100% { transform: scale(.85); opacity: 0; }
-}
-
 /* ===== 新一局开始 banner ===== */
 .round-start-banner {
   position: absolute; inset: 0; display: grid; place-items: center;

@@ -35,6 +35,8 @@ export function makeProjectile(spec) {
     vx: spec.vx,
     vy: spec.vy || 0,
     life: spec.life || 2.2,
+    dmg: spec.dmg,   // optional: per-source damage (freeze bolts vary by monster/boss)
+    stun: spec.stun, // optional: per-source freeze duration
   };
 }
 

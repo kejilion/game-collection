@@ -27,6 +27,8 @@ const app = {
   started: false,
   localStartMs: 0,  // per-player timer start (server ms)
   finalMs: null,    // frozen finish time once rescued
+  rescueDeadline: null, // server ms the plane departs (set after the first escape)
+  phase: 'playing',     // last known round phase from snapshots
 };
 
 const net = new Net();
@@ -128,7 +130,7 @@ function wireChat() {
     ci.addEventListener('keydown', (e) => { if (e.key === 'Escape') e.target.blur(); });
     ci.addEventListener('blur', () => document.body.classList.remove('chat-open'));
   }
-  const mChat = tc-chat;
+  const mChat = $('tc-chat');
   if (mChat) {
     mChat.addEventListener('click', () => {
       document.body.classList.add('chat-open');
@@ -201,25 +203,20 @@ function wireNet() {
     app.planeActive = false;
     app.localStartMs = d.roundStartMs;
     app.finalMs = null;
+    app.rescueDeadline = null;
     $('hud-round').textContent = d.round;
-    hideOverlay(); hideWin(); hideDeathBanner(); hideCountdownBig();
+    hideOverlay(); hideWin(); hideDeathBanner();
     // 新一局开始：显示醒目 banner，并 toast 提示。
     showRoundStartBanner(d.round);
     toast(`第 ${d.round} 局开始！`, 'good');
   });
   net.on('roundEnd', onRoundEnd);
   net.on('rescued', onRescued);
-  net.on('plane', () => toast('✈️ 救援飞机来了！跳上去逃生！', 'good'));
+  net.on('plane', () => toast('✈️ 救援飞机来了！看准时机跳起抓住绳子！', 'good'));
   net.on('system', (d) => {
     if (!d || !d.msg) return;
     // 冠亚季军总结、新局开始、普通系统消息都进聊天桦，保证所有人看到。
     addChat('', d.msg, '', true);
-    // 最后5秒的权威倒数：显示居中大字 5/4/3/2/1。
-    if (d.kind === 'countdown') {
-      if (d.seq === 5) toast(d.msg, 'good'); // 5 秒那条含冠亚季军，走 toast 重点展示
-      showCountdownBig(d.seq);
-      return;
-    }
     // 新一局开始的系统消息不重复 toast（下面 roundStart 事件会显示 banner）；
     // 其它系统消息（加入/离开/冠亚季军）走 toast。
     if (d.kind === 'roundStart') return;
@@ -235,6 +232,8 @@ function onSnapshot(data) {
   app.brokenIce = new Set(data.broken || []);
   app.planeActive = !!data.plane;
   app.ranking = data.ranking || [];
+  app.rescueDeadline = data.rescueDeadline || null;
+  app.phase = data.phase || app.phase;
 
   const self = data.players.find((p) => p.id === net.selfId);
   if (self) {
@@ -265,7 +264,8 @@ function onSnapshot(data) {
 function onRoundEnd(d) {
   // round over: players who did not finish get no time this round
   if (app.finalMs == null) app.localStartMs = null;
-  hideCountdownBig(); // 本局结束，先清掉残留的大字倒数
+  app.rescueDeadline = null;
+  $('depart').classList.add('hidden');
   const ov = $('round-overlay');
   $('ov-title').textContent = `第 ${d.round} 局结束`;
   const ol = $('ov-results');
@@ -303,6 +303,7 @@ function onRescued(d) {
     $('win-banner').classList.remove('hidden');
     clearTimeout(app._winTimer);
     app._winTimer = setTimeout(hideWin, 4500);
+    toast('🔭 已逃生 · 镜头跟随冲顶选手', 'good');
   } else {
     toast(`✈️ ${d.name} 第 ${d.rank} 名逃生！`, 'good');
   }
@@ -328,6 +329,13 @@ function loop(now) {
     }
 
     renderer.update(dt);
+    // once rescued, the camera follows the leading climber still racing the
+    // departure countdown instead of locking onto the empty summit.
+    let spectateY = null;
+    if (app.phase === 'playing' && app.localServer && app.localServer.res) {
+      const lead = (app.ranking || []).find((p) => !p.rescued);
+      if (lead) spectateY = lead.y;
+    }
     renderer.draw({
       level: app.level,
       brokenIce: app.brokenIce,
@@ -338,11 +346,13 @@ function loop(now) {
       localName: app.name,
       selfId: net.selfId,
       remote: net.renderState(),
+      spectateY,
     }, dt);
 
     // live per-player timer (frozen once rescued)
     const ms = app.finalMs != null ? app.finalMs : (app.localStartMs ? Math.max(0, net.now() - app.localStartMs) : 0);
     $('timer').textContent = fmtTime(ms);
+    updateDepart();
   }
  } catch (err) {
    // a single bad frame shouldn't freeze the client — log and keep going
@@ -370,6 +380,20 @@ function buffChip(icon, label) {
   d.textContent = icon;
   d.title = label;
   return d;
+}
+
+// Final-departure countdown HUD: seconds until the rescue plane leaves, shown
+// once the first player has escaped. Driven each frame off the synced server
+// clock so it ticks smoothly even between (or without) snapshots.
+function updateDepart() {
+  const el = $('depart');
+  if (!el) return;
+  const dl = app.rescueDeadline;
+  if (!dl) { el.classList.add('hidden'); return; }
+  const secs = Math.max(0, Math.ceil((dl - net.now()) / 1000));
+  $('depart-count').textContent = secs;
+  el.classList.toggle('urgent', secs <= 10);
+  el.classList.remove('hidden');
 }
 
 function updateRanking() {
@@ -497,27 +521,6 @@ function hideDeathBanner() {
 
 function hideOverlay() { $('round-overlay').classList.add('hidden'); }
 function hideWin() { $('win-banner').classList.add('hidden'); }
-function hideCountdownBig() {
-  const el = $('countdown-big');
-  if (el) el.classList.add('hidden');
-  clearTimeout(app._cdTimer);
-}
-// 显示居中大字倒数：每次重启 pop 动画。
-function showCountdownBig(seq) {
-  const el = $('countdown-big');
-  if (!el) return;
-  const num = $('cd-num');
-  num.textContent = seq;
-  el.classList.remove('hidden');
-  // 重启动画：clone 节点是最稳定的方式。
-  const span = num;
-  span.style.animation = 'none';
-  // 强制重排，触发重绘后再应用动画。
-  void span.offsetWidth;
-  span.style.animation = '';
-  clearTimeout(app._cdTimer);
-  // 动画 .9s 后保持显示，由下一个 seq 或 roundStart 负责清除。
-}
 // 显示新一局开始 banner，约2.6s 后自动隐藏。
 function showRoundStartBanner(round) {
   const el = $('round-start-banner');

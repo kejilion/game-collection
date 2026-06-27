@@ -1,5 +1,5 @@
 // ============================================================================
-//  GameRoom 闁?the single authoritative world that every browser connects to.
+//  GameRoom — the single authoritative world that every browser connects to.
 //  Runs a fixed 60 Hz simulation, resolves all entity interactions, manages the
 //  round / rescue lifecycle, and broadcasts 30 Hz snapshots to all clients.
 // ============================================================================
@@ -8,10 +8,11 @@ import {
   FLOOR_SPACING, floorTopY, floorBandHalfWidth, Tile, PLAYER_W, PLAYER_H,
   PLAYER_MAX_HP, JUMP_BUFF_MULT, FALL_SAFE_FLOORS, FALL_DMG_PER_FLOOR,
   ATTACK_COOLDOWN, ATTACK_ANIM, MELEE_W, MELEE_H, MELEE_DMG, MELEE_KNOCKBACK,
-  MONSTER_TOUCH_DMG, MONSTER_STUN, BUFF_JUMP_TIME, BUFF_FIRE_TIME, HEAL_AMOUNT,
+  MONSTER_TOUCH_DMG, MONSTER_STUN, MonsterKind, BOSS_TYPES,
+  BUFF_JUMP_TIME, BUFF_FIRE_TIME, HEAL_AMOUNT,
   FIREBALL_SPEED, FIREBALL_DMG, FIREBALL_COOLDOWN, ICICLE_DMG, ICICLE_GRAVITY,
-  ICICLE_INTERVAL, RESCUE_TARGET, INTERMISSION_MS, ROUND_TIME_LIMIT_MS,
-  PLANE_Y_HIGH, PLANE_Y_LOW, PLANE_DIVE_PERIOD, PLANE_DIVE_HOLD, PLANE_SPEED, PLANE_OFFSCREEN, PICKUP_W, PICKUP_H, RESCUE_ZONE_TOP_OFFSET, RESCUE_ZONE_BOTTOM_OFFSET, ItemKind, Phase,
+  ICICLE_INTERVAL, RESCUE_TARGET, INTERMISSION_MS, ROUND_TIME_LIMIT_MS, RESCUE_COUNTDOWN_MS,
+  PLANE_Y_LOW, PLANE_SPEED, PLANE_PATROL_RANGE, PICKUP_W, PICKUP_H, RESCUE_ZONE_TOP_OFFSET, RESCUE_ZONE_BOTTOM_OFFSET, ItemKind, Phase,
   GRAVITY, TERMINAL_VY, BRICK_CELL_W, DEATH_DURATION,
   CHAT_MAX_LEN, CHAT_THROTTLE_MS, CHAT_DUR_MS,
 } from '../../public/shared/constants.js';
@@ -26,6 +27,7 @@ import { generateLevel } from './Level.js';
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const rnd = (a, b) => a + Math.random() * (b - a);
+const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 // 毫秒 -> M:SS.cs，用于播报冠亚季军用时。
 function fmtClock(ms) {
   if (ms == null) return '--';
@@ -45,6 +47,7 @@ export class GameRoom {
     this.round = 1;
     this.phase = Phase.PLAYING;
     this.roundStartMs = Date.now();
+    this.rescueDeadline = 0; // >0 once the first player is rescued: absolute ms the plane departs
 
     this.brokenIce = new Set();
     this.projectiles = [];
@@ -56,8 +59,7 @@ export class GameRoom {
     this.planeX = WORLD_WIDTH / 2;
     this.planeDir = 1;
     this.planeCenter = WORLD_WIDTH / 2;
-    this.planeY = PLANE_Y_HIGH;
-    this.planeDiveT = 0;
+    this.planeY = PLANE_Y_LOW;
 
     this.snapAccum = 0;
     this.hazardNext = {};
@@ -65,6 +67,7 @@ export class GameRoom {
     this.level = generateLevel(this.round);
     this._spawnEntities();
     this._initHazardTimers();
+    this._announceBoss();
   }
 
   start() {
@@ -139,6 +142,13 @@ export class GameRoom {
       this.endRound();
     }
 
+    // Final-departure countdown: once the first player escapes, the plane leaves
+    // when this timer runs out even if fewer than RESCUE_TARGET made it aboard,
+    // so the early finishers never wait indefinitely for a slow 3rd place.
+    if (this.phase === Phase.PLAYING && this.rescueDeadline && now >= this.rescueDeadline) {
+      this.endRound();
+    }
+
     for (const p of this.players.values()) {
       // tick down timers
       p.invuln = Math.max(0, p.invuln - DT);
@@ -204,19 +214,33 @@ export class GameRoom {
       if (this.planeActive) this._checkRescue(p, now);
     }
 
-    // monsters
+    // monsters (small mobs + the round's boss)
     const pls = [...this.players.values()];
+    const spawned = []; // adds summoned this tick, added after the loop
     for (const m of this.monsters) {
-      const prevFootY = m.y;
-      const nextFootY = prevFootY + Math.min((m.vy||0)+GRAVITY*DT, TERMINAL_VY)*DT;
-      const support = m.falling
-        ? this._sweptSupport(rects, m.x, prevFootY, nextFootY)
-        : this._surfaceSupport(rects, m.x, m.y);
-      const fire = m.update(DT, pls, support);
-      if (fire) {
-        this.projectiles.push(makeProjectile({ kind: 'freeze', owner: null, x: fire.x, y: fire.y, vx: fire.vx, vy: fire.vy, life: 3 }));
+      let support = null;
+      if (!m.fly && !m.anchored) { // grounded mobs can fall through smashed ice
+        const prevFootY = m.y;
+        const nextFootY = prevFootY + Math.min((m.vy || 0) + GRAVITY * DT, TERMINAL_VY) * DT;
+        support = m.falling
+          ? this._sweptSupport(rects, m.x, prevFootY, nextFootY)
+          : this._surfaceSupport(rects, m.x, m.y);
+      }
+      const act = m.update(DT, pls, support);
+      if (act) {
+        if (act.bolts) {
+          for (const b of act.bolts) {
+            this.projectiles.push(makeProjectile({
+              kind: b.kind || 'freeze', owner: null,
+              x: b.x, y: b.y, vx: b.vx, vy: b.vy, life: b.life || 3,
+              dmg: b.dmg, stun: b.stun,
+            }));
+          }
+        }
+        if (act.summon) this._summonAdds(m, act.summon, spawned);
       }
     }
+    if (spawned.length) this.monsters.push(...spawned);
     this.monsters = this.monsters.filter((m) => m.alive);
 
     this._updateProjectiles(rects, now);
@@ -294,6 +318,12 @@ export class GameRoom {
     if (m.hp <= 0) {
       m.alive = false;
       this.fx.push({ t: 'mdeath', x: m.x, y: m.y - 16 });
+      if (m.boss) {
+        // a felled boss makes a scene + announces to everyone
+        for (let i = 0; i < 4; i++) this.fx.push({ t: 'mdeath', x: m.x + rnd(-34, 34), y: m.y - rnd(10, 70) });
+        this.fx.push({ t: 'death', x: m.x, y: m.y, id: m.id, name: m.name, cause: 'boss' });
+        this.io.emit('system', { kind: 'boss', msg: `🎉 BOSS【${m.name}】被击败了！` });
+      }
     }
   }
 
@@ -408,8 +438,10 @@ export class GameRoom {
       if (!m.alive) continue;
       const a = m.aabb();
       if (aabb(pb.x, pb.y, pb.w, pb.h, a.x, a.y, a.w, a.h)) {
-        this.damagePlayer(p, MONSTER_TOUCH_DMG, { knockback: (Math.sign(p.x - m.x) || 1) * 320, cause: 'monster' });
-        p.stun = Math.max(p.stun, MONSTER_STUN);
+        const dmg = m.touchDmg != null ? m.touchDmg : MONSTER_TOUCH_DMG;
+        const kb = (Math.sign(p.x - m.x) || 1) * (m.knockback != null ? m.knockback : 320);
+        this.damagePlayer(p, dmg, { knockback: kb, cause: 'monster' });
+        p.stun = Math.max(p.stun, m.touchStun != null ? m.touchStun : MONSTER_STUN);
         break;
       }
     }
@@ -451,8 +483,8 @@ export class GameRoom {
         for (const o of this.players.values()) {
           if (o.rescued || o.invuln > 0) continue;
           if (aabb(pr.x - 11, pr.y - 11, 22, 22, o.x - PLAYER_W / 2, o.y - PLAYER_H / 2, PLAYER_W, PLAYER_H)) {
-            this.damagePlayer(o, 6, { cause: 'freeze' });
-            o.stun = Math.max(o.stun, MONSTER_STUN);
+            this.damagePlayer(o, pr.dmg != null ? pr.dmg : 6, { cause: 'freeze' });
+            o.stun = Math.max(o.stun, pr.stun != null ? pr.stun : MONSTER_STUN);
             dead = true; break;
           }
         }
@@ -511,74 +543,38 @@ export class GameRoom {
     this.planeActive = true;
     const pad = this.level.platforms.find((p) => p.id === this.level.topPadId);
     this.planeCenter = pad ? pad.x + pad.w / 2 : WORLD_WIDTH / 2;
-    this.planeSide = 1; // first approach sweeps in from the right
+    this.planeSide = 1; // patrol direction sign (kept for snapshot compat)
     this.planeDiveT = 0;
-    this.planeY = PLANE_Y_HIGH;
-    this.planeX = this.planeCenter + this.planeSide * PLANE_OFFSCREEN; // start off-screen
-    this.planeDir = -this.planeSide;
+    this.planeY = PLANE_Y_LOW; // patrol altitude from the very start (no dive-in)
+    this.planeX = this.planeCenter - PLANE_PATROL_RANGE; // start at the left end of the sweep
+    this.planeDir = 1; // sweep rightward first
     this.fx.push({ t: 'plane' });
     this.io.emit('planeIncoming', {});
   }
 
   _updatePlane() {
-    // One cycle = approach from off-screen -> dive -> hold (offer rope) -> rise -> depart off-screen.
-    // Most of the cycle the plane is loitering OUTSIDE the visible band; it only
-    // sweeps in over the top pad to drop the rope during the dive window.
-    this.planeDiveT += DT / PLANE_DIVE_PERIOD;
-    if (this.planeDiveT > 1) {
-      this.planeDiveT -= 1;
-      this.planeSide = -(this.planeSide || 1); // alternate the side it approaches from
-    }
-    const t = this.planeDiveT;
+    // The plane flies its OWN path: a steady horizontal sweep back and forth across
+    // the sky at patrol altitude. It never dives toward the pad or lingers to pick
+    // anyone up -- the climber must time the hop so their jump apex meets the rope
+    // as the plane passes overhead.
     const cx = this.planeCenter;
-    const off = PLANE_OFFSCREEN;
-    const side = this.planeSide || 1;
-    const holdFrac = PLANE_DIVE_HOLD / PLANE_DIVE_PERIOD;
-    const approachEnd = 0.20;
-    const descendEnd = approachEnd + 0.16;
-    const holdEnd = descendEnd + holdFrac;
-    const ascendEnd = holdEnd + 0.16;
-    // defaults: loitering off-screen at cruise altitude
-    let fx = cx + side * off; // far off-screen
-    let fy = PLANE_Y_HIGH;
-    let dir = -side;
-    const ease = (u) => 0.5 - 0.5 * Math.cos(Math.PI * clamp(u, 0, 1));
-    if (t < approachEnd) {
-      // fly in from off-screen toward the pad (high)
-      const u = t / approachEnd;
-      fx = (cx + side * off) + ((cx) - (cx + side * off)) * ease(u);
-      fy = PLANE_Y_HIGH;
-      dir = -side;
-    } else if (t < descendEnd) {
-      // hovering over the pad, diving down to LOW
-      const u = (t - approachEnd) / (descendEnd - approachEnd);
-      fx = cx;
-      fy = PLANE_Y_HIGH + (PLANE_Y_LOW - PLANE_Y_HIGH) * ease(u);
-      dir = 1;
-    } else if (t < holdEnd) {
-      // holding low, gentle drift across the pad so the player times the hop
-      const u = (t - descendEnd) / (holdFrac);
-      fx = cx + Math.sin(u * Math.PI * 2) * 120;
-      fy = PLANE_Y_LOW;
-      dir = this.planeX < fx ? 1 : -1;
-    } else if (t < ascendEnd) {
-      // rising back up over the pad
-      const u = (t - holdEnd) / (ascendEnd - holdEnd);
-      fx = cx;
-      fy = PLANE_Y_LOW + (PLANE_Y_HIGH - PLANE_Y_LOW) * ease(u);
-      dir = side;
-    } else {
-      // depart: fly out to off-screen on the opposite side and loiter
-      const u = (t - ascendEnd) / (1 - ascendEnd);
-      const target = cx - side * off;
-      fx = cx + (target - cx) * ease(Math.min(1, u * 1.6));
-      fy = PLANE_Y_HIGH;
-      dir = -side;
-    }
+    const range = PLANE_PATROL_RANGE;
+    // advance a smooth triangular back-and-forth phase so the plane keeps a
+    // constant speed (no slowing / no hovering at the ends except the instant turn).
+    this.planeDiveT += DT / ((2 * 2 * range) / PLANE_SPEED); // period = total round-trip distance / speed
+    if (this.planeDiveT >= 1) this.planeDiveT -= 1;
+    const t = this.planeDiveT;
+    // triangle wave in [-1, 1]: ramps 0->1->0->-1->0 across the phase
+    const tri = t < 0.5 ? (t * 4 - 1) : (3 - t * 4);
+    const fx = cx + tri * range;
+    const fy = PLANE_Y_LOW; // constant patrol altitude; rope-end stays near jump apex
+    // direction tracks the sweep so the nose always points along travel
+    const dir = tri >= 0 ? 1 : -1;
     this.planeX = fx;
     this.planeY = fy;
     this.planeDir = dir;
   }
+
 
   _checkRescue(p, now) {
     if (p.floor < FLOOR_COUNT - 1 || p.onGround) return; // must hop into it at the top
@@ -600,7 +596,14 @@ export class GameRoom {
     const allTimeRank = this.leaderboard.add({ name: p.name, timeMs, round: this.round, rank });
     this.fx.push({ t: 'rescue', x: p.x, y: p.y, name: p.name, rank });
     this.io.emit('rescued', { id: p.id, name: p.name, rank, timeMs, round: this.round, allTimeRank });
-    if (this.rescued.length >= this._rescueTarget()) this.endRound();
+    if (this.rescued.length >= this._rescueTarget()) { this.endRound(); return; }
+    // First escapee starts the plane's final-departure countdown; the round then
+    // ends on whichever comes first -- target reached or the timer expiring.
+    if (RESCUE_COUNTDOWN_MS > 0 && !this.rescueDeadline) {
+      this.rescueDeadline = now + RESCUE_COUNTDOWN_MS;
+      const secs = Math.round(RESCUE_COUNTDOWN_MS / 1000);
+      this.io.emit('system', { kind: 'lastcall', msg: `✈️ ${p.name} 首位逃生！救援机将在 ${secs} 秒后撤离，冲顶！` });
+    }
   }
 
   _rescueTarget() {
@@ -612,6 +615,7 @@ export class GameRoom {
     if (this.phase !== Phase.PLAYING) return;
     this.phase = Phase.INTERMISSION;
     this.planeActive = false;
+    this.rescueDeadline = 0;
     const results = this.rescued.slice(0, RESCUE_TARGET);
     // 第一时间广播本届冠亚季军一句话，让所有玩家都看到结果。
     this.io.emit('system', { kind: 'roundEnd', msg: this._roundRecapMsg(results) });
@@ -621,8 +625,6 @@ export class GameRoom {
       nextInMs: INTERMISSION_MS,
       leaderboard: this.leaderboard.top(10),
     });
-    // 权威倒数：剩余5秒开始清晰交代冠亚季军并 5-4-3-2-1 提示。
-    this._scheduleCountdown(results);
     clearTimeout(this._nextRoundTimer);
     this._nextRoundTimer = setTimeout(() => this.startNewRound(), INTERMISSION_MS);
   }
@@ -635,24 +637,6 @@ export class GameRoom {
     return '🏆 本届 ' + parts.join(' ｜ ');
   }
 
-  // 在 INTERMISSION_MS 窗口的最后5秒内，每秒广播一条全员提示，
-  // 既保证所有客户端节奏一致，也作为前端大字倒数的权威触发源。
-  _scheduleCountdown(results) {
-    clearTimeout(this._cdTimer);
-    const recap = this._roundRecapMsg(results);
-    const sleep = (ms) => new Promise((res) => { this._cdTimer = setTimeout(res, ms); });
-    const run = async () => {
-      const startAt = Math.max(0, INTERMISSION_MS - 5000);
-      if (startAt > 0) await sleep(startAt);
-      this.io.emit('system', { kind: 'countdown', seq: 5, msg: `${recap}\n⏳ 5 秒后开新一局！` });
-      for (let n = 4; n >= 1; n--) {
-        await sleep(1000);
-        this.io.emit('system', { kind: 'countdown', seq: n, msg: `⏳ ${n}` });
-      }
-    };
-    run();
-  }
-
   startNewRound() {
     this.round++;
     this.phase = Phase.PLAYING;
@@ -663,6 +647,7 @@ export class GameRoom {
     this.rescued = [];
     this.fx = [];
     this.planeActive = false;
+    this.rescueDeadline = 0;
     this.roundStartMs = Date.now();
     this._spawnEntities();
     this._initHazardTimers();
@@ -679,11 +664,37 @@ export class GameRoom {
       roundStartMs: this.roundStartMs,
       serverTime: Date.now(),
     });
+    this._announceBoss();
   }
 
   _spawnEntities() {
     this.monsters = this.level.monsters.map((s) => new Monster(s));
+    if (this.level.boss) this.monsters.push(new Monster(this.level.boss));
     this.items = this.level.items.map((s) => makeItem(s));
+  }
+
+  // Broadcast the round's boss so every climber is warned where it lurks.
+  _announceBoss() {
+    const b = this.level.boss;
+    if (!b) return;
+    const def = BOSS_TYPES[b.kind];
+    const floorNum = (b.floor ?? 0) + 1;
+    this.io.emit('system', { kind: 'boss', msg: `⚠️ 本局BOSS【${def ? def.name : '强敌'}】盘踞在第 ${floorNum} 层，小心冲顶！` });
+  }
+
+  // Spawn a boss's summoned adds (capped), collected into `sink` to add after
+  // the monster loop so they don't act on the same tick they appear.
+  _summonAdds(boss, n, sink) {
+    const CAP = 3;
+    const aliveAdds = this.monsters.filter((m) => m.summonedBy === boss.id && m.alive).length
+      + sink.filter((m) => m.summonedBy === boss.id).length;
+    const room = Math.min(n, CAP - aliveAdds);
+    for (let k = 0; k < room; k++) {
+      const x = clamp(boss.x + rnd(-140, 140), boss.minX, boss.maxX);
+      const kind = pick([MonsterKind.WALKER, MonsterKind.HOPPER, MonsterKind.DASHER]);
+      sink.push(new Monster({ kind, minX: boss.minX, maxX: boss.maxX, x, y: boss.homeY, summonedBy: boss.id }));
+      this.fx.push({ t: 'mhit', x, y: boss.homeY - 16 });
+    }
   }
 
   _groundSpawn() {
@@ -724,6 +735,7 @@ export class GameRoom {
       rt: this.roundStartMs,
       round: this.round,
       phase: this.phase,
+      rescueDeadline: this.rescueDeadline || null, // absolute server ms the plane departs, or null
       players: [...this.players.values()].map((p) => p.serialize()),
       monsters: this.monsters.map((m) => m.serialize()),
       items: this.items.filter((it) => !it.taken).map(serializeItem),

@@ -1,5 +1,5 @@
 // ============================================================================
-//  Server entry �?Express static host + Socket.IO realtime gateway.
+//  Server entry — Express static host + Socket.IO realtime gateway.
 //  One process, one shared GameRoom; every browser that opens the URL joins
 //  the same live tower.
 // ============================================================================
@@ -92,5 +92,5 @@ io.on('connection', (socket) => {
 
 server.listen(PORT, '::', () => {
   console.log(`\n  🧗 敲冰块大逃杀 / Ice-Climber Arena`);
-  console.log(`  �? http://localhost:${PORT}\n`);
+  console.log(`  ➜  http://localhost:${PORT}\n`);
 });

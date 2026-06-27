@@ -103,3 +103,49 @@ test('GameRoom: rescuing players ends the round and records times', () => {
   assert.equal(room.phase, 'intermission', 'round ended (solo target reached)');
   assert.equal(room.leaderboard.entries.length, 1, 'time recorded to leaderboard');
 });
+
+test('GameRoom: first rescue arms a departure countdown that ends the round', () => {
+  const room = new GameRoom(mockIo(), new Leaderboard({ persist: false }));
+  // three players -> rescue target is 3, so a single escape must NOT end the round
+  const a = room.addPlayer('a', 'A', {});
+  room.addPlayer('b', 'B', {});
+  room.addPlayer('c', 'C', {});
+
+  room.activatePlane();
+  room.planeY = -20; // plane dived into grab range
+  a.floor = FLOOR_COUNT - 1; a.onGround = false;
+  a.x = room.planeX; a.y = 40; // dangles inside the dive rescue zone
+  room._checkRescue(a, Date.now());
+
+  assert.ok(a.rescued, 'first player got rescued');
+  assert.equal(room.phase, 'playing', 'round still going — target of 3 not met');
+  assert.ok(room.rescueDeadline > 0, 'a final-departure countdown was armed');
+
+  // fast-forward past the deadline: the next tick should depart the plane / end the round
+  room.rescueDeadline = Date.now() - 1;
+  room.tick();
+  assert.equal(room.phase, 'intermission', 'countdown expiry ended the round with <3 aboard');
+  assert.equal(room.leaderboard.entries.length, 1, 'only the lone escapee was recorded');
+});
+
+test('snapshot payload carries the departure deadline once armed', () => {
+  const snaps = [];
+  const io = { emit() {}, volatile: { emit(evt, data) { if (evt === 'snapshot') snaps.push(data); } } };
+  const room = new GameRoom(io, new Leaderboard({ persist: false }));
+  const a = room.addPlayer('a', 'A', {});
+  room.addPlayer('b', 'B', {});
+  room.addPlayer('c', 'C', {});
+
+  room.broadcastSnapshot(Date.now());
+  assert.equal(snaps.at(-1).rescueDeadline, null, 'no deadline broadcast before anyone escapes');
+
+  room.activatePlane();
+  room.planeY = -20;
+  a.floor = FLOOR_COUNT - 1; a.onGround = false;
+  a.x = room.planeX; a.y = 40;
+  room._checkRescue(a, Date.now());
+  assert.ok(a.rescued && room.rescueDeadline > 0, 'deadline armed on first escape');
+
+  room.broadcastSnapshot(Date.now());
+  assert.ok(snaps.at(-1).rescueDeadline > 0, 'snapshot now carries the deadline out to clients');
+});

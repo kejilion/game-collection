@@ -22,15 +22,24 @@
 // ============================================================================
 import {
   WORLD_WIDTH, FLOOR_COUNT, GROUND_THICKNESS, PLATFORM_H, BRICK_W,
-  floorTopY, floorBandHalfWidth, Tile, MonsterKind, ItemKind,
+  floorTopY, floorBandHalfWidth, Tile, MonsterKind, BossKind, ItemKind,
   OPEN_FLOOR_CHANCE_LOW, OPEN_FLOOR_CHANCE_HIGH, WALL_ROCK_LOW, WALL_ROCK_HIGH,
-  HAZARD_FLOORS_BASE, MONSTER_FLOORS_BASE, CASTER_CHANCE_LOW, CASTER_CHANCE_HIGH,
+  HAZARD_FLOORS_BASE, MONSTER_FLOORS_BASE, MONSTER_BAND_WIDEN,
+  MONSTER_KINDS_PER_LEVEL_MIN, MONSTER_KINDS_PER_LEVEL_MAX,
   MOVING_SPEED_LOW, MOVING_SPEED_HIGH,
 } from '../../public/shared/constants.js';
 
 const rnd = (a, b) => a + Math.random() * (b - a);
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 const chance = (p) => Math.random() < p;
+const shuffle = (arr) => {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+};
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const lerp = (a, b, t) => a + (b - a) * t;
 /** altitude 0(ground)…1(summit) for floor i */
@@ -187,7 +196,13 @@ export function generateLevel(round = 1) {
     floors[fi].hazard = true;
   }
 
-  // monsters — biased high, and nastier (ranged casters) the higher they spawn
+  // Roll this level's small-monster ROSTER: 2–3 distinct kinds out of the six,
+  // so every tower only fields a varied subset (no two levels feel identical).
+  const roster = shuffle(Object.values(MonsterKind))
+    .slice(0, MONSTER_KINDS_PER_LEVEL_MIN + (chance(0.5) ? (MONSTER_KINDS_PER_LEVEL_MAX - MONSTER_KINDS_PER_LEVEL_MIN) : 0));
+
+  // monsters — biased high, each drawn from the level roster; their patrol band
+  // is widened well past the climb band so they roam & hunt over a larger area.
   const monsters = [];
   const monsterCount = clamp(MONSTER_FLOORS_BASE + round, 3, 7);
   for (const fi of pickHigh(interior, monsterCount)) {
@@ -196,18 +211,23 @@ export function generateLevel(round = 1) {
     let lo, hi;
     if (floors[fi].open) { lo = m.x + 8; hi = m.x + m.w - 8; } // patrol the landing ledge
     else {
-      const bandHalf = floorBandHalfWidth(fi);
-      lo = clamp(center - bandHalf + 16, 16, WORLD_WIDTH - 16);
-      hi = clamp(center + bandHalf - 16, 16, WORLD_WIDTH - 16);
+      const bandHalf = floorBandHalfWidth(fi) * MONSTER_BAND_WIDEN;
+      lo = clamp(center - bandHalf - 24, 24, WORLD_WIDTH - 24);
+      hi = clamp(center + bandHalf + 24, 24, WORLD_WIDTH - 24);
     }
     monsters.push({
       floor: fi,
-      kind: chance(lerp(CASTER_CHANCE_LOW, CASTER_CHANCE_HIGH, alt(fi))) ? MonsterKind.CASTER : MonsterKind.WALKER,
+      kind: pick(roster),
       minX: lo, maxX: hi,
       y: floorTopY(fi),
       platformId: m.id,
     });
   }
+
+  // ---- one BOSS per round, lurking on a high floor ---------------------------
+  //  Pick one of the six bosses at random.  Prefer a sealed WALL floor near the
+  //  top (full-width footing to patrol); fall back to any high floor's ledge.
+  const boss = makeBoss(round, floors, platforms, center);
 
   // items — a couple early to get going, the good stuff up high to reward risk
   const items = [];
@@ -228,7 +248,37 @@ export function generateLevel(round = 1) {
 
   const topPad = platforms.find((p) => p.floor === FLOOR_COUNT - 1 && p.main);
 
-  return { platforms, floors, monsters, items, topPadId: topPad ? topPad.id : null, round };
+  return { platforms, floors, monsters, items, boss, topPadId: topPad ? topPad.id : null, round };
+}
+
+// Choose a boss kind and a high floor for it, then build its spawn spec.
+function makeBoss(round, floors, platforms, center) {
+  const kind = pick(Object.values(BossKind));
+  // candidate high floors: sealed walls in the top third (excluding the pad)
+  const top = FLOOR_COUNT - 1;
+  const walls = [];
+  for (let i = top - 1; i >= Math.max(2, top - 4); i--) {
+    if (!floors[i].open) walls.push(i);
+  }
+  let floor = walls.length ? pick(walls) : null;
+  if (floor == null) {
+    // no sealed wall up high — settle for any high floor with a main ledge
+    const any = [];
+    for (let i = top - 1; i >= Math.max(2, top - 4); i--) any.push(i);
+    floor = any.length ? pick(any) : Math.max(2, top - 3);
+  }
+
+  let lo, hi;
+  if (floors[floor].open) {
+    const m = platforms.find((p) => p.floor === floor && p.main);
+    lo = m ? m.x + 20 : center - 130;
+    hi = m ? m.x + m.w - 20 : center + 130;
+  } else {
+    const bandHalf = floorBandHalfWidth(floor) * MONSTER_BAND_WIDEN;
+    lo = clamp(center - bandHalf, 60, WORLD_WIDTH - 60);
+    hi = clamp(center + bandHalf, 60, WORLD_WIDTH - 60);
+  }
+  return { boss: true, kind, floor, minX: lo, maxX: hi, x: (lo + hi) / 2, y: floorTopY(floor) };
 }
 
 // Sample up to n distinct entries from `pool`, each chosen with probability

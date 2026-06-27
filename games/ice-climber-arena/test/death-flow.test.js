@@ -1,4 +1,4 @@
-﻿import { GameRoom } from '../server/game/GameRoom.js';
+import { GameRoom } from '../server/game/GameRoom.js';
 import { Leaderboard } from '../server/game/Leaderboard.js';
 import { DEATH_DURATION, PLAYER_MAX_HP } from '../public/shared/constants.js';
 import assert from 'node:assert/strict';
@@ -9,7 +9,7 @@ const mockIo = () => ({
   volatile: { emit(){} },
 });
 
-const room = new GameRoom(mockIo(), new Leaderboard());
+const room = new GameRoom(mockIo(), new Leaderboard({ persist: false }));
 room.start();
 try {
   const p = room.addPlayer('p1', 'tester', {});

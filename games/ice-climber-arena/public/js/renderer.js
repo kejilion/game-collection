@@ -7,7 +7,7 @@
 import {
   WORLD_WIDTH, WORLD_HEIGHT, FLOOR_COUNT, GROUND_THICKNESS, PLAYER_H, PLAYER_W,
   floorTopY, Tile, PICKUP_W, PICKUP_H, ItemKind, BRICK_CELL_W,
-  RESCUE_ZONE_TOP_OFFSET, RESCUE_ZONE_BOTTOM_OFFSET, ROPE_KNOT_OFFSET, PLANE_Y_HIGH,
+  RESCUE_ZONE_TOP_OFFSET, RESCUE_ZONE_BOTTOM_OFFSET, ROPE_KNOT_OFFSET, PLANE_Y_LOW,
 } from '../shared/constants.js';
 import { buildRects } from '../shared/physics.js';
 import { drawClimber, drawDeadClimber } from './characters.js';
@@ -19,25 +19,43 @@ const CHAR_SCALE = PLAYER_H / 34;
 // monsters/items were authored for a 30px box; rescale to the live monster size.
 const MON_SCALE = 48 / 30;
 
+// per-kind [body, outline] palettes for the procedural monster art
+const SMALL_COLORS = {
+  walker:  ['#dff1ff', '#9cc4dd'],
+  caster:  ['#b58bff', '#7d54d6'],
+  dasher:  ['#bfe9ff', '#3f9fd6'],
+  hopper:  ['#bdeccb', '#5aa97c'],
+  brute:   ['#c2cede', '#6c7a90'],
+  spitter: ['#a9f0e2', '#3fae9c'],
+};
+const BOSS_COLORS = {
+  giant:    ['#e6f1ff', '#8fb6e0'],
+  blizzard: ['#cdb8ff', '#7a52d8'],
+  queen:    ['#ffc9ec', '#d258a6'],
+  mammoth:  ['#d6deec', '#7d8aa2'],
+  wyvern:   ['#bfeaff', '#46a6e0'],
+  golem:    ['#b9c6da', '#5d6f88'],
+};
+
 export class Renderer {
   constructor(canvas) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d');
     this.particles = [];
-    this.phases = new Map(); // id �?run-cycle phase
+    this.phases = new Map(); // id → run-cycle phase
     this.flakes = Array.from({ length: 150 }, () => ({
       x: Math.random() * VIEW_W, y: Math.random() * VIEW_H,
       r: 0.6 + Math.random() * 2, sp: 12 + Math.random() * 26, drift: Math.random() * 2 - 1,
     }));
     // --- ambient backdrop layers (screen-space, parallax-free) ---
-    // twinkling stars �?only shown in the dark lower reaches
+    // twinkling stars — only shown in the dark lower reaches
     this.stars = Array.from({ length: 170 }, () => ({
       x: Math.random() * VIEW_W, y: Math.random() * VIEW_H * 0.82,
       r: 0.5 + Math.random() * 1.5, tw: 1 + Math.random() * 3, ph: Math.random() * 7,
       b: 0.5 + Math.random() * 0.5,
       c: Math.random() < 0.25 ? '#bcd2ff' : (Math.random() < 0.5 ? '#ffe7c0' : '#ffffff'),
     }));
-    // slow aurora ribbons �?dreamy near the bottom, faint up high
+    // slow aurora ribbons — dreamy near the bottom, faint up high
     this.aurora = [
       { y: 0.18, sp: 0.26, ph: 0.0, a: 0.50, c: '#54ffcf' },
       { y: 0.30, sp: 0.18, ph: 2.2, a: 0.42, c: '#8a7bff' },
@@ -53,15 +71,15 @@ export class Renderer {
     this.cameraY = 0;
     this.t = 0;
     this.shake = 0; this.shakeX = 0; this.shakeY = 0;
-    this._p = 0; // altitude progress 0(bottom)�?(top), set each frame
-    // backing-store scale: logical 1600×900 units �?device pixels (set by resize)
+    this._p = 0; // altitude progress 0(bottom) → (top), set each frame
+    // backing-store scale: logical 1600×900 units → device pixels (set by resize)
     this.scale = (canvas.width || VIEW_W) / VIEW_W;
   }
 
   /**
    * Size the backing store to the displayed CSS size × devicePixelRatio so the
    * 16:9 logical space stays crisp on HiDPI screens.  The frame is locked to
-   * 16:9 by the layout, so X and Y share one uniform scale �?no distortion.
+   * 16:9 by the layout, so X and Y share one uniform scale — no distortion.
    */
   resize(cssW, cssH, dpr = 1) {
     const w = Math.max(1, Math.round(cssW * dpr));
@@ -95,12 +113,12 @@ export class Renderer {
         for (let i = 0; i < 12; i++) P.push(spark(fx.x, fx.y, '#9fd9ff'));
         break;
       case 'death': {
-        // 大爆炸：冰晶碎片 + 暖色火星 + 冲击波环 + 飘字
+         // 大爆炸：冰晶碎片 + 暖色火星 + 冲击波环 + 飘字
         for (let i = 0; i < 28; i++) P.push(shard(fx.x, fx.y - PLAYER_H / 2, i % 2 ? '#bfeaff' : '#eaffff'));
         for (let i = 0; i < 20; i++) P.push(spark(fx.x, fx.y - PLAYER_H / 2, '#ff7a5a'));
         for (let i = 0; i < 10; i++) P.push(sparkle(fx.x, fx.y - PLAYER_H / 2, '#fff2c0'));
         P.push(ring(fx.x, fx.y - PLAYER_H / 2, '#ffffff'));
-        P.push(dmgText(fx.x, fx.y - PLAYER_H, '🔥', '#ff6a3c', 26));
+        P.push(dmgText(fx.x, fx.y - PLAYER_H, '💥', '#ff6a3c', 26));
         P.push(dmgText(fx.x, fx.y - PLAYER_H - 18, 'KO!', '#ff3b3b', 20));
         this.addShake(14);
         break;
@@ -151,7 +169,7 @@ export class Renderer {
   // ----- main draw ----------------------------------------------------------
   draw(scene, dt) {
     const ctx = this.ctx;
-    // map logical 1600×900 �?backing pixels (replaces the implicit identity
+    // map logical 1600×900 → backing pixels (replaces the implicit identity
     // transform); everything below keeps drawing in clean 1600×900 units.
     ctx.setTransform(this.scale, 0, 0, this.scale, 0, 0);
     const { level, brokenIce, tEst, local } = scene;
@@ -160,14 +178,18 @@ export class Renderer {
     // Once the climber reaches the upper tower (or the rescue plane is out),
     // the camera lifts to a dedicated "summit" framing that shows the top
     // pad, the dangling rope and the patrolling plane together.
-    const focusY = local ? local.y : floorTopY(0);
+    // a rescued spectator follows the leading climber; everyone else follows self
+    const spectateY = scene.spectateY;
+    const focusY = spectateY != null ? spectateY : (local ? local.y : floorTopY(0));
     const planeOut = !!(scene.remote && scene.remote.plane);
     const nearTop = focusY < floorTopY(FLOOR_COUNT - 2) + 40;
-    const summitFraming = planeOut || nearTop;
+    // while spectating a climber, follow them freely instead of locking to the summit
+    const summitFraming = spectateY == null && (planeOut || nearTop);
     // summit cam lifts into the sky (negative allowed) so the high plane + rope
     // sit around the upper-middle of the screen while the top pad stays visible
-    const summitCam = clamp(PLANE_Y_HIGH - VIEW_H * 0.22, -300, WORLD_HEIGHT - VIEW_H);
     const followCam = clamp(focusY - VIEW_H * 0.62, 0, WORLD_HEIGHT - VIEW_H);
+    // summit cam: frame the top pad with the rescue plane + rope visible above it
+    const summitCam = floorTopY(FLOOR_COUNT - 1) - VIEW_H * 0.5;
     const targetCam = summitFraming ? Math.min(followCam, summitCam) : followCam;
     this.cameraY += (targetCam - this.cameraY) * Math.min(1, dt * (summitFraming ? 5 : 8));
     const cam = this.cameraY;
@@ -227,11 +249,11 @@ export class Renderer {
   //  the climb brightens floor by floor into a hopeful dawn at the summit.
   _background(ctx, cam) {
     const maxCam = Math.max(1, WORLD_HEIGHT - VIEW_H);
-    const p = clamp(1 - cam / maxCam, 0, 1); // 0 = bottom (dark) �?1 = top (bright)
+    const p = clamp(1 - cam / maxCam, 0, 1); // 0 = bottom (dark) → 1 = top (bright)
     this._p = p;
     const ease = p * p * (3 - 2 * p); // smoothstep
 
-    // sky: deep dreamy night �?bright hopeful dawn
+    // sky: deep dreamy night → bright hopeful dawn
     const g = ctx.createLinearGradient(0, 0, 0, VIEW_H);
     g.addColorStop(0, mix('#0a0e2a', '#5fb0ff', ease));
     g.addColorStop(0.55, mix('#1a1640', '#b9e6ff', ease));
@@ -251,7 +273,7 @@ export class Renderer {
       ctx.globalAlpha = 1;
     }
 
-    // aurora ribbons �?strongest in the dreamy depths, a faint shimmer up top
+    // aurora ribbons — strongest in the dreamy depths, a faint shimmer up top
     const auroraA = clamp(0.8 - p * 0.62, 0.1, 0.8);
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
@@ -313,7 +335,7 @@ export class Renderer {
     ctx.restore();
     ctx.globalAlpha = 1;
 
-    // parallax peaks �?dark silhouettes below, bright snowy ridges up high
+    // parallax peaks — dark silhouettes below, bright snowy ridges up high
     this._peaks(ctx, cam * 0.18, mix('#171f4a', '#cfe7f6', ease), 360, 150, ease);
     this._peaks(ctx, cam * 0.32, mix('#221a44', '#bcdcf0', ease), 300, 230, ease);
   }
@@ -330,7 +352,7 @@ export class Renderer {
     ctx.lineTo(VIEW_W, VIEW_H);
     ctx.closePath();
     ctx.fill();
-    // snow caps �?bright at the hopeful summit, dim in the dark depths
+    // snow caps — bright at the hopeful summit, dim in the dark depths
     ctx.fillStyle = `rgba(255,255,255,${0.22 + 0.55 * ease})`;
     for (let x = -100; x <= VIEW_W + 100; x += base) {
       const px = x + base / 2; const py = y - height + Math.sin(x) * 12;
@@ -364,7 +386,7 @@ export class Renderer {
     if (r.type === Tile.GROUND) return this._ground(ctx, r);
     const { x, y, w, h } = r;
     if (r.type === Tile.ICE) {
-      // a breakable ice brick �?a row of these forms a wall to bust through
+      // a breakable ice brick — a row of these forms a wall to bust through
       roundRect(ctx, x, y, w, h, 4);
       ctx.fillStyle = 'rgba(173, 230, 255, .9)';
       ctx.fill();
@@ -380,7 +402,7 @@ export class Renderer {
       ctx.moveTo(x + w * 0.7, y + 5); ctx.lineTo(x + w * 0.6, y + h - 3);
       ctx.stroke();
     } else if (r.type === Tile.MOVING) {
-      // wood lift �?square bricks (every ledge reads as a row of square blocks)
+      // wood lift — square bricks (every ledge reads as a row of square blocks)
       this._brickCols(x, w, h, (cx, cw) => {
         roundRect(ctx, cx + 0.5, y, cw - 1, h, 6);
         ctx.fillStyle = '#8a6b4a'; ctx.fill();
@@ -397,7 +419,7 @@ export class Renderer {
       ctx.moveTo(cx - 5 * dir, y + h / 2 - 4); ctx.lineTo(cx + 3 * dir, y + h / 2);
       ctx.lineTo(cx - 5 * dir, y + h / 2 + 4); ctx.stroke();
     } else if (r.type === Tile.SPEED) {
-      // acceleration strip �?square bricks under flowing motion chevrons
+      // acceleration strip — square bricks under flowing motion chevrons
       this._brickCols(x, w, h, (cx, cw) => {
         roundRect(ctx, cx + 0.5, y, cw - 1, h, 6);
         const g = ctx.createLinearGradient(0, y, 0, y + h);
@@ -412,7 +434,7 @@ export class Renderer {
         ctx.moveTo(cx, y + 6); ctx.lineTo(cx + 7, y + h / 2); ctx.lineTo(cx, y + h - 6);
         ctx.stroke();
       }
-    } else { // SOLID rock �?unbreakable square bricks, route around them
+    } else { // SOLID rock — unbreakable square bricks, route around them
       this._brickCols(x, w, h, (cx, cw) => {
         roundRect(ctx, cx + 0.5, y, cw - 1, h, 4);
         ctx.fillStyle = '#8b95a1'; ctx.fill();
@@ -485,47 +507,163 @@ export class Renderer {
     circle(ctx, x, y, 22); ctx.fill();
     ctx.shadowBlur = 0;
     ctx.font = '26px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    const icon = it.kind === ItemKind.FIRE ? '🔥' : it.kind === ItemKind.HEAL ? '❤️' : '🦅';
+    const icon = it.kind === ItemKind.FIRE ? '🔥' : it.kind === ItemKind.HEAL ? '❤️' : '⬆️';
     ctx.fillText(icon, x, y + 1);
     ctx.restore();
   }
 
   _monster(ctx, m, dt) {
-    const x = m.x, y = m.y; // feet on ledge
-    const ph = this._phase(m.id, dt, 80);
+    const x = m.x, y = m.y; // feet on ledge (server already animates hops / hover)
+    const sc = m.sc || 1;
+    const ph = this._phase(m.id, dt, m.boss ? 50 : 80);
     const wob = Math.sin(ph) * 2;
+
+    // soft shadow under a flying boss so its altitude reads clearly
+    if (m.fly) {
+      ctx.save(); ctx.globalAlpha = 0.22; ctx.fillStyle = '#0a1828';
+      ctx.beginPath(); ctx.ellipse(x, y + 134, 30 * sc, 8 * sc, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+    }
+
     ctx.save();
     ctx.translate(x, y);
-    ctx.scale((m.f || 1) * MON_SCALE, MON_SCALE);
-    const caster = m.kind === 'caster';
-    const body = caster ? '#b58bff' : '#dff1ff';
-    const dark = caster ? '#7d54d6' : '#9cc4dd';
-    // body
+    ctx.scale((m.f || 1) * MON_SCALE * sc, MON_SCALE * sc);
+    if (m.boss) this._bossArt(ctx, m, wob);
+    else this._smallArt(ctx, m, wob);
+    ctx.restore();
+
+    if (m.hp == null) return;
+    const frac = m.hp / (m.hpMax || 40);
+    if (m.boss) {
+      const top = y - 52 * MON_SCALE * sc;
+      const w = 120;
+      this._bar(ctx, x - w / 2, top, w, 8, frac, '#ff5a6a');
+      ctx.font = '700 14px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+      ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(25,10,35,.9)';
+      const label = '👹 ' + (m.name || 'BOSS');
+      ctx.strokeText(label, x, top - 4);
+      ctx.fillStyle = '#ffe06b'; ctx.fillText(label, x, top - 4);
+    } else {
+      this._bar(ctx, x - 22 * sc, y - 36 * MON_SCALE * sc, 44 * sc, 6, frac, '#ff6b6b');
+    }
+  }
+
+  // Six small "trash mob" silhouettes, authored in a ~30px box (feet at 0).
+  _smallArt(ctx, m, wob) {
+    const [body, dark] = SMALL_COLORS[m.kind] || SMALL_COLORS.walker;
+    // shared rounded body, fuzzy feet, angry eyes + brows
     ctx.fillStyle = body; ctx.strokeStyle = dark; ctx.lineWidth = 2;
     roundRect(ctx, -13, -26 + wob, 26, 26, 12); ctx.fill(); ctx.stroke();
-    // fuzzy feet
-    ctx.fillStyle = dark;
-    circle(ctx, -7, -2, 4); ctx.fill(); circle(ctx, 7, -2, 4); ctx.fill();
-    // eyes (angry)
+    ctx.fillStyle = dark; circle(ctx, -7, -2, 4); ctx.fill(); circle(ctx, 7, -2, 4); ctx.fill();
     ctx.fillStyle = '#23303f';
     circle(ctx, -5, -16 + wob, 2.3); ctx.fill(); circle(ctx, 5, -16 + wob, 2.3); ctx.fill();
     ctx.strokeStyle = '#23303f'; ctx.lineWidth = 1.6;
-    ctx.beginPath(); ctx.moveTo(-8, -21 + wob); ctx.lineTo(-2, -19 + wob);
+    ctx.beginPath();
+    ctx.moveTo(-8, -21 + wob); ctx.lineTo(-2, -19 + wob);
     ctx.moveTo(8, -21 + wob); ctx.lineTo(2, -19 + wob); ctx.stroke();
-    // mouth / horns
-    if (caster) {
-      ctx.fillStyle = '#ffd36b';
-      ctx.beginPath(); ctx.moveTo(-10, -26 + wob); ctx.lineTo(-13, -33 + wob); ctx.lineTo(-6, -27 + wob); ctx.fill();
-      ctx.beginPath(); ctx.moveTo(10, -26 + wob); ctx.lineTo(13, -33 + wob); ctx.lineTo(6, -27 + wob); ctx.fill();
-    } else {
-      ctx.fillStyle = '#23303f';
-      roundRect(ctx, -4, -11 + wob, 8, 4, 2); ctx.fill();
-      ctx.fillStyle = '#fff';
-      ctx.fillRect(-3, -11 + wob, 2, 2); ctx.fillRect(1, -11 + wob, 2, 2);
+
+    switch (m.kind) {
+      case 'caster': // ice horns + a casting glow
+        ctx.fillStyle = '#ffd36b';
+        ctx.beginPath(); ctx.moveTo(-10, -26 + wob); ctx.lineTo(-13, -33 + wob); ctx.lineTo(-6, -27 + wob); ctx.fill();
+        ctx.beginPath(); ctx.moveTo(10, -26 + wob); ctx.lineTo(13, -33 + wob); ctx.lineTo(6, -27 + wob); ctx.fill();
+        if (m.st === 'cast') { ctx.fillStyle = 'rgba(180,140,255,.55)'; circle(ctx, 0, -13 + wob, 7); ctx.fill(); }
+        break;
+      case 'spitter': // puffed cheeks + spout mouth
+        ctx.fillStyle = dark; circle(ctx, -10, -12 + wob, 3.4); ctx.fill(); circle(ctx, 10, -12 + wob, 3.4); ctx.fill();
+        ctx.fillStyle = '#13564c'; circle(ctx, 0, -10 + wob, 3); ctx.fill();
+        if (m.st === 'cast') { ctx.fillStyle = 'rgba(120,240,220,.6)'; circle(ctx, 0, -10 + wob, 5); ctx.fill(); }
+        break;
+      case 'dasher': { // red visor + speed streaks when lunging
+        ctx.fillStyle = '#ff6b5a'; roundRect(ctx, -9, -19 + wob, 18, 5, 2); ctx.fill();
+        if (m.st === 'dash') {
+          ctx.strokeStyle = 'rgba(255,255,255,.75)'; ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.moveTo(-15, -18 + wob); ctx.lineTo(-23, -18 + wob);
+          ctx.moveTo(-15, -9 + wob); ctx.lineTo(-25, -9 + wob); ctx.stroke();
+        }
+        break;
+      }
+      case 'hopper': { // springy ears
+        ctx.strokeStyle = dark; ctx.lineWidth = 3; ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(-6, -26 + wob); ctx.lineTo(-9, -35 + wob);
+        ctx.moveTo(6, -26 + wob); ctx.lineTo(9, -35 + wob); ctx.stroke();
+        ctx.lineCap = 'butt';
+        ctx.fillStyle = dark; circle(ctx, -9, -35 + wob, 2.2); ctx.fill(); circle(ctx, 9, -35 + wob, 2.2); ctx.fill();
+        break;
+      }
+      case 'brute': // armour plate + heavy mouth
+        ctx.fillStyle = 'rgba(255,255,255,.28)'; roundRect(ctx, -13, -26 + wob, 26, 7, 6); ctx.fill();
+        ctx.fillStyle = dark; ctx.fillRect(-13, -13 + wob, 26, 2);
+        ctx.fillStyle = '#23303f'; roundRect(ctx, -6, -10 + wob, 12, 4, 2); ctx.fill();
+        break;
+      default: // walker: little fanged mouth
+        ctx.fillStyle = '#23303f'; roundRect(ctx, -4, -11 + wob, 8, 4, 2); ctx.fill();
+        ctx.fillStyle = '#fff'; ctx.fillRect(-3, -11 + wob, 2, 2); ctx.fillRect(1, -11 + wob, 2, 2);
+        break;
     }
-    ctx.restore();
-    // hp bar
-    if (m.hp != null) this._bar(ctx, x - 22, y - 58, 44, 6, m.hp / 40, '#ff6b6b');
+  }
+
+  // Six bosses — a bigger body (scaled by m.sc) plus a signature feature.
+  _bossArt(ctx, m, wob) {
+    const [body, dark] = BOSS_COLORS[m.kind] || BOSS_COLORS.giant;
+    const casting = m.st === 'cast';
+    if (casting) { ctx.save(); ctx.shadowColor = dark; ctx.shadowBlur = 18; }
+    ctx.fillStyle = body; ctx.strokeStyle = dark; ctx.lineWidth = 2.4;
+    roundRect(ctx, -17, -34 + wob, 34, 34, 15); ctx.fill(); ctx.stroke();
+    if (casting) ctx.restore();
+    // clawed feet + menacing glowing eyes
+    ctx.fillStyle = dark; circle(ctx, -9, -2, 5); ctx.fill(); circle(ctx, 9, -2, 5); ctx.fill();
+    ctx.fillStyle = '#fff'; circle(ctx, -6, -20 + wob, 3.4); ctx.fill(); circle(ctx, 6, -20 + wob, 3.4); ctx.fill();
+    ctx.fillStyle = '#c0202a'; circle(ctx, -6, -20 + wob, 1.8); ctx.fill(); circle(ctx, 6, -20 + wob, 1.8); ctx.fill();
+    ctx.strokeStyle = '#1a2333'; ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(-11, -27 + wob); ctx.lineTo(-3, -24 + wob);
+    ctx.moveTo(11, -27 + wob); ctx.lineTo(3, -24 + wob); ctx.stroke();
+
+    switch (m.kind) {
+      case 'blizzard': // wizard hat + star
+        ctx.fillStyle = dark;
+        ctx.beginPath(); ctx.moveTo(-12, -32 + wob); ctx.lineTo(0, -52 + wob); ctx.lineTo(12, -32 + wob); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = '#ffe06b'; circle(ctx, 0, -50 + wob, 2.6); ctx.fill();
+        break;
+      case 'queen': // golden crown
+        ctx.fillStyle = '#ffd84a'; ctx.strokeStyle = '#c79a17'; ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(-12, -34 + wob); ctx.lineTo(-12, -45 + wob); ctx.lineTo(-6, -39 + wob);
+        ctx.lineTo(0, -47 + wob); ctx.lineTo(6, -39 + wob); ctx.lineTo(12, -45 + wob);
+        ctx.lineTo(12, -34 + wob); ctx.closePath(); ctx.fill(); ctx.stroke();
+        break;
+      case 'mammoth': // ivory tusks
+        ctx.fillStyle = '#fff7e6'; ctx.strokeStyle = '#d8c89a'; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.moveTo(-8, -10 + wob); ctx.quadraticCurveTo(-15, -3 + wob, -10, 5 + wob); ctx.lineTo(-7, 0 + wob); ctx.closePath(); ctx.fill(); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(8, -10 + wob); ctx.quadraticCurveTo(15, -3 + wob, 10, 5 + wob); ctx.lineTo(7, 0 + wob); ctx.closePath(); ctx.fill(); ctx.stroke();
+        break;
+      case 'wyvern': { // leathery wings (it hovers)
+        const flap = Math.sin(this.t * 7) * 4;
+        ctx.fillStyle = dark;
+        ctx.beginPath(); ctx.moveTo(-14, -24 + wob); ctx.lineTo(-36, -34 - flap + wob); ctx.lineTo(-16, -12 + wob); ctx.closePath(); ctx.fill();
+        ctx.beginPath(); ctx.moveTo(14, -24 + wob); ctx.lineTo(36, -34 - flap + wob); ctx.lineTo(16, -12 + wob); ctx.closePath(); ctx.fill();
+        break;
+      }
+      case 'golem': // glowing core + cracks
+        ctx.save(); ctx.shadowColor = '#8fe6ff'; ctx.shadowBlur = 14;
+        ctx.fillStyle = '#bff3ff'; circle(ctx, 0, -16 + wob, 5); ctx.fill(); ctx.restore();
+        ctx.strokeStyle = dark; ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        ctx.moveTo(-11, -30 + wob); ctx.lineTo(-4, -22 + wob);
+        ctx.moveTo(11, -28 + wob); ctx.lineTo(5, -20 + wob); ctx.stroke();
+        break;
+      default: // giant: crown of ice spikes
+        ctx.fillStyle = body; ctx.strokeStyle = dark; ctx.lineWidth = 1.5;
+        for (let i = -2; i <= 2; i++) {
+          ctx.beginPath();
+          ctx.moveTo(i * 7 - 3, -34 + wob); ctx.lineTo(i * 7, -45 + wob); ctx.lineTo(i * 7 + 3, -34 + wob);
+          ctx.closePath(); ctx.fill();
+        }
+        break;
+    }
   }
 
   _proj(ctx, pr) {
@@ -562,14 +700,14 @@ export class Renderer {
   _player(ctx, e, look, name, dt, isLocal) {
     const feetY = e.y + PLAYER_H / 2;
 
-    // ---- 死亡倒地：单独绘制，后续不再画血�?buff ----
+    // ---- 死亡倒地：单独绘制，后续不再画血/buff ----
     if (e.dead > 0) {
       ctx.save();
       ctx.translate(e.x, feetY);
       ctx.scale(e.f || 1, 1);
       drawDeadClimber(ctx, look || {}, this.t, e.dead > 1 ? 1 : e.dead, CHAR_SCALE);
       ctx.restore();
-      // 名字仍显示，标记 KO
+      // 名字仍显示，并标记 KO
       const topY = feetY - 56 * CHAR_SCALE - 14;
       ctx.font = '700 12px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
       ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(80,0,0,.85)';
@@ -619,7 +757,7 @@ export class Renderer {
     if (e.chat) this._chatBubble(ctx, e.x, topY - 6, e.chat);
     let bx = e.x + 18;
     if (e.fb) { ctx.font = '20px system-ui'; ctx.textAlign = 'left'; ctx.fillText('🔥', bx, topY + 4); bx += 24; }
-    if (e.jb) { ctx.font = '20px system-ui'; ctx.textAlign = 'left'; ctx.fillText('🟢', bx, topY + 4); }
+    if (e.jb) { ctx.font = '20px system-ui'; ctx.textAlign = 'left'; ctx.fillText('🦘', bx, topY + 4); }
   }
 
   _plane(ctx, plane, local) {
@@ -627,7 +765,7 @@ export class Renderer {
     const knotY = y + ROPE_KNOT_OFFSET;
     const zoneTop = y + RESCUE_ZONE_TOP_OFFSET, zoneH = RESCUE_ZONE_BOTTOM_OFFSET - RESCUE_ZONE_TOP_OFFSET;
     const zx = x - PICKUP_W / 2, zy = zoneTop;
-    // pickup glow zone (the rope's grab reach) �� travels with the plane
+    // pickup glow zone (the rope's grab reach) — travels with the plane
     ctx.save();
     ctx.setLineDash([6, 5]);
     ctx.strokeStyle = 'rgba(255, 230, 120, .9)';
@@ -680,7 +818,7 @@ export class Renderer {
       ctx.strokeStyle = 'rgba(20,40,60,.6)'; ctx.lineWidth = 3;
       ctx.font = '700 22px system-ui'; ctx.textAlign = 'center';
       const ay = y + ROPE_KNOT_OFFSET + 30 + Math.sin(this.t * 5) * 4;
-      const msg = '�� ����ץס���ӣ�';
+      const msg = '✋ 时机不对，抓准绳子再跳！';
       ctx.strokeText(msg, x, ay); ctx.fillText(msg, x, ay);
       ctx.restore();
     }
