@@ -4,6 +4,7 @@
 //  interpolation (≈100 ms behind "now").  The local player is predicted
 //  separately (see prediction.js).
 // ============================================================================
+import { wrapX, wrapDX } from '../shared/constants.js';
 
 const INTERP_DELAY = 100; // ms render delay for remote entities
 const BUFFER = 24; // snapshots kept
@@ -32,6 +33,7 @@ export class Net {
     s.on('roundStart', (d) => this._emit('roundStart', d));
     s.on('roundEnd', (d) => this._emit('roundEnd', d));
     s.on('rescued', (d) => this._emit('rescued', d));
+    s.on('playerDied', (d) => this._emit('playerDied', d));
     s.on('planeIncoming', (d) => this._emit('plane', d));
     s.on('system', (d) => this._emit('system', d));
     s.on('chat', (d) => this._emit('chat', d));
@@ -114,7 +116,9 @@ function lerpById(listA, listB, alpha) {
     const ea = mapA.get(eb.id);
     if (!ea) return eb;
     const out = { ...eb };
-    if (eb.x != null) out.x = lerp(ea.x, eb.x, alpha);
+    // interpolate x the short way around the seam: an entity crossing the edge
+    // (1599→2) slides a few px and wraps, instead of racing back across the floor.
+    if (eb.x != null) out.x = wrapX(ea.x + wrapDX(ea.x, eb.x) * alpha);
     if (eb.y != null) out.y = lerp(ea.y, eb.y, alpha);
     return out;
   });

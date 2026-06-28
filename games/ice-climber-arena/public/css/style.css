@@ -264,6 +264,25 @@ body.is-touch #rotate-hint.show {
   50% { transform: scale(1.08); box-shadow: 0 0 16px rgba(255,90,70,.7); }
 }
 
+/* spectator badge: persists the whole time the local player has escaped and is
+   watching the remaining climbers. Marks the post-rescue state + finishing place. */
+.spectate {
+  margin: 6px auto 0; display: flex; width: max-content; max-width: 100%;
+  align-items: center; gap: 7px;
+  padding: 4px 14px; border-radius: 999px;
+  font-size: 15px; font-weight: 800; color: #eafff4;
+  background: rgba(18, 78, 54, 0.66); border: 1px solid rgba(90, 240, 170, .6);
+  box-shadow: 0 3px 12px rgba(0,0,0,.3), 0 0 12px rgba(60, 220, 150, .3);
+  backdrop-filter: blur(3px);
+  animation: spectate-glow 1.8s ease-in-out infinite;
+}
+.spectate .sp-eye { filter: drop-shadow(0 1px 1px rgba(0,0,0,.4)); }
+.spectate b { color: var(--gold); font-variant-numeric: tabular-nums; }
+@keyframes spectate-glow {
+  0%, 100% { box-shadow: 0 3px 12px rgba(0,0,0,.3), 0 0 10px rgba(60, 220, 150, .28); }
+  50% { box-shadow: 0 3px 12px rgba(0,0,0,.3), 0 0 20px rgba(60, 220, 150, .6); }
+}
+
 .hud-tr {
   top: 12px; right: 12px; width: 196px;
   background: rgba(20, 45, 70, 0.52); border-radius: 12px; padding: 8px 10px; backdrop-filter: blur(3px);

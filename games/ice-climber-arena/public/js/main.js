@@ -29,10 +29,23 @@ const app = {
   finalMs: null,    // frozen finish time once rescued
   rescueDeadline: null, // server ms the plane departs (set after the first escape)
   phase: 'playing',     // last known round phase from snapshots
+  escapeRank: null,     // this client's finishing place once rescued (for the spectator badge)
+  spectating: false,    // true only AFTER the win banner clears -> camera follows leader + badge
 };
 
 const net = new Net();
 const input = new Input();
+// 无火球道具时，按攻击键给予轻提示（节流）。
+let _noAmmoToastAt = 0;
+input.onAttackEdge = () => {
+  const self = app.localServer;
+  if (!self || self.res || self.dead) return; // 未进入/已逃生/已死亡不提示
+  if (self.fb) return; // 有火球 buff，正常攻击
+  const now = performance.now();
+  if (now - _noAmmoToastAt < 1200) return; // 节流
+  _noAmmoToastAt = now;
+  toast('\ud83d\udd25 需拾取火球道具才能攻击', 'bad');
+};
 const predictor = new LocalPredictor();
 let renderer = null;
 
@@ -249,7 +262,9 @@ function onSnapshot(data) {
     else if (data.phase === "intermission") app.localStartMs = null; // round over, not finished
     else app.localStartMs = self.st || app.roundStartMs; // live per-player timer
     if (!self.res) app.finalMs = null; // still climbing: live timer
+    if (!self.res) { app.escapeRank = null; app.spectating = false; } // back in the race: reset spectate state
     updateHud(self);
+    updateSpectate(self);
     if (!self.dead && app.deathShown) hideDeathBanner();
   }
 
@@ -277,7 +292,12 @@ function onRoundEnd(d) {
   // round over: players who did not finish get no time this round
   if (app.finalMs == null) app.localStartMs = null;
   app.rescueDeadline = null;
+  app.escapeRank = null;
+  app.spectating = false;
+  clearTimeout(app._winTimer); // a still-pending banner->spectate handoff is moot now
   $('depart').classList.add('hidden');
+  $('spectate').classList.add('hidden');
+  hideWin();
   const ov = $('round-overlay');
   $('ov-title').textContent = `第 ${d.round} 局结束`;
   const ol = $('ov-results');
@@ -306,19 +326,38 @@ function onRoundEnd(d) {
   }, 1000);
 }
 
+// How long the personal "逃生成功" banner sits before we slip into spectator
+// mode. The camera holds on the player's own pickup for this whole beat.
+const WIN_BANNER_MS = 6000;
+
 function onRescued(d) {
   if (d.id === net.selfId) {
     app.finalMs = d.timeMs;
+    app.escapeRank = d.rank;
+    app.spectating = false; // hold the camera on our own pickup until the banner clears
     $('win-detail').textContent =
       `第 ${d.rank} 名 · 用时 ${fmtTime(d.timeMs, true)}` +
       (d.allTimeRank <= 20 ? ` · 历史第 ${d.allTimeRank} 名！` : '');
     $('win-banner').classList.remove('hidden');
+    updateSpectate(app.localServer); // badge stays hidden while spectating=false
     clearTimeout(app._winTimer);
-    app._winTimer = setTimeout(hideWin, 4500);
-    toast('🔭 已逃生 · 镜头跟随冲顶选手', 'good');
+    // Let the victory banner sit for a beat; only THEN enter spectator mode.
+    app._winTimer = setTimeout(enterSpectate, WIN_BANNER_MS);
+    toast(`✈️ 第 ${d.rank} 名逃生成功！`, 'good');
   } else {
     toast(`✈️ ${d.name} 第 ${d.rank} 名逃生！`, 'good');
   }
+}
+
+// Fires WIN_BANNER_MS after the local player is rescued: drop the victory banner
+// and switch to spectator mode — camera follows the leading climber and the
+// persistent 观战 badge (with finishing place) appears.
+function enterSpectate() {
+  hideWin();
+  if (!app.localServer || !app.localServer.res) return; // round already moved on
+  app.spectating = true;
+  updateSpectate(app.localServer);
+  toast('🔭 进入观战模式 · 镜头跟随冲顶选手', 'good');
 }
 
 // ----------------------------------------------------------------- game loop
@@ -344,7 +383,7 @@ function loop(now) {
     // once rescued, the camera follows the leading climber still racing the
     // departure countdown instead of locking onto the empty summit.
     let spectateY = null;
-    if (app.phase === 'playing' && app.localServer && app.localServer.res) {
+    if (app.spectating && app.phase === 'playing' && app.localServer && app.localServer.res) {
       const lead = (app.ranking || []).find((p) => !p.rescued);
       if (lead) spectateY = lead.y;
     }
@@ -385,6 +424,8 @@ function updateHud(self) {
   buffs.innerHTML = '';
   if (self.fb) buffs.appendChild(buffChip('🔥', '火球'));
   if (self.jb) buffs.appendChild(buffChip('⬆️', '高跳'));
+  if (self.spd) buffs.appendChild(buffChip('💨', '加速'));
+  if (self.sh) buffs.appendChild(buffChip('🛡️', '免伤'));
 }
 
 function buffChip(icon, label) {
@@ -407,6 +448,30 @@ function updateDepart() {
   $('depart-count').textContent = secs;
   el.classList.toggle('urgent', secs <= 10);
   el.classList.remove('hidden');
+}
+
+// This client's finishing place once rescued. Prefer the value cached from the
+// `rescued` event; fall back to our own row in the ranking (carries `rank`).
+function selfRescueRank() {
+  if (app.escapeRank) return app.escapeRank;
+  const r = (app.ranking || []).find((p) => p.id === net.selfId);
+  return r && r.rescued ? r.rank : null;
+}
+
+// Persistent "you've escaped, now spectating" badge. Stays up the entire time
+// the local player is rescued and the round is still running, so the finishing
+// place (第几名) and the spectator state are always on screen — not just for the
+// few seconds the win banner is visible. Auto-hides at intermission / new round.
+function updateSpectate(self) {
+  const el = $('spectate');
+  if (!el) return;
+  if (self && self.res && app.phase === 'playing' && app.spectating) {
+    const rank = selfRescueRank();
+    $('sp-rank').textContent = rank != null ? rank : '—';
+    el.classList.remove('hidden');
+  } else {
+    el.classList.add('hidden');
+  }
 }
 
 function updateRanking() {

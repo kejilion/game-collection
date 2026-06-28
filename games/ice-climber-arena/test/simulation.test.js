@@ -27,6 +27,36 @@ test('level has a climbable, well-formed structure', () => {
   assert.ok(lv.platforms.find((p) => p.id === lv.topPadId).floor === FLOOR_COUNT - 1);
 });
 
+test('moving lifts never overlap other bricks on their floor', () => {
+  // A moving lift's full left-right sweep must stay clear of every other brick
+  // on its floor (the ledge it sits beside and any sibling lift). We check the
+  // platform's whole travel extent, not just its base, across many random towers.
+  const travel = (p) => {
+    const r = p.type === Tile.MOVING ? (p.range || 0) : 0;
+    return [p.x - r, p.x + p.w + r];
+  };
+  for (let seed = 0; seed < 60; seed++) {
+    const lv = generateLevel(1 + (seed % 6));
+    const byFloor = new Map();
+    for (const p of lv.platforms) {
+      if (!byFloor.has(p.floor)) byFloor.set(p.floor, []);
+      byFloor.get(p.floor).push(p);
+    }
+    for (const [floor, row] of byFloor) {
+      for (const p of row) {
+        if (p.type !== Tile.MOVING) continue;
+        const [aL, aR] = travel(p);
+        for (const o of row) {
+          if (o === p) continue;
+          const [bL, bR] = travel(o);
+          const overlap = aL < bR - 0.5 && aR > bL + 0.5;
+          assert.ok(!overlap, `floor ${floor}: moving lift ${p.id} sweep [${aL},${aR}] overlaps brick ${o.id} [${bL},${bR}]`);
+        }
+      }
+    }
+  }
+});
+
 test('physics: a player falls and lands on the ground', () => {
   const lv = generateLevel(1);
   const rects = buildRects(lv.platforms, new Set(), 0);

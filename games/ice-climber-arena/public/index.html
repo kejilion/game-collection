@@ -53,7 +53,7 @@
             </div>
 
             <button id="start-btn" class="start-btn">开始攀登 ▶</button>
-            <p class="hint">方向键 ← → 移动 · ↑ 跳跃 · A 攻击</p>
+            <p class="hint">方向键 ← → 移动 · ↑ 跳跃 · A 道具攻击（需拾取火球）</p>
           </div>
         </section>
 
@@ -98,6 +98,10 @@
           <div id="depart" class="depart hidden">
             <span class="dep-ico">✈️</span>救援机撤离 <b id="depart-count">30</b>s
           </div>
+          <div id="spectate" class="spectate hidden">
+            <span class="sp-eye">🔭</span>
+            <span class="sp-text">观战模式 · 你已第 <b id="sp-rank">1</b> 名逃生</span>
+          </div>
         </div>
 
         <div class="hud-tr">
@@ -110,7 +114,7 @@
 
         <div id="toasts" class="toasts"></div>
 
-        <div class="hud-bc" id="controls-hint">← → 移动 · ↑ 跳 · A 攻击</div>
+        <div class="hud-bc" id="controls-hint">← → 移动 · ↑ 跳 · A 道具攻击（需火球）</div>
 
         <!-- bottom-left chat -->
         <div class="panel-chat">
@@ -168,11 +172,11 @@
       <!-- on-screen touch controls (mobile only; viewport-space, never scaled) -->
       <div id="touch-controls" aria-hidden="true">
         <div class="tc-cluster tc-left">
-          <button class="tc-btn" id="tc-left" aria-label="左移">◀</button>
+          <button class="tc-btn" id="tc-left" aria-label="?????????"左移">◀</button>
           <button class="tc-btn" id="tc-right" aria-label="右移">▶</button>
         </div>
         <div class="tc-cluster tc-right">
-          <button class="tc-btn tc-attack" id="tc-attack" aria-label="攻击">✊</button>
+          <button class="tc-btn tc-attack" id="tc-attack" aria-label="道具攻击（需火球）">✊</button>
           <button class="tc-btn tc-jump" id="tc-jump" aria-label="跳跃">▲</button>
         </div>
         <button class="tc-btn tc-chat" id="tc-chat" aria-label="聊天">💬</button>

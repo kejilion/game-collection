@@ -6,7 +6,7 @@
 // ============================================================================
 import {
   WORLD_WIDTH, WORLD_HEIGHT, FLOOR_COUNT, GROUND_THICKNESS, PLAYER_H, PLAYER_W,
-  floorTopY, Tile, PICKUP_W, PICKUP_H, ItemKind, BRICK_CELL_W,
+  floorTopY, Tile, PICKUP_W, PICKUP_H, BRICK_CELL_W,
   RESCUE_ZONE_TOP_OFFSET, RESCUE_ZONE_BOTTOM_OFFSET, ROPE_KNOT_OFFSET, PLANE_Y_LOW,
 } from '../shared/constants.js';
 import { buildRects } from '../shared/physics.js';
@@ -36,6 +36,15 @@ const BOSS_COLORS = {
   wyvern:   ['#bfeaff', '#46a6e0'],
   golem:    ['#b9c6da', '#5d6f88'],
 };
+// Pickup glow colour + emoji, keyed by ItemKind value. One place to add a kind.
+const ITEM_VISUAL = {
+  fire:   { c: '#ff7a3c', icon: '🔥' },
+  heal:   { c: '#ff5a7a', icon: '❤️' },
+  jump:   { c: '#5ad1ff', icon: '⬆️' },
+  haste:  { c: '#6cf2a0', icon: '💨' },
+  shield: { c: '#9fb4ff', icon: '🛡️' },
+};
+const itemVis = (kind) => ITEM_VISUAL[kind] || ITEM_VISUAL.jump;
 
 export class Renderer {
   constructor(canvas) {
@@ -151,7 +160,7 @@ export class Renderer {
         break;
       }
       case 'pickup': {
-        const c = fx.kind === ItemKind.FIRE ? '#ff7a3c' : fx.kind === ItemKind.HEAL ? '#ff5a7a' : '#5ad1ff';
+        const c = itemVis(fx.kind).c;
         for (let i = 0; i < 12; i++) P.push(sparkle(fx.x, fx.y, c));
         break;
       }
@@ -245,10 +254,10 @@ export class Renderer {
     for (const p of level.platforms) { if (p.type === Tile.ICE) this._iceWall(ctx, p, brokenIce); }
 
     if (scene.remote) {
-      for (const it of scene.remote.items) this._item(ctx, it);
-      for (const ic of scene.remote.ice) this._icicle(ctx, ic);
-      for (const m of scene.remote.monsters) this._monster(ctx, m, dt);
-      for (const pr of scene.remote.proj) this._proj(ctx, pr);
+      for (const it of scene.remote.items) this._seam(ctx, it.x, 40, () => this._item(ctx, it));
+      for (const ic of scene.remote.ice) this._seam(ctx, ic.x, 24, () => this._icicle(ctx, ic));
+      for (const m of scene.remote.monsters) this._seam(ctx, m.x, 100, () => this._monster(ctx, m, dt));
+      for (const pr of scene.remote.proj) this._seam(ctx, pr.x, 24, () => this._proj(ctx, pr));
     }
 
     // players: remotes (interpolated) then local (predicted) on top
@@ -256,22 +265,23 @@ export class Renderer {
     if (scene.remote) {
       for (const e of scene.remote.players) {
         if (e.id === scene.selfId) continue;
-        this._player(ctx, e, e.look, e.name, dt, false);
+        this._seam(ctx, e.x, 60, () => this._player(ctx, e, e.look, e.name, dt, false));
         drawn.add(e.id);
       }
     }
     if (local && scene.localServer) {
-      this._player(ctx, {
+      this._seam(ctx, local.x, 60, () => this._player(ctx, {
         x: local.x, y: local.y, vx: local.vx, vy: local.vy,
         f: local.facing, g: local.onGround ? 1 : 0,
         hp: scene.localServer.hp, stun: scene.localServer.stun,
         inv: scene.localServer.inv, atk: scene.localServer.atk,
         jb: scene.localServer.jb, fb: scene.localServer.fb,
+        spd: scene.localServer.spd, sh: scene.localServer.sh,
         res: scene.localServer.res, lift: scene.localServer.lift,
         dead: scene.localServer.dead || 0,
         chat: scene.localServer.chat,
         id: scene.selfId,
-      }, scene.localLook, scene.localName, dt, true);
+      }, scene.localLook, scene.localName, dt, true));
     }
 
     if (scene.remote && scene.remote.plane) this._plane(ctx, scene.remote.plane, local);
@@ -280,6 +290,16 @@ export class Renderer {
 
     ctx.restore();
     this._snow(ctx);
+  }
+
+  // Draw `fn` again shifted ±WORLD_WIDTH when an entity centered at world-x `x`
+  // with half-extent `halfW` straddles a seam, so its wrapped half appears on the
+  // opposite edge (the full world width is always on screen) instead of clipping
+  // off at x=0 / x=WORLD_WIDTH as it crosses.
+  _seam(ctx, x, halfW, fn) {
+    fn();
+    if (x + halfW > WORLD_WIDTH) { ctx.save(); ctx.translate(-WORLD_WIDTH, 0); fn(); ctx.restore(); }
+    if (x - halfW < 0) { ctx.save(); ctx.translate(WORLD_WIDTH, 0); fn(); ctx.restore(); }
   }
 
   // ----- backdrop -----------------------------------------------------------
@@ -536,12 +556,12 @@ export class Renderer {
     const x = it.x, y = it.y + bob;
     ctx.save();
     // glow (cached sprite instead of shadowBlur)
-    const c = it.kind === ItemKind.FIRE ? '#ff7a3c' : it.kind === ItemKind.HEAL ? '#ff5a7a' : '#5ad1ff';
-    ctx.drawImage(this._glow(c), x - 30, y - 30, 60, 60);
+    const v = itemVis(it.kind);
+    ctx.drawImage(this._glow(v.c), x - 30, y - 30, 60, 60);
     ctx.fillStyle = 'rgba(255,255,255,.92)';
     circle(ctx, x, y, 22); ctx.fill();
     ctx.font = '26px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    const icon = it.kind === ItemKind.FIRE ? '🔥' : it.kind === ItemKind.HEAL ? '❤️' : '⬆️';
+    const icon = v.icon;
     ctx.fillText(icon, x, y + 1);
     ctx.restore();
   }
@@ -779,6 +799,17 @@ export class Renderer {
       circle(ctx, e.x, feetY - PLAYER_H / 2, 22 + Math.sin(this.t * 6) * 2); ctx.stroke(); ctx.restore();
     }
 
+    // 免伤护盾：环绕玩家的脉动无敌泡
+    if (e.sh) {
+      const cy = feetY - PLAYER_H / 2, r = 30 + Math.sin(this.t * 6) * 1.5;
+      ctx.save();
+      ctx.fillStyle = '#9fb4ff'; ctx.globalAlpha = 0.14;
+      circle(ctx, e.x, cy, r); ctx.fill();
+      ctx.globalAlpha = 0.55; ctx.strokeStyle = '#bcd0ff'; ctx.lineWidth = 2.5;
+      circle(ctx, e.x, cy, r); ctx.stroke();
+      ctx.restore();
+    }
+
     // name + hp + buff chips
     const topY = feetY - 56 * CHAR_SCALE - 14;
     ctx.font = '700 18px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
@@ -791,7 +822,9 @@ export class Renderer {
     if (e.chat) this._chatBubble(ctx, e.x, topY - 6, e.chat);
     let bx = e.x + 18;
     if (e.fb) { ctx.font = '20px system-ui'; ctx.textAlign = 'left'; ctx.fillText('🔥', bx, topY + 4); bx += 24; }
-    if (e.jb) { ctx.font = '20px system-ui'; ctx.textAlign = 'left'; ctx.fillText('🦘', bx, topY + 4); }
+    if (e.jb) { ctx.font = '20px system-ui'; ctx.textAlign = 'left'; ctx.fillText('🦘', bx, topY + 4); bx += 24; }
+    if (e.spd) { ctx.font = '20px system-ui'; ctx.textAlign = 'left'; ctx.fillText('💨', bx, topY + 4); bx += 24; }
+    if (e.sh) { ctx.font = '20px system-ui'; ctx.textAlign = 'left'; ctx.fillText('🛡️', bx, topY + 4); }
   }
 
   _plane(ctx, plane, local) {

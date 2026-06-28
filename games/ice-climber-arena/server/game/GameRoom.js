@@ -5,18 +5,18 @@
 // ============================================================================
 import {
   TICK_RATE, DT, SNAPSHOT_RATE, WORLD_WIDTH, WORLD_HEIGHT, FLOOR_COUNT,
-  FLOOR_SPACING, floorTopY, floorBandHalfWidth, Tile, PLAYER_W, PLAYER_H,
+  FLOOR_SPACING, floorTopY, floorAtY, floorBandHalfWidth, Tile, PLAYER_W, PLAYER_H,
   PLAYER_MAX_HP, JUMP_BUFF_MULT, FALL_SAFE_FLOORS, FALL_DMG_PER_FLOOR,
-  ATTACK_COOLDOWN, ATTACK_ANIM, MELEE_W, MELEE_H, MELEE_DMG, MELEE_KNOCKBACK,
+  ATTACK_COOLDOWN, ATTACK_ANIM,
   MONSTER_TOUCH_DMG, MONSTER_STUN, MonsterKind, BOSS_TYPES,
-  BUFF_JUMP_TIME, BUFF_FIRE_TIME, HEAL_AMOUNT,
+  BUFF_JUMP_TIME, BUFF_FIRE_TIME, BUFF_HASTE_TIME, SPEED_BUFF_MULT, BUFF_SHIELD_TIME, HEAL_AMOUNT,
   FIREBALL_SPEED, FIREBALL_DMG, FIREBALL_COOLDOWN, ICICLE_DMG, ICICLE_GRAVITY,
   ICICLE_INTERVAL, RESCUE_TARGET, INTERMISSION_MS, ROUND_TIME_LIMIT_MS, RESCUE_COUNTDOWN_MS,
   PLANE_Y_LOW, PLANE_SPEED, PLANE_PATROL_RANGE, PICKUP_W, PICKUP_H, RESCUE_ZONE_TOP_OFFSET, RESCUE_ZONE_BOTTOM_OFFSET, ItemKind, Phase,
   GRAVITY, TERMINAL_VY, BRICK_CELL_W, DEATH_DURATION,
-  CHAT_MAX_LEN, CHAT_THROTTLE_MS, CHAT_DUR_MS,
+  CHAT_MAX_LEN, CHAT_THROTTLE_MS, CHAT_DUR_MS, wrapX, wrapDX,
 } from '../../public/shared/constants.js';
-import { stepPlayer, buildRects, aabb, cellKeyAt } from '../../public/shared/physics.js';
+import { stepPlayer, buildRects, aabb, aabbWrapX, cellKeyAt } from '../../public/shared/physics.js';
 import { Player } from './Player.js';
 import { Monster } from './Monster.js';
 import {
@@ -158,6 +158,8 @@ export class GameRoom {
       p.fireCd = Math.max(0, p.fireCd - DT);
       p.jumpBuff = Math.max(0, p.jumpBuff - DT);
       p.fireBuff = Math.max(0, p.fireBuff - DT);
+      p.hasteBuff = Math.max(0, p.hasteBuff - DT);
+      p.shield = Math.max(0, p.shield - DT);
       // chat bubble expiry
       if (p.chat && p.chat.until <= now) p.chat = null;
       // death timer: frozen, no physics/interactions while the death animation plays
@@ -181,6 +183,7 @@ export class GameRoom {
       const ev = stepPlayer(p, p.input, rects, DT, {
         frozen,
         jumpMul: p.jumpBuff > 0 ? JUMP_BUFF_MULT : 1,
+        speedMul: p.hasteBuff > 0 ? SPEED_BUFF_MULT : 1,
       });
 
       // breakable ice via head-bonk -- ONE small cell per bonk (r.id is `${parentId}:${col}`)
@@ -257,43 +260,22 @@ export class GameRoom {
 
   // -------------------------------------------------------------- combat -----
   doAttack(p, now) {
+    // 只有持有道具（火球 buff）时才能攻击；无道具则普通攻击不生效。
+    if (p.fireBuff <= 0 || p.fireCd > 0) return;
+
     p.attackCd = ATTACK_COOLDOWN;
     p.attackAnim = ATTACK_ANIM;
-
-    // fireball mode from pickup
-    if (p.fireBuff > 0 && p.fireCd <= 0) {
-      p.fireCd = FIREBALL_COOLDOWN;
-      this.projectiles.push(makeProjectile({
-        kind: 'fire', owner: p.id,
-        x: p.x + p.facing * 16, y: p.y - PLAYER_H / 2,
-        vx: p.facing * FIREBALL_SPEED, vy: -40, life: 1.7,
-      }));
-      this.fx.push({ t: 'shoot', x: p.x + p.facing * 16, y: p.y - PLAYER_H / 2, f: p.facing });
-      return;
-    }
-
-    // melee hitbox in facing direction
-    const hb = {
-      x: p.facing > 0 ? p.x + PLAYER_W / 2 - 4 : p.x - PLAYER_W / 2 - MELEE_W + 4,
-      y: p.y - PLAYER_H / 2 - 2,
-      w: MELEE_W, h: MELEE_H,
-    };
-    for (const o of this.players.values()) {
-      if (o === p || o.rescued || o.invuln > 0) continue;
-      if (aabb(hb.x, hb.y, hb.w, hb.h, o.x - PLAYER_W / 2, o.y - PLAYER_H / 2, PLAYER_W, PLAYER_H)) {
-        this.damagePlayer(o, MELEE_DMG, { knockback: p.facing * MELEE_KNOCKBACK, cause: 'pvp' });
-      }
-    }
-    for (const m of this.monsters) {
-      if (!m.alive) continue;
-      const a = m.aabb();
-      if (aabb(hb.x, hb.y, hb.w, hb.h, a.x, a.y, a.w, a.h)) this.damageMonster(m, MELEE_DMG);
-    }
-    this.fx.push({ t: 'swing', x: hb.x + hb.w / 2, y: hb.y + hb.h / 2, f: p.facing });
+    p.fireCd = FIREBALL_COOLDOWN;
+    this.projectiles.push(makeProjectile({
+      kind: 'fire', owner: p.id,
+      x: p.x + p.facing * 16, y: p.y - PLAYER_H / 2,
+      vx: p.facing * FIREBALL_SPEED, vy: -40, life: 1.7,
+    }));
+    this.fx.push({ t: 'shoot', x: p.x + p.facing * 16, y: p.y - PLAYER_H / 2, f: p.facing });
   }
 
   damagePlayer(p, amt, opts = {}) {
-    if (p.invuln > 0 || p.rescued || !p.alive || p.deadTimer > 0) return;
+    if (p.invuln > 0 || p.shield > 0 || p.rescued || !p.alive || p.deadTimer > 0) return;
     p.hp -= amt;
     this.fx.push({ t: 'hit', x: p.x, y: p.y - PLAYER_H / 2, dmg: Math.round(amt), id: p.id });
     if (opts.knockback) {
@@ -318,6 +300,8 @@ export class GameRoom {
     if (m.hp <= 0) {
       m.alive = false;
       this.fx.push({ t: 'mdeath', x: m.x, y: m.y - 16 });
+      // 死亡散落状态道具：小怪 1 个，BOSS 1~3 个
+      this._dropStatusItems(m, m.boss ? 1 + Math.floor(Math.random() * 3) : 1);
       if (m.boss) {
         // a felled boss makes a scene + announces to everyone
         for (let i = 0; i < 4; i++) this.fx.push({ t: 'mdeath', x: m.x + rnd(-34, 34), y: m.y - rnd(10, 70) });
@@ -332,14 +316,16 @@ export class GameRoom {
     if (kind === ItemKind.FIRE) p.fireBuff = BUFF_FIRE_TIME;
     else if (kind === ItemKind.HEAL) p.hp = Math.min(PLAYER_MAX_HP, p.hp + HEAL_AMOUNT);
     else if (kind === ItemKind.JUMP) p.jumpBuff = BUFF_JUMP_TIME;
+    else if (kind === ItemKind.HASTE) p.hasteBuff = BUFF_HASTE_TIME;
+    else if (kind === ItemKind.SHIELD) p.shield = BUFF_SHIELD_TIME;
   }
 
   _checkItemPickup(p, now) {
     for (const it of this.items) {
       if (it.taken) continue;
-      if (aabb(p.x - PLAYER_W / 2, p.y - PLAYER_H / 2, PLAYER_W, PLAYER_H, it.x - 28, it.y - 28, 56, 56)) {
+      if (aabbWrapX(p.x - PLAYER_W / 2, p.y - PLAYER_H / 2, PLAYER_W, PLAYER_H, it.x - 28, it.y - 28, 56, 56)) {
         it.taken = true;
-        it.respawnAt = now + 20000;
+        it.respawnAt = it.oneShot ? 0 : now + 20000; // 怪物掉落一次性，不复活
         this.applyItem(p, it.kind);
         this.fx.push({ t: 'pickup', x: it.x, y: it.y, kind: it.kind, id: p.id });
       }
@@ -371,6 +357,10 @@ export class GameRoom {
         sup = this._surfaceSupport(rects, it.x, footY, 30);
         if (!sup) it.falling = true; // cell gone -> start falling
       }
+    }
+    // 一次性怪物掉落被拾取后清除，避免堆积 / 复活
+    if (this.items.some((it) => it.taken && it.oneShot)) {
+      this.items = this.items.filter((it) => !(it.taken && it.oneShot));
     }
   }
 
@@ -426,20 +416,35 @@ export class GameRoom {
   }
 
   _spawnItemAt(x, y, floor) {
-    const kind = [ItemKind.FIRE, ItemKind.HEAL, ItemKind.JUMP][Math.floor(Math.random() * 3)];
+    const kinds = [ItemKind.FIRE, ItemKind.HEAL, ItemKind.JUMP, ItemKind.HASTE, ItemKind.SHIELD];
+    const kind = kinds[Math.floor(Math.random() * kinds.length)];
     this.items.push(makeItem({ kind, x, y, floor }));
+  }
+
+  // 怪物死亡散落的“状态道具”（限时 buff）。回血是瞬发的、不算状态道具，故不在此池中。
+  // 落点由 _updateItems 的下落逻辑接管，最终停在怪物脚下/下方的平台上。
+  _dropStatusItems(m, n) {
+    const pool = [ItemKind.FIRE, ItemKind.JUMP, ItemKind.HASTE, ItemKind.SHIELD];
+    const floor = floorAtY(m.y);
+    for (let i = 0; i < n; i++) {
+      const kind = pool[Math.floor(Math.random() * pool.length)];
+      const dx = n === 1 ? 0 : rnd(-46, 46); // 多个时左右散开，单个原地迸出
+      this.items.push(makeItem({
+        kind, x: wrapX(m.x + dx), y: m.y - m.h * 0.5, floor, oneShot: true,
+      }));
+    }
   }
 
   // ------------------------------------------------------------ monsters ------
   _checkMonsterContact(p) {
-    if (p.invuln > 0) return;
+    if (p.invuln > 0 || p.shield > 0) return; // 免伤护盾：无敌泡也免疫接触伤害与冰冻
     const pb = { x: p.x - PLAYER_W / 2, y: p.y - PLAYER_H / 2, w: PLAYER_W, h: PLAYER_H };
     for (const m of this.monsters) {
       if (!m.alive) continue;
       const a = m.aabb();
-      if (aabb(pb.x, pb.y, pb.w, pb.h, a.x, a.y, a.w, a.h)) {
+      if (aabbWrapX(pb.x, pb.y, pb.w, pb.h, a.x, a.y, a.w, a.h)) {
         const dmg = m.touchDmg != null ? m.touchDmg : MONSTER_TOUCH_DMG;
-        const kb = (Math.sign(p.x - m.x) || 1) * (m.knockback != null ? m.knockback : 320);
+        const kb = (Math.sign(wrapDX(m.x, p.x)) || 1) * (m.knockback != null ? m.knockback : 320);
         this.damagePlayer(p, dmg, { knockback: kb, cause: 'monster' });
         p.stun = Math.max(p.stun, m.touchStun != null ? m.touchStun : MONSTER_STUN);
         break;
@@ -452,11 +457,11 @@ export class GameRoom {
     const keep = [];
     for (const pr of this.projectiles) {
       pr.life -= DT;
-      pr.x += pr.vx * DT;
+      pr.x = wrapX(pr.x + pr.vx * DT); // bolts loop around the seam like everything else
       pr.y += pr.vy * DT;
       if (pr.kind === 'fire') pr.vy += 240 * DT; // slight arc
 
-      let dead = pr.life <= 0 || pr.x < -30 || pr.x > WORLD_WIDTH + 30 || pr.y > WORLD_HEIGHT + 50;
+      let dead = pr.life <= 0 || pr.y > WORLD_HEIGHT + 50;
 
       if (!dead) {
         for (const r of rects) {
@@ -468,12 +473,12 @@ export class GameRoom {
         for (const m of this.monsters) {
           if (!m.alive) continue;
           const a = m.aabb();
-          if (aabb(pr.x - 11, pr.y - 11, 22, 22, a.x, a.y, a.w, a.h)) { this.damageMonster(m, FIREBALL_DMG); dead = true; break; }
+          if (aabbWrapX(pr.x - 11, pr.y - 11, 22, 22, a.x, a.y, a.w, a.h)) { this.damageMonster(m, FIREBALL_DMG); dead = true; break; }
         }
         if (!dead) {
           for (const o of this.players.values()) {
-            if (o.id === pr.owner || o.rescued || o.invuln > 0) continue;
-            if (aabb(pr.x - 11, pr.y - 11, 22, 22, o.x - PLAYER_W / 2, o.y - PLAYER_H / 2, PLAYER_W, PLAYER_H)) {
+            if (o.id === pr.owner || o.rescued || o.invuln > 0 || o.shield > 0) continue;
+            if (aabbWrapX(pr.x - 11, pr.y - 11, 22, 22, o.x - PLAYER_W / 2, o.y - PLAYER_H / 2, PLAYER_W, PLAYER_H)) {
               this.damagePlayer(o, FIREBALL_DMG, { knockback: Math.sign(pr.vx) * 220, cause: 'fire' });
               dead = true; break;
             }
@@ -481,8 +486,8 @@ export class GameRoom {
         }
       } else if (!dead && pr.kind === 'freeze') {
         for (const o of this.players.values()) {
-          if (o.rescued || o.invuln > 0) continue;
-          if (aabb(pr.x - 11, pr.y - 11, 22, 22, o.x - PLAYER_W / 2, o.y - PLAYER_H / 2, PLAYER_W, PLAYER_H)) {
+          if (o.rescued || o.invuln > 0 || o.shield > 0) continue;
+          if (aabbWrapX(pr.x - 11, pr.y - 11, 22, 22, o.x - PLAYER_W / 2, o.y - PLAYER_H / 2, PLAYER_W, PLAYER_H)) {
             this.damagePlayer(o, pr.dmg != null ? pr.dmg : 6, { cause: 'freeze' });
             o.stun = Math.max(o.stun, pr.stun != null ? pr.stun : MONSTER_STUN);
             dead = true; break;
@@ -525,8 +530,8 @@ export class GameRoom {
       c.y += c.vy * DT;
       let dead = false;
       for (const p of this.players.values()) {
-        if (p.rescued || p.invuln > 0) continue;
-        if (aabb(c.x - 11, c.y - 6, 22, 32, p.x - PLAYER_W / 2, p.y - PLAYER_H / 2, PLAYER_W, PLAYER_H)) {
+        if (p.rescued || p.invuln > 0 || p.shield > 0) continue;
+        if (aabbWrapX(c.x - 11, c.y - 6, 22, 32, p.x - PLAYER_W / 2, p.y - PLAYER_H / 2, PLAYER_W, PLAYER_H)) {
           this.damagePlayer(p, ICICLE_DMG, { cause: 'icicle' });
           dead = true; break;
         }
@@ -692,7 +697,7 @@ export class GameRoom {
     for (let k = 0; k < room; k++) {
       const x = clamp(boss.x + rnd(-140, 140), boss.minX, boss.maxX);
       const kind = pick([MonsterKind.WALKER, MonsterKind.HOPPER, MonsterKind.DASHER]);
-      sink.push(new Monster({ kind, minX: boss.minX, maxX: boss.maxX, x, y: boss.homeY, summonedBy: boss.id }));
+      sink.push(new Monster({ kind, minX: boss.minX, maxX: boss.maxX, wrap: boss.wrap, x, y: boss.homeY, summonedBy: boss.id }));
       this.fx.push({ t: 'mhit', x, y: boss.homeY - 16 });
     }
   }

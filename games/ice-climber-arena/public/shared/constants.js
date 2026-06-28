@@ -45,6 +45,21 @@ export function floorBandHalfWidth(i) {
   return wide + (narrow - wide) * t;
 }
 
+// ---- Horizontal wrap (the play-field is a left↔right loop, Ice-Climber style)
+/** Fold a world-x back into [0, WORLD_WIDTH): walk off one edge, reappear on the other. */
+export function wrapX(x) {
+  return ((x % WORLD_WIDTH) + WORLD_WIDTH) % WORLD_WIDTH;
+}
+/** Signed shortest horizontal delta from `a` to `b` across the seam, in
+ *  (-WORLD_WIDTH/2, WORLD_WIDTH/2].  Tells you which way (and how far) around the
+ *  loop is nearer — used for chasing, aiming and seam-aware interpolation. */
+export function wrapDX(a, b) {
+  let d = (b - a) % WORLD_WIDTH;
+  if (d > WORLD_WIDTH / 2) d -= WORLD_WIDTH;
+  else if (d < -WORLD_WIDTH / 2) d += WORLD_WIDTH;
+  return d;
+}
+
 // ---- Level generation & difficulty curve -----------------------------------
 //  Difficulty is driven by ALTITUDE — t = floor/(FLOOR_COUNT-1), 0 at the
 //  bottom, 1 at the summit.  The higher you climb the narrower the breakable
@@ -99,6 +114,9 @@ export const DEATH_DURATION = 1.2; // 死亡动画/重生冻结持续秒数（�
 // ---- Items / buffs ---------------------------------------------------------
 export const BUFF_JUMP_TIME = 14;
 export const BUFF_FIRE_TIME = 10;
+export const BUFF_HASTE_TIME = 12;  // 加速：移速提升的持续秒数
+export const SPEED_BUFF_MULT = 1.4; // 加速时的最大移速倍率（physics 的 speedMul）
+export const BUFF_SHIELD_TIME = 8;  // 免伤：护盾无敌泡持续秒数
 export const HEAL_AMOUNT = 45;
 export const FIREBALL_SPEED = 470;
 export const FIREBALL_DMG = 22;
@@ -160,7 +178,7 @@ export const Tile = {
   SPEED: 'speed', // slippery / acceleration strip
 };
 
-export const ItemKind = { FIRE: 'fire', HEAL: 'heal', JUMP: 'jump' };
+export const ItemKind = { FIRE: 'fire', HEAL: 'heal', JUMP: 'jump', HASTE: 'haste', SHIELD: 'shield' };
 
 // ---- Monster roster --------------------------------------------------------
 //  Six small "trash mob" kinds + six bosses.  Each entry is pure data read by

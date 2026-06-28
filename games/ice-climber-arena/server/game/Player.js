@@ -45,6 +45,8 @@ export class Player {
     // buffs (absolute remaining seconds)
     this.jumpBuff = 0;
     this.fireBuff = 0;
+    this.hasteBuff = 0; // 加速：移速提升
+    this.shield = 0;    // 免伤：护盾无敌泡
 
     // progress / round
     this.maxFloor = 0;
@@ -80,7 +82,7 @@ export class Player {
   /** Reset for a brand-new round (also clears buffs & progress). */
   resetForRound(x, y) {
     this.spawn(x, y);
-    this.jumpBuff = 0; this.fireBuff = 0;
+    this.jumpBuff = 0; this.fireBuff = 0; this.hasteBuff = 0; this.shield = 0;
     this.maxFloor = 0; this.floor = 0; this.deaths = 0;
     this.startMs = Date.now(); // restart per-player timer for the new round
     this.finishMs = 0; this.rank = 0; this.rescued = false;
@@ -109,6 +111,8 @@ export class Player {
       atk: this.attackAnim > 0 ? 1 : 0,
       jb: this.jumpBuff > 0 ? 1 : 0,
       fb: this.fireBuff > 0 ? 1 : 0,
+      spd: this.hasteBuff > 0 ? 1 : 0,
+      sh: this.shield > 0 ? 1 : 0,
       res: this.rescued ? 1 : 0,
       lift: this.lifting ? 1 : 0,
       dead: this.deadTimer > 0 ? Math.round(this.deadTimer * 100) / 100 : 0,

@@ -18,6 +18,7 @@ export function makeItem(spec) {
     floor: spec.floor,
     taken: false,
     respawnAt: 0, // server time when it should reappear (0 = active)
+    oneShot: !!spec.oneShot, // monster drops: consumed once, never respawn
   };
 }
 

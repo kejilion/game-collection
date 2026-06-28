@@ -9,7 +9,7 @@
 //  keeps motion buttery on any refresh rate (no per-snapshot jump twitch).
 // ============================================================================
 import { stepPlayer } from '../shared/physics.js';
-import { DT, JUMP_BUFF_MULT } from '../shared/constants.js';
+import { DT, JUMP_BUFF_MULT, SPEED_BUFF_MULT, wrapX, wrapDX } from '../shared/constants.js';
 
 const ERR_TAU = 0.09; // seconds — time-constant for absorbing a correction
 const SNAP_DIST = 150; // px — beyond this it's a respawn/teleport → hard snap
@@ -40,6 +40,7 @@ export class LocalPredictor {
     const opts = {
       frozen: sv ? sv.stun === 1 : false,
       jumpMul: sv && sv.jb ? JUMP_BUFF_MULT : 1,
+      speedMul: sv && sv.spd ? SPEED_BUFF_MULT : 1,
     };
     this.acc += dtSec;
     let steps = 0;
@@ -76,7 +77,9 @@ export class LocalPredictor {
     const age = Math.max(0, Math.min(0.2, ageSec));
     const sx = server.x + (server.vx || 0) * age;
     const sy = server.y + (server.vy || 0) * age;
-    const dx = sx - this.s.x;
+    // measure the error the short way around the wrap seam, so a legitimate edge
+    // crossing reads as a few px (smoothly absorbed) — not a ~1500px hard snap.
+    const dx = wrapDX(this.s.x, sx);
     const dy = sy - this.s.y;
     if (Math.hypot(dx, dy) > SNAP_DIST) { // teleport / respawn / large desync → snap
       this.s.x = server.x; this.s.y = server.y;
@@ -98,7 +101,7 @@ export class LocalPredictor {
     if (!this.s) return null;
     const a = Math.min(this.acc, DT); // never extrapolate past one step
     return {
-      x: this.s.x + this.s.vx * a + this.ex,
+      x: wrapX(this.s.x + this.s.vx * a + this.ex), // keep the rendered self on the loop [0, WORLD_WIDTH)
       y: this.s.y + this.s.vy * a + this.ey,
       vx: this.s.vx, vy: this.s.vy,
       facing: this.s.facing, onGround: this.s.onGround,

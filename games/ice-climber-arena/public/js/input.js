@@ -9,6 +9,7 @@ export class Input {
     this.seq = 0;
     this.dirty = false;
     this.enabled = false;
+    this.onAttackEdge = null;
     this._down = this._down.bind(this);
     this._up = this._up.bind(this);
     window.addEventListener('keydown', this._down);
@@ -33,7 +34,10 @@ export class Input {
   }
 
   _set(key, val) {
-    if (this.state[key] !== val) { this.state[key] = val; this.dirty = true; }
+    if (this.state[key] !== val) {
+      this.state[key] = val; this.dirty = true;
+      if (key === 'attack' && val && this.onAttackEdge) this.onAttackEdge();
+    }
   }
 
   _map(code) {

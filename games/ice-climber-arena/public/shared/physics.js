@@ -6,7 +6,7 @@
 import {
   PLAYER_W, PLAYER_H, RUN_SPEED, RUN_ACCEL, AIR_ACCEL, GROUND_FRICTION,
   ICE_FRICTION, SPEED_TILE_MULT, GRAVITY, TERMINAL_VY, JUMP_VEL,
-  WORLD_WIDTH, FLOOR_SPACING, FALL_SAFE_FLOORS, Tile, BRICK_CELL_W,
+  WORLD_WIDTH, FLOOR_SPACING, FALL_SAFE_FLOORS, Tile, BRICK_CELL_W, wrapX,
 } from './constants.js';
 
 function approach(cur, target, maxStep) {
@@ -17,6 +17,15 @@ function approach(cur, target, maxStep) {
 
 export function aabb(ax, ay, aw, ah, bx, by, bw, bh) {
   return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
+}
+
+/** AABB overlap that also tests box B shifted ±WORLD_WIDTH, so contacts between
+ *  two dynamic entities read correctly when one straddles the wrap seam (a body
+ *  at x≈1599 still touches one at x≈1). Only B is wrapped; A stays put. */
+export function aabbWrapX(ax, ay, aw, ah, bx, by, bw, bh) {
+  return aabb(ax, ay, aw, ah, bx, by, bw, bh)
+      || aabb(ax, ay, aw, ah, bx - WORLD_WIDTH, by, bw, bh)
+      || aabb(ax, ay, aw, ah, bx + WORLD_WIDTH, by, bw, bh);
 }
 
 /**
@@ -148,9 +157,8 @@ export function stepPlayer(s, input, rects, dt, opts = {}) {
       else if (s.vx < 0 && pLeft >= r.x + r.w - 0.5 && nx - HW < r.x + r.w) { nx = r.x + r.w + HW; s.vx = 0; }
     }
   }
-  if (nx < HW) { nx = HW; if (s.vx < 0) s.vx = 0; }
-  if (nx > WORLD_WIDTH - HW) { nx = WORLD_WIDTH - HW; if (s.vx > 0) s.vx = 0; }
-  s.x = nx;
+  // the play-field is a horizontal loop — slide off one edge, reappear on the other
+  s.x = wrapX(nx);
 
   // --- integrate Y, resolve floor / head collisions ---
   let ny = y0 + s.vy * dt;
@@ -185,9 +193,7 @@ export function stepPlayer(s, input, rects, dt, opts = {}) {
 
   // ride a moving platform
   if (grounded && support && support.type === Tile.MOVING && support.vx) {
-    s.x += support.vx * dt;
-    if (s.x < HW) s.x = HW;
-    if (s.x > WORLD_WIDTH - HW) s.x = WORLD_WIDTH - HW;
+    s.x = wrapX(s.x + support.vx * dt);
   }
 
   // --- fall tracking ---

@@ -19,7 +19,7 @@
 //  (update() returns the bolts to fire and how many adds to summon this tick).
 // ============================================================================
 import {
-  MonsterKind, MONSTER_TYPES, BOSS_TYPES, GRAVITY, TERMINAL_VY,
+  MonsterKind, MONSTER_TYPES, BOSS_TYPES, GRAVITY, TERMINAL_VY, wrapX, wrapDX,
 } from '../../public/shared/constants.js';
 
 export const MONSTER_BASE = 48; // hit-box of a 1.0-scale small monster
@@ -62,6 +62,9 @@ export class Monster {
 
     this.minX = spec.minX;
     this.maxX = spec.maxX;
+    // full-width roamers (band fills the world) loop across the seam instead of
+    // bouncing at minX/maxX, and chase/aim the short way around — see _dx().
+    this.wrap = !!spec.wrap;
     this.y = spec.y;       // feet on the ledge surface
     this.homeY = spec.y;   // the ledge it patrols / hovers over
     this.x = spec.x != null ? spec.x : (spec.minX + spec.maxX) / 2;
@@ -120,8 +123,12 @@ export class Monster {
 
     // confine to the patrol band (fly bosses bounce inside _drift)
     if (!this.fly) {
-      if (this.x <= this.minX) { this.x = this.minX; this.dir = 1; this.dashT = 0; }
-      if (this.x >= this.maxX) { this.x = this.maxX; this.dir = -1; this.dashT = 0; }
+      if (this.wrap) {
+        this.x = wrapX(this.x); // loop across the seam — never bounce
+      } else {
+        if (this.x <= this.minX) { this.x = this.minX; this.dir = 1; this.dashT = 0; }
+        if (this.x >= this.maxX) { this.x = this.maxX; this.dir = -1; this.dashT = 0; }
+      }
     }
     this.facing = this.dir;
 
@@ -150,7 +157,9 @@ export class Monster {
         this.falling = false;
         if (support.y > this.homeY + 4) {
           // fell to a genuinely lower ledge -> adopt it and confine the patrol
+          // (a tumbled mob stops looping the world and patrols where it landed)
           this.homeY = support.y;
+          this.wrap = false;
           this.minX = Math.max(this.minX, support.minX);
           this.maxX = Math.min(this.maxX, support.maxX);
           if (this.minX > this.maxX) this.minX = this.maxX = (support.minX + support.maxX) / 2;
@@ -175,15 +184,20 @@ export class Monster {
     for (const p of players) {
       if (!p.alive || p.rescued || p.invuln > 0) continue;
       if (Math.abs(p.y - this.y) > vCap) continue;
-      const d = Math.hypot(p.x - this.x, (p.y - this.y) * 0.6);
+      const d = Math.hypot(this._dx(p.x), (p.y - this.y) * 0.6);
       if (d < best) { best = d; target = p; }
     }
     return target;
   }
 
   // ---- locomotion primitives -------------------------------------------------
+  // Signed horizontal distance to a world-x. Full-width roamers measure it the
+  // short way around the wrap seam, so they chase & aim across the loop edge
+  // instead of the long way back through the whole floor.
+  _dx(tx) { return this.wrap ? wrapDX(this.x, tx) : tx - this.x; }
+
   _chase(dt, target) {
-    if (target) this.dir = Math.sign(target.x - this.x) || this.dir;
+    if (target) this.dir = Math.sign(this._dx(target.x)) || this.dir;
     const sp = target ? this.aggro : this.speed;
     this.x += this.dir * sp * dt;
   }
@@ -192,8 +206,8 @@ export class Monster {
     if (target) {
       // keep an ideal firing gap: back off when crowded, shuffle in when far,
       // but never hold perfectly still so a ranged mob does not read as a dead prop
-      this.dir = Math.sign(target.x - this.x) || this.dir;
-      const gap = Math.abs(target.x - this.x);
+      this.dir = Math.sign(this._dx(target.x)) || this.dir;
+      const gap = Math.abs(this._dx(target.x));
       const ideal = this.detect * 0.6;
       if (gap < ideal - 30) this.x -= this.dir * this.speed * 0.8 * dt;
       else if (gap > ideal + 40) this.x += this.dir * this.speed * 0.7 * dt;
@@ -218,7 +232,7 @@ export class Monster {
 
   _dash(dt, target) {
     if (this.dashT > 0) { this.st = 'dash'; this.x += this.dir * (this.def.dashSpeed || 480) * dt; return; }
-    if (target) this.dir = Math.sign(target.x - this.x) || this.dir;
+    if (target) this.dir = Math.sign(this._dx(target.x)) || this.dir;
     const aligned = this.behavior === 'charge' || (target && Math.abs(target.y - this.y) < 80);
     const wants = this.behavior === 'charge' || target;
     if (this.dashCd <= 0 && aligned && wants) {
@@ -232,7 +246,7 @@ export class Monster {
   }
 
   _hop(dt, target) {
-    if (target) this.dir = Math.sign(target.x - this.x) || this.dir;
+    if (target) this.dir = Math.sign(this._dx(target.x)) || this.dir;
     const sp = target ? this.aggro : this.speed;
     this.x += this.dir * sp * dt; // keeps travelling through the air too
     if (!this.falling && this.hopCd <= 0) {
@@ -248,13 +262,15 @@ export class Monster {
   /** Fan of `count` bolts aimed at target, spread radians apart. */
   _fire(target, count, spread, speed) {
     if (!target) return null;
-    this.dir = Math.sign(target.x - this.x) || this.dir;
+    this.dir = Math.sign(this._dx(target.x)) || this.dir;
     if (this.castCd > 0) return null;
     this.castCd = this.def.castCd || 2.3;
     this.st = 'cast';
     const ox = this.x;
     const oy = this.y - this.h * 0.5;
-    const base = Math.atan2((target.y - 20) - oy, target.x - ox);
+    // aim at the nearest image of the target — across the seam if that's closer;
+    // the bolt itself wraps in GameRoom, so a short-way shot lands correctly.
+    const base = Math.atan2((target.y - 20) - oy, this._dx(target.x));
     const dmg = this.boss ? 12 : 6;
     const bolts = [];
     for (let i = 0; i < count; i++) {

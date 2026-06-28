@@ -45,23 +45,31 @@ const lerp = (a, b, t) => a + (b - a) * t;
 /** altitude 0(ground)…1(summit) for floor i */
 const alt = (i) => i / (FLOOR_COUNT - 1);
 
+// Horizontal gap kept between a moving lift's travel and the brick beside it, so
+// the collision reads cleanly (the lift never visually touches its neighbour).
+const MOVE_GAP = 10;
+
 let nextId = 1;
 
 function makePlatform(floor, type, x, y, w, opts = {}) {
   const p = { id: nextId++, floor, type, x: Math.round(x), y, w: Math.round(w), h: PLATFORM_H };
   if (type === Tile.MOVING) {
+    // Travel is confined to [minX, maxX]. The caller may pass a tighter region
+    // (the clear band beside the floor's ledge) so the lift never slides over
+    // another brick — its sweep stays a pure function of time, just with a
+    // smaller range, so client/server lock-step needs no extra packets.
     const half = floorBandHalfWidth(floor);
     const center = WORLD_WIDTH / 2;
-    const minX = center - half;
-    const maxX = center + half;
+    const minX = opts.minX != null ? opts.minX : center - half;
+    const maxX = opts.maxX != null ? opts.maxX : center + half;
     let range = rnd(90, 240);
     range = Math.min(range, (maxX - minX - w) / 2 - 4);
-    range = Math.max(40, range);
+    range = Math.max(0, range); // a cramped region may shrink travel toward 0
     p.range = Math.round(range);
     // lifts get faster the higher they live -> tighter timing up top
     p.speed = rnd(0.6, 1.1) * lerp(MOVING_SPEED_LOW, MOVING_SPEED_HIGH, opts.t ?? 0);
     p.phase = rnd(0, Math.PI * 2);
-    // recenter base so the full travel stays inside the band
+    // recenter base so the full travel stays inside the region
     const c = clamp(p.x + w / 2, minX + range + w / 2, maxX - range - w / 2);
     p.x = Math.round(c - w / 2);
   }
@@ -132,13 +140,19 @@ export function generateLevel(round = 1) {
 
       // side lifts (moving / speed) — pure flavour + a way to reach a side item;
       // they never gate the climb, so timing failure just costs you the detour.
+      // Each lives in the clear band to ONE side of the ledge and is confined
+      // there, so a moving lift slides back and forth without ever overlapping
+      // the ledge or the other lift (the ledge always sits between the two).
       const sideCount = 1 + (chance(0.6) ? 1 : 0);
-      for (let k = 0; k < sideCount; k++) {
-        const side = k === 0 ? -1 : 1;
-        const w = rnd(120, 170);
-        const sx = clamp(center + side * half * 0.6 - w / 2, minX, maxX - w);
+      const sideRegions = [
+        { lo: minX, hi: ledge.x - MOVE_GAP },           // clear band left of the ledge
+        { lo: ledge.x + ledge.w + MOVE_GAP, hi: maxX },  // clear band right of the ledge
+      ].filter((r) => r.hi - r.lo >= 128); // must fit at least a minimum-width lift
+      for (const region of shuffle(sideRegions).slice(0, sideCount)) {
+        const w = Math.min(rnd(120, 170), region.hi - region.lo - 8);
+        const sx = clamp(rnd(region.lo, region.hi - w), region.lo, region.hi - w);
         const type = chance(0.6) ? Tile.MOVING : Tile.SPEED;
-        platforms.push(makePlatform(i, type, sx, y, w, { t }));
+        platforms.push(makePlatform(i, type, sx, y, w, { t, minX: region.lo, maxX: region.hi }));
       }
       floors.push({ i, y, hazard: false, mainX: pathX, open: true });
       continue;
@@ -208,17 +222,19 @@ export function generateLevel(round = 1) {
   for (const fi of pickHigh(interior, monsterCount)) {
     const m = platforms.find((p) => p.floor === fi && p.main);
     if (!m) continue;
-    let lo, hi;
+    let lo, hi, wrap = false;
     if (floors[fi].open) { lo = m.x + 8; hi = m.x + m.w - 8; } // patrol the landing ledge
     else {
       const bandHalf = floorBandHalfWidth(fi) * MONSTER_BAND_WIDEN;
       lo = clamp(center - bandHalf - 24, 24, WORLD_WIDTH - 24);
       hi = clamp(center + bandHalf + 24, 24, WORLD_WIDTH - 24);
+      // a band wide enough to reach both world edges roams the whole loop & wraps
+      wrap = lo <= 24.5 && hi >= WORLD_WIDTH - 24.5;
     }
     monsters.push({
       floor: fi,
       kind: pick(roster),
-      minX: lo, maxX: hi,
+      minX: lo, maxX: hi, wrap,
       y: floorTopY(fi),
       platformId: m.id,
     });
@@ -239,10 +255,10 @@ export function generateLevel(round = 1) {
   for (const fi of itemFloors) {
     const m = platforms.find((p) => p.floor === fi && p.main);
     if (!m) continue;
-    // high up, favour survival picks (heal / jump); low, anything goes
+    // high up, favour survival / escape picks (heal / jump / shield / haste); low, anything goes
     const kind = alt(fi) > 0.5
-      ? pick([ItemKind.HEAL, ItemKind.HEAL, ItemKind.JUMP, ItemKind.FIRE])
-      : pick([ItemKind.FIRE, ItemKind.HEAL, ItemKind.JUMP]);
+      ? pick([ItemKind.HEAL, ItemKind.HEAL, ItemKind.JUMP, ItemKind.FIRE, ItemKind.SHIELD, ItemKind.HASTE])
+      : pick([ItemKind.FIRE, ItemKind.HEAL, ItemKind.JUMP, ItemKind.HASTE, ItemKind.SHIELD]);
     items.push({ floor: fi, kind, x: m.x + m.w / 2, y: m.y - 42 });
   }
 
@@ -268,7 +284,7 @@ function makeBoss(round, floors, platforms, center) {
     floor = any.length ? pick(any) : Math.max(2, top - 3);
   }
 
-  let lo, hi;
+  let lo, hi, wrap = false;
   if (floors[floor].open) {
     const m = platforms.find((p) => p.floor === floor && p.main);
     lo = m ? m.x + 20 : center - 130;
@@ -277,8 +293,9 @@ function makeBoss(round, floors, platforms, center) {
     const bandHalf = floorBandHalfWidth(floor) * MONSTER_BAND_WIDEN;
     lo = clamp(center - bandHalf, 60, WORLD_WIDTH - 60);
     hi = clamp(center + bandHalf, 60, WORLD_WIDTH - 60);
+    wrap = lo <= 60.5 && hi >= WORLD_WIDTH - 60.5;
   }
-  return { boss: true, kind, floor, minX: lo, maxX: hi, x: (lo + hi) / 2, y: floorTopY(floor) };
+  return { boss: true, kind, floor, minX: lo, maxX: hi, wrap, x: (lo + hi) / 2, y: floorTopY(floor) };
 }
 
 // Sample up to n distinct entries from `pool`, each chosen with probability
