@@ -70,7 +70,7 @@ const Renderer = (() => {
       case 'hit': burst(e.x, e.y, e.color || '#fff', 7, 2.2); break;
       case 'cast': for (let i = 0; i < (e.big ? 16 : 8); i++) burst(e.x, e.y, '#7fb0ff', 1, 2); sfx('fireball'); break;
       case 'explosion': rings.push({ x: e.x, y: e.y, r: 8, max: e.radius, life: 0.45, color: '#ff8a3d', fill: true }); burst(e.x, e.y, '#ffb347', 26, 4); shake = Math.max(shake, 9); sfx('explosion'); break;
-      case 'whirlwind': rings.push({ x: e.x, y: e.y, r: 8, max: e.radius, life: 0.5, color: e.color }); for (let i = 0; i < 22; i++) burst(e.x, e.y, e.color, 1, 4); shake = Math.max(shake, 6); sfx('swing', { vol: 0.5 }); break; // ability cue: reuse the swing sample at a set volume (the bare swing is silent)
+      case 'whirlwind': rings.push({ x: e.x, y: e.y, r: 8, max: e.radius, life: 0.5, color: e.color }); for (let i = 0; i < 22; i++) burst(e.x, e.y, e.color, 1, 4); shake = Math.max(shake, 6); sfx('swing', { vol: 1 }); break; // ability cue: reuse the swing sample (the bare basic-attack swing is silent at its own call site)
       // warrior 铁壁战吼: golden brace ring + a shield bloom + rising green heal motes
       case 'warcry':
         rings.push({ x: e.x, y: e.y, r: 10, max: e.radius, life: 0.5, color: '#ffd766', fill: true });

@@ -18,7 +18,7 @@
 const Audio = (() => {
   'use strict';
 
-  const ASSET_VERSION = '20260626g';
+  const ASSET_VERSION = '20260628a';
 
   // Single source of truth — bump both this and the <script> ?v= when assets change.
   const MANIFEST = {
@@ -36,18 +36,18 @@ const Audio = (() => {
     'bgm-loop':   'audio/music/bgm-loop.mp3?v=' + ASSET_VERSION,
   };
 
-  // Per-SFX mix. Combat here is constant — melee slashes and mage casts fire
-  // many times a second — so those cues are turned down and rate-limited
-  // (`minGap` = min ms between repeats) to keep them from stacking into a wall
-  // of noise. Rare, meaningful cues (pickup) are boosted so they cut through
-  // the mix instead of getting buried. The basic-attack swing is the spammiest
-  // of all and is silenced at the call site (render.js), not here. Any sound
-  // with no entry plays at full volume with no throttle.
+  // Per-SFX mix. Loudness now lives in the audio files themselves (each is
+  // peak-normalized to ~0.3 / -10.5 dBFS), so the code applies no per-sound
+  // gain — every entry plays at gain 1. What stays here is throttling:
+  // `minGap` = min ms between repeats, which keeps the spammiest combat cues
+  // (slash, fireball, explosion fire many times a second) from stacking into a
+  // wall of the same sample. The basic-attack swing is silenced at the call
+  // site (render.js), not here. Any sound with no entry plays at gain 1, no throttle.
   const SFX_MIX = {
-    'slash':     { gain: 0.35, minGap: 90 },  // melee impact — one per landed hit
-    'fireball':  { gain: 0.2,  minGap: 90 },  // mage cast — one per shot
-    'explosion': { gain: 0.6,  minGap: 70 },  // fireball detonation
-    'pickup':    { gain: 1.3,  minGap: 0  },  // rare + important — louder than combat
+    'slash':     { gain: 1, minGap: 90 },  // melee impact — one per landed hit
+    'fireball':  { gain: 1, minGap: 90 },  // mage cast — one per shot
+    'explosion': { gain: 1, minGap: 70 },  // fireball detonation
+    'pickup':    { gain: 1, minGap: 0  },  // rare + important
   };
 
   const PREF_KEYS = {
@@ -64,7 +64,7 @@ const Audio = (() => {
   const lastPlay = new Map();   // name -> last trigger time (ms), for SFX_MIX throttling
   let musicSource = null;      // the looping source, if any
   let musicGain = null;
-  let masterVol = 0.8;
+  let masterVol = 1;
   let muted = false;
   let preloadPromise = null;   // resolved when MANIFEST entries are decoded (or skipped)
   let pendingMusic = null;     // name requested before preload finished
@@ -186,9 +186,10 @@ const Audio = (() => {
     _startMusic(name);
   }
 
-  // BGM is half of the master slider so the music bed doesn't drown out SFX
-  // when the player cranks the volume. Independent of the SFX mute toggle.
-  function _bgmTarget() { return masterVol * 0.5; }
+  // BGM tracks the master slider 1:1 (no separate attenuation): loudness is
+  // baked into bgm-loop.mp3, normalized to the same ~0.3 peak as the SFX.
+  // Independent of the SFX mute toggle.
+  function _bgmTarget() { return masterVol; }
 
   function _startMusic(name) {
     if (!ctx) return;
@@ -231,8 +232,8 @@ const Audio = (() => {
   }
 
   function loadPrefs() {
-    const m = parseFloat(_readPref(PREF_KEYS.master, '0.8'));
-    masterVol = isFinite(m) ? clamp01(m) : 0.8;
+    const m = parseFloat(_readPref(PREF_KEYS.master, '1'));
+    masterVol = isFinite(m) ? clamp01(m) : 1;
     muted = _readPref(PREF_KEYS.muted, '0') === '1';
     if (masterGain) masterGain.gain.value = muted ? 0 : masterVol;
   }
