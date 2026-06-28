@@ -290,6 +290,8 @@ export class GameRoom {
     p.deaths++;
     p.deadTimer = DEATH_DURATION;
     p.vx = 0; p.vy = 0;
+    // 死亡即清空所有限时 buff（火球/跳跃/加速/免伤）——重生从零开始
+    p.jumpBuff = 0; p.fireBuff = 0; p.hasteBuff = 0; p.shield = 0;
     this.fx.push({ t: 'death', x: p.x, y: p.y, id: p.id, name: p.name, cause: cause || '' });
     this.io.emit('playerDied', { id: p.id, name: p.name, cause: cause || '', x: p.x, y: p.y });
   }
