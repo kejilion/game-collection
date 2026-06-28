@@ -701,7 +701,7 @@ const Renderer = (() => {
     if (self && m.hp != null && m.hp > 0) {
       const dx = self.x - m.x, dy = self.y - m.y;
       if (dx * dx + dy * dy <= 140 * 140) {
-        const isTouch = G.isTouch || (window.matchMedia && window.matchMedia('(hover:none) and (pointer:coarse)').matches);
+        const isTouch = document.body.classList.contains('is-touch') || (window.matchMedia && window.matchMedia('(hover:none) and (pointer:coarse)').matches);
         const bob = Math.sin(performance.now() / 320) * 2;
         const by = m.y - r - 70 + bob;
         const padX = 9, padY = 5;
