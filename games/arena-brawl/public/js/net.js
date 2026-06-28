@@ -14,7 +14,7 @@ const Net = (() => {
     ws = new WebSocket(`${proto}://${location.host}`);
     ws.onopen = () => {
       onOpen();
-      pingTimer = setInterval(() => send({ type: 'ping', t: Date.now() }), 3000);
+      pingTimer = setInterval(() => send({ type: 'ping', t: Date.now() }), 1000);
     };
     ws.onmessage = (ev) => {
       let m; try { m = JSON.parse(ev.data); } catch (e) { return; }

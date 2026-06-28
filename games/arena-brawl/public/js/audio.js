@@ -45,7 +45,7 @@ const Audio = (() => {
   // with no entry plays at full volume with no throttle.
   const SFX_MIX = {
     'slash':     { gain: 0.35, minGap: 90 },  // melee impact — one per landed hit
-    'fireball':  { gain: 0.5,  minGap: 90 },  // mage cast — one per shot
+    'fireball':  { gain: 0.2,  minGap: 90 },  // mage cast — one per shot
     'explosion': { gain: 0.6,  minGap: 70 },  // fireball detonation
     'pickup':    { gain: 1.3,  minGap: 0  },  // rare + important — louder than combat
   };

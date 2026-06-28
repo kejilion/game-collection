@@ -623,60 +623,89 @@
     return view;
   }
 
-  function predictSelf(server, dt, nowT, snapT) {
-    if (!G.pred.ready) {
-      G.pred.x = server.x; G.pred.y = server.y; G.pred.ready = true;
-      G.srv = { x: server.x, y: server.y, t: snapT, rt: nowT, vx: 0, vy: 0 };
-      return;
-    }
-    // Estimate the server's own velocity from consecutive snapshots so the
-    // reconciliation target can be EXTRAPOLATED between the 20Hz packets instead
-    // of stepping. Easing toward a stepping target was the residual judder: the
-    // whole view pulsed at the packet rate while moving. Only trust the velocity
-    // for a normal walking step — a big jump (dash/blink/respawn) is a teleport,
-    // not motion, so we don't extrapolate through it.
-    if (!G.srv) G.srv = { x: server.x, y: server.y, t: snapT, rt: nowT, vx: 0, vy: 0 };
-    if (snapT !== G.srv.t) {
-      const dts = (snapT - G.srv.t) / 1000;
-      const jump = Math.hypot(server.x - G.srv.x, server.y - G.srv.y);
-      if (dts > 0 && dts < 0.5 && jump < 60) { G.srv.vx = (server.x - G.srv.x) / dts; G.srv.vy = (server.y - G.srv.y) / dts; }
-      else { G.srv.vx = 0; G.srv.vy = 0; }
-      G.srv.x = server.x; G.srv.y = server.y; G.srv.t = snapT; G.srv.rt = nowT;
-    }
-    if (server.dead) { G.pred.x = server.x; G.pred.y = server.y; G.srv.vx = 0; G.srv.vy = 0; return; }
+  // --------------------------------------------------------------- self prediction
+  // Local input is integrated immediately into a BASE position (instant + perfectly
+  // smooth); a separately tracked, LOW-PASSED drift then drives a decaying render
+  // correction. Drift is measured by comparing each authoritative snapshot to where
+  // our base WAS at the instant that snapshot represents (its arrival minus the
+  // measured RTT) — so network latency is removed and only genuine misprediction
+  // survives to be corrected. We deliberately DON'T extrapolate through a
+  // client-estimated server velocity: that estimate is Δpos/Δarrival, which explodes
+  // under packet jitter and was the high-latency judder added by 88fd495 (the server
+  // snapshot carries no authoritative velocity to extrapolate cleanly, unlike
+  // ice-climber's). Net effect (sim-validated): steady motion ≈ 0 lag and ≈ 0 jitter;
+  // real corrections (knockback, slow tiles, walls) are absorbed smoothly, not snapped.
+  const PRED_DRIFT_A = 0.30;   // per-snapshot low-pass on the measured drift
+  const PRED_CORR_TAU = 0.06;  // s — how fast the render correction tracks the drift
+  const PRED_SNAP = 150;       // px — a bigger jump is a teleport/respawn → hard reset
+  const PRED_HIST_S = 0.7;     // s — base-path history kept for latency matching
 
+  function predSampleHist(h, t) {
+    if (h.length === 0) return null;
+    if (t <= h[0].t) return h[0];
+    const last = h[h.length - 1];
+    if (t >= last.t) return last;
+    for (let i = h.length - 1; i > 0; i--) {
+      if (h[i - 1].t <= t && h[i].t >= t) {
+        const span = h[i].t - h[i - 1].t || 1, a = (t - h[i - 1].t) / span;
+        return { x: h[i - 1].x + (h[i].x - h[i - 1].x) * a, y: h[i - 1].y + (h[i].y - h[i - 1].y) * a };
+      }
+    }
+    return last;
+  }
+
+  function predReset(server, nowT, snapT) {
+    G.pred.x = server.x; G.pred.y = server.y; G.pred.ready = true;
+    G.base = { x: server.x, y: server.y };
+    G.corr = { x: 0, y: 0 };
+    G.drift = { x: 0, y: 0 };
+    G.hist = [{ t: nowT, x: server.x, y: server.y }];
+    G.srv = { x: server.x, y: server.y, t: snapT };
+  }
+
+  function predictSelf(server, dt, nowT, snapT) {
+    // (re)initialise on first frame / after respawn / while dead (hold the spot)
+    if (!G.pred.ready || !G.base || server.dead) { predReset(server, nowT, snapT); return; }
+
+    // Fold a freshly-arrived snapshot into the low-passed drift.
+    if (snapT !== G.srv.t) {
+      const rtt = clamp((Net.latency || 0) / 1000, 0, 0.6);
+      const was = predSampleHist(G.hist, snapT - rtt) || G.base; // base at the represented time
+      const ix = server.x - was.x, iy = server.y - was.y;        // genuine drift, latency removed
+      if (Math.hypot(ix - G.drift.x, iy - G.drift.y) > PRED_SNAP) { predReset(server, nowT, snapT); return; }
+      G.drift.x += (ix - G.drift.x) * PRED_DRIFT_A;
+      G.drift.y += (iy - G.drift.y) * PRED_DRIFT_A;
+      G.srv.x = server.x; G.srv.y = server.y; G.srv.t = snapT;
+    }
+
+    // Integrate local input into the base (instant + perfectly smooth).
     const cls = G.defs.classes[server.cls];
     let dx = (Input.keys.right ? 1 : 0) - (Input.keys.left ? 1 : 0);
     let dy = (Input.keys.down ? 1 : 0) - (Input.keys.up ? 1 : 0);
-    const moving = dx !== 0 || dy !== 0;
-    if (moving) {
+    if ((dx || dy) && cls) {
       const len = Math.hypot(dx, dy); dx /= len; dy /= len;
       const sp = cls.speed * (server.buffs && server.buffs.includes('speed') ? 1.42 : 1);
-      G.pred.x += dx * sp * dt; G.pred.y += dy * sp * dt;
-      // mirror server cover collision so prediction doesn't fight the authority
+      G.base.x += dx * sp * dt; G.base.y += dy * sp * dt;
+      // mirror server cover collision so the base doesn't fight the authority
       for (const o of G.obstacles) {
-        const ox = G.pred.x - o.x, oy = G.pred.y - o.y, min = o.r + 22, d2 = ox * ox + oy * oy;
-        if (d2 < min * min) { const d = Math.sqrt(d2) || 0.001, push = min - d; G.pred.x += ox / d * push; G.pred.y += oy / d * push; }
+        const ox = G.base.x - o.x, oy = G.base.y - o.y, min = o.r + 22, d2 = ox * ox + oy * oy;
+        if (d2 < min * min) { const d = Math.sqrt(d2) || 0.001, push = min - d; G.base.x += ox / d * push; G.base.y += oy / d * push; }
       }
-      G.pred.x = clamp(G.pred.x, 22, G.world.width - 22);
-      G.pred.y = clamp(G.pred.y, 22, G.world.height - 22);
+      G.base.x = clamp(G.base.x, 22, G.world.width - 22);
+      G.base.y = clamp(G.base.y, 22, G.world.height - 22);
     }
-    // Reconcile toward the EXTRAPOLATED authoritative position. While we're driving
-    // movement, advance the target by the server's measured velocity over the time
-    // since the snapshot arrived (capped at ~2 packets) so it glides smoothly; when
-    // we're not pressing anything, hold the raw snapshot so the stop settles without
-    // an overshoot. Smoothing is frame-rate independent (≈ the old 0.16/frame@60fps),
-    // so 120/144Hz screens don't over-correct.
-    const age = moving ? clamp((nowT - G.srv.rt) / 1000, 0, 0.1) : 0;
-    const tx = G.srv.x + G.srv.vx * age;
-    const ty = G.srv.y + G.srv.vy * age;
-    const err = Math.hypot(tx - G.pred.x, ty - G.pred.y);
-    if (err > 150) { G.pred.x = tx; G.pred.y = ty; }
-    else {
-      const k = 1 - Math.exp(-dt * 10.5);
-      G.pred.x += (tx - G.pred.x) * k;
-      G.pred.y += (ty - G.pred.y) * k;
-    }
+
+    // Record the base path so the next snapshot can be compared at the right age.
+    G.hist.push({ t: nowT, x: G.base.x, y: G.base.y });
+    while (G.hist.length > 1 && G.hist[0].t < nowT - PRED_HIST_S) G.hist.shift();
+
+    // Ease the render correction toward the (low-passed) drift, frame-rate independent.
+    const k = 1 - Math.exp(-dt / PRED_CORR_TAU);
+    G.corr.x += (G.drift.x - G.corr.x) * k;
+    G.corr.y += (G.drift.y - G.corr.y) * k;
+
+    G.pred.x = G.base.x + G.corr.x;
+    G.pred.y = G.base.y + G.corr.y;
   }
 
   function lerpList(amap, bmap, alpha) {
