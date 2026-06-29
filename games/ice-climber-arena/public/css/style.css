@@ -218,6 +218,14 @@ body.is-touch #rotate-hint.show {
 .hud > div { position: absolute; }
 
 .hud-tl { top: 12px; left: 12px; display: flex; flex-direction: column; gap: 7px; }
+.hud-btn {
+  width: fit-content; cursor: pointer; pointer-events: auto;
+  background: rgba(20, 45, 70, 0.55); color: #fff; border: 0; border-radius: 10px;
+  padding: 4px 9px; font-size: 16px; line-height: 1; backdrop-filter: blur(3px);
+  transition: background .12s, transform .12s;
+}
+.hud-btn:hover { background: rgba(30, 70, 110, 0.7); }
+.hud-btn:active { transform: scale(.94); }
 .hud-stat {
   display: inline-flex; align-items: baseline; gap: 5px;
   background: rgba(20, 45, 70, 0.55); color: #fff; padding: 4px 11px; border-radius: 10px;
@@ -346,6 +354,50 @@ body.is-touch #rotate-hint.show {
 }
 .conn-status.ok { background: rgba(40, 150, 90, .6); }
 .conn-status.bad { background: rgba(190, 50, 50, .7); }
+
+/* ===== 设置 / 暂停菜单 ===== */
+.settings-overlay { z-index: 60; }
+.settings-card { width: min(360px, 90%); }
+.settings-card h2 { margin: 0 0 16px; }
+.settings-toggles { display: flex; gap: 10px; margin-bottom: 16px; }
+.set-toggle {
+  flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px;
+  cursor: pointer; border: 2px solid var(--accent); border-radius: 12px;
+  padding: 12px 8px; background: rgba(46, 155, 230, .12); color: var(--accent-deep);
+  font-weight: 700; transition: all .12s;
+}
+.set-toggle .set-ico { font-size: 24px; line-height: 1; }
+.set-toggle .set-name { font-size: 14px; }
+.set-toggle .set-state { font-size: 12px; opacity: .85; }
+.set-toggle:hover { filter: brightness(1.03); }
+.set-toggle[aria-pressed="false"] {
+  border-color: var(--panel-edge); background: rgba(150, 165, 180, .14); color: #8a97a5;
+}
+.set-toggle[aria-pressed="false"] .set-ico { filter: grayscale(1) opacity(.55); }
+.settings-actions { display: flex; flex-direction: column; gap: 9px; }
+.set-btn {
+  cursor: pointer; border: 0; border-radius: 12px; padding: 12px 14px;
+  font-size: 15px; font-weight: 700; color: var(--ink); background: #e6eef6;
+  transition: transform .1s, filter .12s;
+}
+.set-btn:hover { filter: brightness(1.04); }
+.set-btn:active { transform: scale(.98); }
+.set-btn.primary { background: linear-gradient(180deg, #74d0ff, var(--accent-deep)); color: #06243a; }
+.set-btn.danger { background: #ffe1e1; color: #b3322f; }
+
+/* 退出告别屏 */
+.bye-overlay {
+  position: absolute; inset: 0; z-index: 70; display: grid; place-items: center;
+  background: rgba(8, 22, 40, .86); backdrop-filter: blur(6px); pointer-events: auto;
+}
+.bye-inner { text-align: center; color: #fff; }
+.bye-emoji { font-size: 54px; line-height: 1; }
+.bye-inner h2 { margin: 10px 0 4px; font-size: 28px; }
+.bye-inner p { opacity: .8; margin: 0 0 18px; }
+.bye-inner .set-btn { min-width: 170px; }
+
+/* hide on-screen touch controls while the settings menu is up */
+body.settings-open #touch-controls { display: none; }
 
 
 /* ===== 个人死亡横幅 ===== */

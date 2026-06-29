@@ -11,6 +11,7 @@ import { FLOOR_COUNT, WORLD_WIDTH } from '../shared/constants.js';
 import {
   setupCreator, randomLook, randomName, fmtTime, renderLeaderboard, escapeHtml,
 } from './ui.js';
+import { audio } from './audio.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -31,6 +32,9 @@ const app = {
   phase: 'playing',     // last known round phase from snapshots
   escapeRank: null,     // this client's finishing place once rescued (for the spectator badge)
   spectating: false,    // true only AFTER the win banner clears -> camera follows leader + badge
+  inGame: false,        // true between joining a game and leaving/quitting
+  loopStarted: false,   // the rAF loop is started once and then guarded by inGame
+  settingsOpen: false,  // the settings / pause overlay is up
 };
 
 const net = new Net();
@@ -44,6 +48,7 @@ input.onAttackEdge = () => {
   const now = performance.now();
   if (now - _noAmmoToastAt < 1200) return; // 节流
   _noAmmoToastAt = now;
+  audio.play('no_ammo');
   toast('\ud83d\udd25 需拾取火球道具才能攻击', 'bad');
 };
 const predictor = new LocalPredictor();
@@ -179,6 +184,8 @@ async function refreshMenuData() {
 // ---------------------------------------------------------------- start game
 async function startGame() {
   if (app.started) return;
+  audio.unlock();        // this click is the user gesture that boots Web Audio
+  audio.play('ui_start');
   app.name = ($('name-input').value || '').trim() || randomName();
   app.started = true;
   $('start-btn').disabled = true;
@@ -191,10 +198,14 @@ async function startGame() {
 
   $('menu').classList.add('hidden');
   $('game').classList.remove('hidden');
+  $('bye-overlay').classList.add('hidden');
   renderer = new Renderer($('view'));
   fitViewport();                 // size the canvas + HUD to this screen (no stretch)
   input.enable(true);
-  requestAnimationFrame(loop);
+  app.inGame = true;
+  // single persistent loop: start it once, then gate the body on app.inGame so
+  // leaving / re-entering never stacks a second rAF loop.
+  if (!app.loopStarted) { app.loopStarted = true; requestAnimationFrame(loop); }
 }
 
 function applyInit(init) {
@@ -220,12 +231,13 @@ function wireNet() {
     $('hud-round').textContent = d.round;
     hideOverlay(); hideWin(); hideDeathBanner();
     // 新一局开始：显示醒目 banner，并 toast 提示。
+    audio.play('round_start');
     showRoundStartBanner(d.round);
     toast(`第 ${d.round} 局开始！`, 'good');
   });
   net.on('roundEnd', onRoundEnd);
   net.on('rescued', onRescued);
-  net.on('plane', () => toast('✈️ 救援飞机来了！看准时机跳起抓住绳子！', 'good'));
+  net.on('plane', () => { audio.play('plane'); toast('✈️ 救援飞机来了！看准时机跳起抓住绳子！', 'good'); });
   net.on('system', (d) => {
     if (!d || !d.msg) return;
     // 冠亚季军总结、新局开始、普通系统消息都进聊天桦，保证所有人看到。
@@ -265,12 +277,16 @@ function onSnapshot(data) {
     if (!self.res) { app.escapeRank = null; app.spectating = false; } // back in the race: reset spectate state
     updateHud(self);
     updateSpectate(self);
+    // freeze cue: play once on the 0→1 stun edge (penguin / ice mage control)
+    if (self.stun && !app._wasStun && !self.dead) audio.play('freeze');
+    app._wasStun = self.stun ? 1 : 0;
     if (!self.dead && app.deathShown) hideDeathBanner();
   }
 
   if (data.fx && renderer) {
     for (const fx of data.fx) {
       renderer.addFx(fx);
+      audio.fromFx(fx, app.localServer, net.selfId); // positioned SFX off the same fx stream
       if (fx.t === 'death' && fx.id === net.selfId) {
         renderer.addShake(22);
         showDeathBanner(fx.cause);
@@ -289,6 +305,7 @@ function onSnapshot(data) {
 }
 
 function onRoundEnd(d) {
+  audio.play('round_end');
   // round over: players who did not finish get no time this round
   if (app.finalMs == null) app.localStartMs = null;
   app.rescueDeadline = null;
@@ -332,6 +349,7 @@ const WIN_BANNER_MS = 6000;
 
 function onRescued(d) {
   if (d.id === net.selfId) {
+    audio.play('win');
     app.finalMs = d.timeMs;
     app.escapeRank = d.rank;
     app.spectating = false; // hold the camera on our own pickup until the banner clears
@@ -345,6 +363,7 @@ function onRescued(d) {
     app._winTimer = setTimeout(enterSpectate, WIN_BANNER_MS);
     toast(`✈️ 第 ${d.rank} 名逃生成功！`, 'good');
   } else {
+    audio.play('escape_other');
     toast(`✈️ ${d.name} 第 ${d.rank} 名逃生！`, 'good');
   }
 }
@@ -368,7 +387,7 @@ function loop(now) {
   const dt = Math.min(0.05, (now - lastT) / 1000);
   lastT = now;
 
-  if (app.level) {
+  if (app.inGame && app.level) {
     const tEst = Math.max(0, (net.now() - app.roundStartMs) / 1000);
     const rects = buildRects(app.level.platforms, app.brokenIce, tEst);
     predictor.update(dt, input.state, rects);
@@ -380,6 +399,19 @@ function loop(now) {
     }
 
     renderer.update(dt);
+
+    // Jump / land cues are purely local (predicted) — the server sends no fx for
+    // them. Watch the predicted onGround edge: leaving the ground while moving up
+    // is a jump; touching down after a real fall is a land (gated on the prior
+    // frame's downward speed so tiny ledge-steps stay silent).
+    const localView = predictor.view();
+    const ls = app.localServer;
+    if (localView && ls && !ls.dead && !ls.res && !ls.lift) {
+      if (app._wasGround === true && !localView.onGround && localView.vy < -10) audio.play('jump');
+      else if (app._wasGround === false && localView.onGround && (app._fallVy || 0) > 150) audio.play('land');
+    }
+    if (localView) { app._wasGround = localView.onGround; app._fallVy = localView.vy; }
+
     // once rescued, the camera follows the leading climber still racing the
     // departure countdown instead of locking onto the empty summit.
     let spectateY = null;
@@ -392,7 +424,7 @@ function loop(now) {
       brokenIce: app.brokenIce,
       tEst,
       rects, // reuse the collision rects already built for prediction this frame
-      local: predictor.view(),
+      local: localView,
       localServer: app.localServer,
       localLook: app.look,
       localName: app.name,
@@ -617,6 +649,113 @@ function setConn(text, cls) {
   el.className = 'conn-status ' + (cls || '');
 }
 
+function wireAudioControls() {
+  // Boot Web Audio + BGM on the very first interaction anywhere (autoplay policy),
+  // so samples are decoded and music is ready by the time the player hits 开始攀登.
+  const kick = () => audio.unlock();
+  window.addEventListener('pointerdown', kick, { once: true });
+  window.addEventListener('keydown', kick, { once: true });
+
+  // M = quick SFX mute toggle (ignored while typing in a text field).
+  window.addEventListener('keydown', (e) => {
+    if (e.code !== 'KeyM') return;
+    const ae = document.activeElement;
+    if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA')) return;
+    const muted = audio.toggleMute();
+    syncSettings();
+    toast(muted ? '🔇 音效已静音' : '🔊 音效已开启');
+  });
+}
+
+// ------------------------------------------------------------- settings menu
+// Reflect the live music / SFX state onto the two toggle buttons.
+function syncSettings() {
+  const setToggle = (btn, on) => {
+    if (!btn) return;
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    const st = btn.querySelector('.set-state');
+    if (st) st.textContent = on ? '开' : '关';
+  };
+  setToggle($('toggle-music'), !audio.isMusicMuted());
+  setToggle($('toggle-sfx'), !audio.isMuted());
+}
+
+function openSettings() {
+  if (!app.inGame || app.settingsOpen) return;
+  app.settingsOpen = true;
+  input.releaseAll();             // the climber stops moving while the menu is up
+  net.sendInput(input.message()); // flush the release so the server agrees
+  syncSettings();
+  document.body.classList.add('settings-open');
+  $('settings-overlay').classList.remove('hidden');
+}
+
+function closeSettings() {
+  app.settingsOpen = false;
+  document.body.classList.remove('settings-open');
+  $('settings-overlay').classList.add('hidden');
+}
+
+// Leave the running game and go back to the character creator (can rejoin).
+function leaveToMenu() {
+  closeSettings();
+  app.inGame = false;
+  app.started = false;
+  input.enable(false);
+  net.disconnect();
+  predictor.s = null;             // discard stale prediction; reinit on next join
+  app.level = null; app.localServer = null;
+  clearTimeout(app._winTimer); clearInterval(app._countTimer); clearTimeout(app._rsTimer);
+  hideOverlay(); hideWin(); hideDeathBanner();
+  $('round-overlay').classList.add('hidden');
+  $('depart').classList.add('hidden');
+  $('spectate').classList.add('hidden');
+  $('game').classList.add('hidden');
+  $('menu').classList.remove('hidden');
+  $('start-btn').disabled = false;
+  $('start-btn').textContent = '开始攀登 ▶';
+  refreshMenuData();
+}
+
+// Fully quit: disconnect and show a goodbye screen. A browser can't close a tab
+// the user opened themselves, so we offer 重新进入 (reload) instead.
+function quitGame() {
+  closeSettings();
+  app.inGame = false;
+  app.started = false;
+  input.enable(false);
+  net.disconnect();
+  audio.stopMusic();
+  $('game').classList.add('hidden');
+  $('menu').classList.add('hidden');
+  $('bye-overlay').classList.remove('hidden');
+  try { window.close(); } catch { /* only works for script-opened windows */ }
+}
+
+function wireSettings() {
+  const gear = $('settings-btn');
+  if (gear) gear.addEventListener('click', () => { audio.unlock(); openSettings(); });
+
+  const on = (id, fn) => { const el = $(id); if (el) el.addEventListener('click', fn); };
+  on('set-resume', closeSettings);
+  on('set-tochar', leaveToMenu);
+  on('set-quit', quitGame);
+  on('bye-reenter', () => location.reload());
+  on('toggle-music', () => { audio.unlock(); audio.toggleMusic(); syncSettings(); });
+  on('toggle-sfx', () => { audio.unlock(); const m = audio.toggleMute(); if (!m) audio.play('ui_select'); syncSettings(); });
+
+  // Esc toggles the menu while in-game (a focused chat box keeps its own Esc).
+  window.addEventListener('keydown', (e) => {
+    if (e.code !== 'Escape' || !app.inGame) return;
+    const ae = document.activeElement;
+    if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA')) return;
+    e.preventDefault();
+    if (app.settingsOpen) closeSettings(); else openSettings();
+  });
+}
+
 initMenu();
 initTouch();
 wireChat();
+wireAudioControls();
+wireSettings();

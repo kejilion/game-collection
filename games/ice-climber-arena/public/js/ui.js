@@ -6,6 +6,7 @@ import {
   SKIN_TONES, OUTFIT_COLORS, HAT_COLORS, BODY_STYLES,
 } from '../shared/constants.js';
 import { drawClimber } from './characters.js';
+import { audio } from './audio.js';
 
 const STYLE_LABELS = { beanie: '毛线帽', earflap: '护耳帽', bobble: '绒球帽' };
 const RANDOM_NAMES = ['雪豹', '冰镐侠', '阿白', '企鹅', '雪团子', '北极星', '可可', '寒霜', '糯米', '小蓝'];
@@ -59,6 +60,7 @@ function buildSwatches(rowId, colors, look, key) {
       look[key] = c;
       [...row.children].forEach((ch) => ch.classList.remove('sel'));
       b.classList.add('sel');
+      audio.unlock(); audio.play('ui_select');
     });
     row.appendChild(b);
   });
@@ -75,6 +77,7 @@ function buildChips(rowId, styles, look, key) {
       look[key] = s;
       [...row.children].forEach((ch) => ch.classList.remove('sel'));
       b.classList.add('sel');
+      audio.unlock(); audio.play('ui_select');
     });
     row.appendChild(b);
   });

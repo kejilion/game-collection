@@ -54,6 +54,19 @@ export class Net {
 
   sendChat(text) { if (this.socket) this.socket.emit('chat', text); }
 
+  /** Tear down the live connection (used when leaving / quitting a game). */
+  disconnect() {
+    clearInterval(this._clockTimer);
+    if (this.socket) {
+      try { this.socket.removeAllListeners(); } catch { /* noop */ }
+      this.socket.disconnect();
+      this.socket = null;
+    }
+    this.snaps = [];
+    this.selfId = null;
+    this._offInit = false;
+  }
+
   now() { return Date.now() + this.offset; }
 
   _syncClock() {

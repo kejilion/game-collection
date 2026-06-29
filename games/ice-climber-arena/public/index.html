@@ -91,6 +91,7 @@
             <span id="hp-text">100</span>
           </div>
           <div id="buffs" class="buffs"></div>
+          <button id="settings-btn" class="hud-btn" type="button" aria-label="设置" title="设置（Esc）">⚙️</button>
         </div>
 
         <div class="hud-tc">
@@ -164,6 +165,36 @@
         <div class="rs-inner"><div class="rs-emoji">🚀</div>
           <h2 id="rs-title">第 1 局开始！</h2>
           <p id="rs-sub">冲上顶高，争夺冠军</p>
+        </div>
+      </div>
+
+      <!-- 设置 / 暂停菜单 -->
+      <div id="settings-overlay" class="overlay settings-overlay hidden">
+        <div class="overlay-card settings-card">
+          <h2>⚙️ 设置</h2>
+          <div class="settings-toggles">
+            <button id="toggle-music" class="set-toggle" type="button" aria-pressed="true">
+              <span class="set-ico">🎵</span><span class="set-name">音乐</span><span class="set-state">开</span>
+            </button>
+            <button id="toggle-sfx" class="set-toggle" type="button" aria-pressed="true">
+              <span class="set-ico">🔊</span><span class="set-name">音效</span><span class="set-state">开</span>
+            </button>
+          </div>
+          <div class="settings-actions">
+            <button id="set-resume" class="set-btn primary" type="button">▶ 继续游戏</button>
+            <button id="set-tochar" class="set-btn" type="button">👤 回到选择角色</button>
+            <button id="set-quit" class="set-btn danger" type="button">⏏ 退出游戏</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 退出后的告别屏 -->
+      <div id="bye-overlay" class="bye-overlay hidden">
+        <div class="bye-inner">
+          <div class="bye-emoji">👋</div>
+          <h2>已退出游戏</h2>
+          <p>感谢游玩 · 敲冰块大逃杀</p>
+          <button id="bye-reenter" class="set-btn primary" type="button">↻ 重新进入</button>
         </div>
       </div>
       </div><!-- .ui -->

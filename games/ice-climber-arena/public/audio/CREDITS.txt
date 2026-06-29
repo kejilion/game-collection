@@ -1,0 +1,54 @@
+敲冰块大逃杀 · 音效素材授权 / Audio Asset Credits
+=================================================
+
+本目录下的所有 .ogg 音效均来自 Kenney（kenney.nl），
+许可：Creative Commons CC0 1.0 Universal（公共领域，可商用，无需署名）。
+此处的署名仅出于致谢与可追溯，CC0 并不强制要求。
+
+All .ogg sound effects in this folder are by Kenney (https://kenney.nl),
+licensed under Creative Commons CC0 1.0 Universal (Public Domain).
+Attribution is provided as a courtesy; CC0 does not require it.
+
+来源音效包 / Source packs:
+  - Interface Sounds  https://kenney.nl/assets/interface-sounds
+  - Impact Sounds     https://kenney.nl/assets/impact-sounds
+  - Digital Audio     https://kenney.nl/assets/digital-audio
+
+背景音乐 / Background music:
+  Zero_Degree_Dash.mp3 —— 由项目所有者提供，**非** Kenney / CC0 素材。其授权与使用
+  权由你自行负责（请确保你拥有该曲目的使用许可）。如需更换，替换该文件或改
+  public/js/audio.js 里的 `musicSrc` 即可。
+  Provided by the project owner — NOT a Kenney/CC0 asset. You are responsible for
+  its license / usage rights. To change it, replace the file or update `musicSrc`
+  in public/js/audio.js.
+
+CC0 全文 / License: https://creativecommons.org/publicdomain/zero/1.0/
+
+文件 → 原始素材对照 / file -> original source:
+  jump.ogg          <- Digital Audio / phaseJump1.ogg
+  land.ogg          <- Impact Sounds / footstep_snow_001.ogg
+  ice_break_1..3    <- Impact Sounds / impactGlass_light_000..002.ogg
+  shoot.ogg         <- Digital Audio / laser5.ogg
+  hurt.ogg          <- Impact Sounds / impactPunch_medium_000.ogg
+  ko.ogg            <- Impact Sounds / impactPlate_heavy_000.ogg
+  ko_tone.ogg       <- Digital Audio / lowDown.ogg
+  pickup_fire.ogg   <- Digital Audio / powerUp2.ogg
+  pickup_heal.ogg   <- Digital Audio / powerUp7.ogg
+  pickup_jump.ogg   <- Digital Audio / powerUp5.ogg
+  pickup_haste.ogg  <- Digital Audio / powerUp9.ogg
+  pickup_shield.ogg <- Digital Audio / powerUp1.ogg
+  freeze.ogg        <- Digital Audio / zapTwoTone.ogg
+  no_ammo.ogg       <- Interface Sounds / error_004.ogg
+  mhit.ogg          <- Impact Sounds / impactGeneric_light_001.ogg
+  mdeath.ogg        <- Impact Sounds / impactSoft_medium_000.ogg
+  pop_fire.ogg      <- Impact Sounds / impactSoft_medium_001.ogg
+  pop_ice.ogg       <- Interface Sounds / glass_002.ogg
+  icicle.ogg        <- Interface Sounds / glass_004.ogg
+  hit_other.ogg     <- Impact Sounds / impactSoft_medium_002.ogg
+  plane.ogg         <- Digital Audio / threeTone1.ogg
+  win.ogg           <- Digital Audio / powerUp3.ogg
+  escape_other.ogg  <- Interface Sounds / confirmation_003.ogg
+  round_start.ogg   <- Digital Audio / threeTone2.ogg
+  round_end.ogg     <- Interface Sounds / confirmation_001.ogg
+  ui_select.ogg     <- Interface Sounds / select_001.ogg
+  ui_start.ogg      <- Interface Sounds / confirmation_004.ogg
