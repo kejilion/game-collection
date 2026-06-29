@@ -18,16 +18,38 @@ export class Net {
     this._offInit = false;
     this.snaps = []; // { t, data }
     this.handlers = {};
+    this._joinArgs = null;   // remembered so we can transparently re-join on reconnect
+    this._joinResolve = null;
+    this._joinTimer = null;
   }
 
   on(evt, fn) { this.handlers[evt] = fn; return this; }
   _emit(evt, ...a) { if (this.handlers[evt]) this.handlers[evt](...a); }
 
   connect() {
+    // Polling first, then silently upgrade to WebSocket. This is the Socket.IO
+    // default for a reason: a raw WebSocket as the *first* transport often stalls
+    // on mobile carriers / captive Wi‑Fi / reverse proxies that don't pass the
+    // Upgrade header, leaving the client stuck on "连接中…". Long‑polling connects
+    // nearly everywhere and the upgrade happens transparently when allowed.
     // eslint-disable-next-line no-undef
-    this.socket = io({ transports: ['websocket', 'polling'] });
+    this.socket = io({
+      transports: ['polling', 'websocket'],
+      timeout: 8000,                 // fail a stalled attempt fast instead of hanging
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelayMax: 4000,
+    });
     const s = this.socket;
-    s.on('connect', () => { this._emit('connect'); this._syncClock(); });
+    s.on('connect', () => {
+      this._emit('connect');
+      this._syncClock();
+      // (Re)join on every connect. After a mobile blip Socket.IO reconnects with a
+      // fresh id; without re‑joining the server has no player for us and we turn
+      // into a ghost. The first join is driven by join(); this covers reconnects.
+      if (this._joinArgs) this._doJoin();
+    });
+    s.on('connect_error', (err) => this._emit('connect_error', err));
     s.on('disconnect', () => this._emit('disconnect'));
     s.on('snapshot', (data) => this._onSnapshot(data));
     s.on('roundStart', (d) => this._emit('roundStart', d));
@@ -40,13 +62,40 @@ export class Net {
     this._clockTimer = setInterval(() => this._syncClock(), 2500);
   }
 
+  /**
+   * Join the room. Resolves with the server's init payload, or rejects after a
+   * timeout so the UI never hangs forever on "连接中…". The join args are
+   * remembered so we can transparently re‑join after a reconnect.
+   */
   join(name, look) {
-    return new Promise((resolve) => {
-      this.socket.emit('join', { name, look }, (init) => {
-        this.selfId = init.selfId;
-        if (!this._offInit) { this.offset = init.serverTime - Date.now(); this._offInit = true; }
-        resolve(init);
-      });
+    this._joinArgs = { name, look };
+    return new Promise((resolve, reject) => {
+      this._joinResolve = resolve;
+      this._joinTimer = setTimeout(() => {
+        if (!this._joinResolve) return;
+        this._joinResolve = null;
+        reject(new Error('join-timeout'));
+      }, 12000);
+      // Connected already? fire now. Otherwise the connect handler will.
+      if (this.socket && this.socket.connected) this._doJoin();
+    });
+  }
+
+  _doJoin() {
+    if (!this.socket || !this._joinArgs) return;
+    this.socket.emit('join', this._joinArgs, (init) => {
+      if (!this.socket || !this._joinArgs || !init) return;
+      const reconnect = this.selfId != null;
+      this.selfId = init.selfId;
+      if (!this._offInit) { this.offset = init.serverTime - Date.now(); this._offInit = true; }
+      if (this._joinResolve) {
+        clearTimeout(this._joinTimer);
+        const done = this._joinResolve;
+        this._joinResolve = null;
+        done(init);
+      } else if (reconnect) {
+        this._emit('rejoin', init); // let the app re‑sync level/round/selfId
+      }
     });
   }
 
@@ -57,6 +106,9 @@ export class Net {
   /** Tear down the live connection (used when leaving / quitting a game). */
   disconnect() {
     clearInterval(this._clockTimer);
+    clearTimeout(this._joinTimer);
+    this._joinArgs = null;
+    this._joinResolve = null;
     if (this.socket) {
       try { this.socket.removeAllListeners(); } catch { /* noop */ }
       this.socket.disconnect();

@@ -193,7 +193,19 @@ async function startGame() {
 
   net.connect();
   wireNet();
-  const init = await net.join(app.name, app.look);
+  let init;
+  try {
+    init = await net.join(app.name, app.look);
+  } catch {
+    // Connection or join failed — surface it and let the player retry instead of
+    // sitting on "连接中…" forever (common on flaky mobile networks).
+    net.disconnect();
+    app.started = false;
+    $('start-btn').disabled = false;
+    $('start-btn').textContent = '开始攀登 ▶';
+    toast('连接服务器失败，请检查网络后重试 🔌', 'bad');
+    return;
+  }
   applyInit(init);
 
   $('menu').classList.add('hidden');
@@ -219,7 +231,10 @@ function applyInit(init) {
 // ------------------------------------------------------------- net handlers
 function wireNet() {
   net.on('connect', () => setConn('已连接', 'ok'));
+  net.on('connect_error', () => setConn('连接中…重试', 'bad'));
   net.on('disconnect', () => setConn('连接断开 · 重连中', 'bad'));
+  // Reconnected after a drop: re-sync level/round/selfId and drop stale prediction.
+  net.on('rejoin', (init) => { applyInit(init); predictor.s = null; });
   net.on('snapshot', onSnapshot);
   net.on('roundStart', (d) => {
     app.level = d.level; app.round = d.round; app.roundStartMs = d.roundStartMs;
