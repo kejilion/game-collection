@@ -18,7 +18,7 @@
 const Audio = (() => {
   'use strict';
 
-  const ASSET_VERSION = '20260628a';
+  const ASSET_VERSION = '20260628b';
 
   // Single source of truth — bump both this and the <script> ?v= when assets change.
   const MANIFEST = {
