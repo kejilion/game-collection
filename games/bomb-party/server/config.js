@@ -3,10 +3,11 @@
 // 全局配置：地图、节奏、玩家/炸弹/怪物数值。
 // 所有距离单位均为“格”（tile），时间单位为秒。
 module.exports = {
-  // 大地图（含四周硬墙边框；内部按经典炸弹人规则布置柱子）
-  COLS: 41,
-  ROWS: 33,
-  BRICK_DENSITY: 0.62, // 可炸砖块覆盖率
+  // 地图（含四周硬墙边框；内部按经典炸弹人规则布置柱子）
+  // 紧凑尺寸 + 较低砖密度：配合拉近的视野，局部战况更清晰
+  COLS: 27,
+  ROWS: 21,
+  BRICK_DENSITY: 0.55, // 可炸砖块覆盖率
 
   // 服务器模拟与广播
   TICK_RATE: 30,   // 模拟频率
@@ -44,12 +45,12 @@ module.exports = {
   BRICK_REGROW_MIN: 45,
   BRICK_REGROW_MAX: 90,
 
-  // 怪物种群
-  MONSTER_BASE: 8,
-  MONSTER_PER_PLAYER: 2,
-  MONSTER_MAX: 24,
+  // 怪物种群（随地图缩小同步收敛）
+  MONSTER_BASE: 6,
+  MONSTER_PER_PLAYER: 1.5,
+  MONSTER_MAX: 14,
   MONSTER_RESPAWN_INTERVAL: 3, // 低于目标数量时每 N 秒补一只
-  MONSTER_PLAYER_DIST: 8,      // 怪物出生离玩家的最小距离
+  MONSTER_PLAYER_DIST: 6,      // 怪物出生离玩家的最小距离
   MONSTER_TOUCH: 0.6,          // 触碰判定距离
   MONSTER_SPEED: { slime: 1.5, ghost: 1.9, imp: 2.5, gold: 2.9 },
   MONSTER_WEIGHTS: { slime: 45, ghost: 30, imp: 25 }, // 金史莱姆单独按概率出

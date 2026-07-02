@@ -71,8 +71,8 @@
     renderer: null,
     // 本机预测
     pred: { x: 0, y: 0, ok: false },
-    // 自适应插值延迟
-    gapEma: 66, jitterEma: 8, lastSnapAt: 0,
+    // 服务器 tick 时间轴（抗到达抖动的插值基准）
+    srvOffset: null, srvJitter: 5, snapMs: 66.7,
     // 延迟测量
     pingSeq: 0, pingSent: new Map(), rtt: 0,
   };
@@ -122,15 +122,23 @@
     state.rows = msg.rows;
     state.tickRate = msg.tick || 30;
     state.snapEvery = msg.snapEvery || 2;
+    state.snapMs = (1000 / state.tickRate) * state.snapEvery;
     state.respawnDelay = msg.respawn || 2.5;
     state.grid = msg.grid.map((row) => row.split('').map(Number));
-    if (!state.renderer) {
-      const ts = Math.min(window.innerWidth, window.innerHeight) < 620 ? 40 : 48;
-      state.renderer = Renderer.create(els.canvas, els.minimap, state.cols, state.rows, ts);
-      resize();
-    }
+    ensureRenderer();
     renderJoinLeaderboard(msg.lb);
     updateOverlay();
+  }
+
+  // 渲染器惰性创建：等舞台完成布局（尺寸非 0）后再建，
+  // 视野拉近：按屏幕短边约显示 12 格，看清自己附近的战况
+  function ensureRenderer() {
+    if (state.renderer || !state.grid) return;
+    const w = els.stage.clientWidth, h = els.stage.clientHeight;
+    if (w < 50 || h < 50) return; // 布局未就绪，下一帧再试
+    const ts = Math.max(48, Math.min(84, Math.round(Math.min(w, h) / 12)));
+    state.renderer = Renderer.create(els.canvas, els.minimap, state.cols, state.rows, ts);
+    resize();
   }
 
   function onRoster(list) {
@@ -140,21 +148,24 @@
 
   function onSnapshot(s) {
     state.latest = s;
-    const at = performance.now();
-    // 自适应插值延迟：跟踪快照到达间隔与抖动
-    if (state.lastSnapAt > 0) {
-      const gap = at - state.lastSnapAt;
-      if (gap < 1000) {
-        state.gapEma = state.gapEma * 0.9 + gap * 0.1;
-        state.jitterEma = state.jitterEma * 0.9 + Math.abs(gap - state.gapEma) * 0.1;
-      }
+    const now = performance.now();
+    // 服务器 tick 时间轴：快照按 tick 序号定位（服务端模拟严格贴墙钟，
+    // tick 序号等距）。到达抖动只影响缓慢平滑的时钟偏移估计，
+    // 不再直接转化为回放速度的抖动。
+    const srvMs = s.n * (1000 / state.tickRate);
+    const offset = now - srvMs;
+    if (state.srvOffset == null || Math.abs(offset - state.srvOffset) > 1000) {
+      state.srvOffset = offset; // 初次同步 / 服务器重启：直接重置
+      state.srvJitter = 5;
+    } else {
+      state.srvJitter = state.srvJitter * 0.9 + Math.abs(offset - state.srvOffset) * 0.1;
+      state.srvOffset += (offset - state.srvOffset) * 0.05; // 缓慢跟踪时钟漂移
     }
-    state.lastSnapAt = at;
 
     const pm = new Map(), mm = new Map();
     for (const row of s.p) pm.set(row[0], row);
     for (const row of s.m) mm.set(row[0], row);
-    state.snaps.push({ at, p: pm, m: mm });
+    state.snaps.push({ at: srvMs, p: pm, m: mm });
     if (state.snaps.length > 16) state.snaps.shift();
 
     // 本机预测纠偏
@@ -179,7 +190,7 @@
     for (const f of s.f) {
       const key = f[0] + ',' + f[1];
       seen.add(key);
-      if (!state.blastAges.has(key)) state.blastAges.set(key, at);
+      if (!state.blastAges.has(key)) state.blastAges.set(key, now);
     }
     for (const key of state.blastAges.keys()) {
       if (!seen.has(key)) state.blastAges.delete(key);
@@ -612,9 +623,9 @@
   // ---------- 插值 ----------
 
   function interpolated() {
-    // 插值延迟自适应：平均快照间隔 * 1.5 + 抖动余量
-    const delay = Math.min(280, Math.max(60, state.gapEma * 1.5 + state.jitterEma * 2));
-    const rt = performance.now() - delay;
+    // 在服务器时间轴上回放：固定 1.3 个快照间隔起步，抖动大时自动加深缓冲
+    const delay = Math.min(280, Math.max(state.snapMs * 1.3, state.snapMs + state.srvJitter * 3));
+    const rt = performance.now() - state.srvOffset - delay;
     const snaps = state.snaps;
     const players = [];
     const monsters = [];
@@ -650,6 +661,9 @@
             ix = ra[1] + (rb[1] - ra[1]) * k;
             iy = ra[2] + (rb[2] - ra[2]) * k;
           }
+        } else if (rb) {
+          // 新出现的实体：用时间轴上更近的快照，避免闪跳
+          ix = rb[1]; iy = rb[2];
         }
       }
       const roster = state.roster.get(id) || {};
@@ -668,11 +682,14 @@
       if (ra && rb) {
         ix = ra[2] + (rb[2] - ra[2]) * k;
         iy = ra[3] + (rb[3] - ra[3]) * k;
+      } else if (rb) {
+        ix = rb[2]; iy = rb[3];
       }
       monsters.push({ id, type: row[1], ix, iy, dir: row[4] });
     }
     return { players, monsters };
   }
+  state.interpolated = interpolated; // 调试用
 
   // ---------- 渲染循环 ----------
 
@@ -682,6 +699,13 @@
     const now = performance.now();
     const dt = Math.min(0.05, (now - lastFrameT) / 1000);
     lastFrameT = now;
+
+    // 布局就绪 / 尺寸变化（转屏、浏览器栏收起）自动适配
+    ensureRenderer();
+    if (state.renderer &&
+        (els.stage.clientWidth !== lastStageW || els.stage.clientHeight !== lastStageH)) {
+      resize();
+    }
 
     // 本机预测推进
     if (state.joined && state.pred.ok && state.latest) {
@@ -728,9 +752,13 @@
 
   // ---------- 自适应尺寸 ----------
 
+  let lastStageW = 0, lastStageH = 0;
+
   function resize() {
     if (state.renderer) {
-      state.renderer.resize(els.stage.clientWidth, els.stage.clientHeight);
+      lastStageW = els.stage.clientWidth;
+      lastStageH = els.stage.clientHeight;
+      state.renderer.resize(lastStageW, lastStageH);
     }
   }
   window.addEventListener('resize', resize);
