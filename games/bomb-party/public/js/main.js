@@ -49,6 +49,7 @@
     chatForm: $('chat-form'),
     chatInput: $('chat-input'),
     chatBtn: $('chat-btn'),
+    deathVignette: $('death-vignette'),
   };
 
   const POWERUP_NAMES = ['💣 炸弹+1', '🔥 火力+1', '⚡ 速度+1', '🛡️ 护盾'];
@@ -269,6 +270,7 @@
       case 'die': {
         const mine = ev.id === state.myId;
         GameAudio.sfx.die(mine ? 1 : volAt(ev.x, ev.y));
+        if (mine && R) R.flash('255,60,60', 0.5); // 死亡红闪
         const p = state.roster.get(ev.id);
         if (R && p && R.inView(ev.x, ev.y)) R.addDeathGhost(ev.x, ev.y, p.color);
         // 击杀播报
@@ -335,15 +337,20 @@
       els.statSpeed.textContent = `⚡ ${me[10]}`;
       els.statShield.classList.toggle('off', me[6] !== 1);
       els.statScore.textContent = `⭐ ${me[11]}`;
-      // 重生倒计时
-      if (me[5] === 0) {
+      // 重生倒计时 + 死亡蒙版（画布褪色 + 暗角）
+      const dead = me[5] === 0;
+      if (dead) {
         els.respawnBanner.classList.remove('hidden');
         els.respawnText.textContent = `${Math.max(0, me[13]).toFixed(1)}s 后重生`;
       } else {
         els.respawnBanner.classList.add('hidden');
       }
+      els.canvas.classList.toggle('dead', dead);
+      els.deathVignette.classList.toggle('show', dead);
     } else {
       els.respawnBanner.classList.add('hidden');
+      els.canvas.classList.remove('dead');
+      els.deathVignette.classList.remove('show');
     }
 
     // 分数实时刷新

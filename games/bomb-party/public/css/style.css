@@ -35,7 +35,25 @@ html, body {
   width: 100%;
   height: 100%;
   display: block;
+  transition: filter .45s ease;
 }
+/* 死亡期间：世界褪色变暗，重生时恢复彩色 */
+#game.dead { filter: grayscale(.8) brightness(.65) saturate(.5); }
+
+/* 死亡暗角蒙版 */
+#death-vignette {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity .5s ease;
+  background: radial-gradient(ellipse at center,
+    rgba(60, 0, 12, 0) 38%,
+    rgba(40, 0, 10, .38) 72%,
+    rgba(24, 0, 8, .68) 100%);
+  z-index: 17;
+}
+#death-vignette.show { opacity: 1; }
 
 /* ---------- 悬浮 HUD ---------- */
 

@@ -34,6 +34,8 @@ window.Renderer = (function () {
     const spawnFx = [];
     let spotlightUntil = 0; // 出生聚光灯结束时刻（墙钟秒，低帧率下也不拖长）
     const SPOT_DUR = 2.4;
+    // 全屏闪光（死亡红闪等），墙钟计时
+    let flashUntil = 0, flashDur = 0.5, flashColor = '255,60,60';
     let shakeT = 0, shakeMag = 0;
     let lastMinimap = 0;
 
@@ -137,6 +139,12 @@ window.Renderer = (function () {
     function shake(mag = 5, dur = 0.25) {
       shakeMag = Math.max(shakeMag, mag);
       shakeT = Math.max(shakeT, dur);
+    }
+
+    function flash(rgb = '255,60,60', dur = 0.5) {
+      flashColor = rgb;
+      flashDur = dur;
+      flashUntil = performance.now() / 1000 + dur;
     }
 
     // 世界坐标是否在视野附近（特效降噪用）
@@ -850,6 +858,14 @@ window.Renderer = (function () {
       drawSpawnFx(dt, tNow);
       drawEffects(dt, tNow);
 
+      // 全屏闪光（屏幕空间，不随镜头移动）
+      const fRem = flashUntil - tNow;
+      if (fRem > 0) {
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.fillStyle = `rgba(${flashColor},${(0.42 * fRem / flashDur).toFixed(3)})`;
+        ctx.fillRect(0, 0, viewW, viewH);
+      }
+
       // 小地图节流重绘
       if (tNow - lastMinimap > 0.15) {
         lastMinimap = tNow;
@@ -859,7 +875,7 @@ window.Renderer = (function () {
 
     return {
       render, resize, burst, addFloatText, addGrowBlock, addDeathGhost, addSpawnFx,
-      snapCamera, shake, inView,
+      snapCamera, shake, flash, inView,
       cam, TS,
     };
   }
