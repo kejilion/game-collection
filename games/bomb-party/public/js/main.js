@@ -45,6 +45,10 @@
     menuQuit: $('menu-quit'),
     boardClose: $('board-close'),
     quitRejoin: $('quit-rejoin'),
+    chatLog: $('chat-log'),
+    chatForm: $('chat-form'),
+    chatInput: $('chat-input'),
+    chatBtn: $('chat-btn'),
   };
 
   const POWERUP_NAMES = ['💣 炸弹+1', '🔥 火力+1', '⚡ 速度+1', '🛡️ 护盾'];
@@ -75,6 +79,8 @@
     srvOffset: null, srvJitter: 5, snapMs: 66.7,
     // 延迟测量
     pingSeq: 0, pingSent: new Map(), rtt: 0,
+    // 聊天气泡：玩家 id -> { text, until }（客户端本地维护，不占快照）
+    bubbles: new Map(),
   };
 
   window.__game = state; // 调试用
@@ -113,6 +119,9 @@
         }
       } else if (msg.t === 'full') {
         toast('😥 房间已满，稍后再试');
+      } else if (msg.t === 'chat') {
+        addChatLine(msg.name, msg.text, msg.color);
+        state.bubbles.set(msg.id, { text: msg.text, until: performance.now() + 6000 });
       }
     },
   });
@@ -306,9 +315,12 @@
         break;
       case 'join':
         if (ev.id !== state.myId) toast(`👋 ${ev.name} 加入了战场`);
+        addChatLine(null, `${ev.name} 加入了战场`);
         break;
       case 'leave':
         toast(`🚪 ${ev.name} 离开了战场`);
+        addChatLine(null, `${ev.name} 离开了战场`);
+        state.bubbles.delete(ev.id);
         break;
     }
   }
@@ -384,6 +396,45 @@
       `<tr><td>${['🥇', '🥈', '🥉', '4.', '5.'][i] || ''}</td><td>${escapeHtml(e.name)}</td><td>${e.best} 分</td><td>${e.kills} 杀</td></tr>`);
     els.joinLb.innerHTML = `<div class="lb-title">📜 历史最佳</div><table>${rows.join('')}</table>`;
   }
+
+  // 聊天日志：name 为 null 时是系统消息；上限 40 条，自动滚到底部
+  function addChatLine(name, text, color) {
+    const line = document.createElement('div');
+    if (name == null) {
+      line.className = 'line sys';
+      line.textContent = text;
+    } else {
+      line.className = 'line';
+      const c = Renderer.PLAYER_COLORS[(color || 0) % 8][0];
+      line.innerHTML =
+        `<span class="who" style="color:${c}">${escapeHtml(name)}：</span>${escapeHtml(text)}`;
+    }
+    els.chatLog.appendChild(line);
+    while (els.chatLog.children.length > 40) els.chatLog.firstChild.remove();
+    els.chatLog.scrollTop = els.chatLog.scrollHeight;
+  }
+
+  function openChat() {
+    if (!state.joined || state.quit || state.menuOpen || state.boardOpen) return;
+    document.body.classList.add('chat-open');
+    els.chatInput.focus();
+  }
+
+  els.chatForm.addEventListener('submit', (ev) => {
+    ev.preventDefault();
+    const text = els.chatInput.value.trim();
+    if (text) net.send({ t: 'chat', text });
+    els.chatInput.value = '';
+    els.chatInput.blur();
+  });
+  els.chatInput.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape') {
+      ev.stopPropagation();
+      els.chatInput.blur();
+    }
+  });
+  els.chatInput.addEventListener('blur', () => document.body.classList.remove('chat-open'));
+  els.chatBtn.addEventListener('click', openChat);
 
   function toast(text, big = false) {
     const div = document.createElement('div');
@@ -527,6 +578,7 @@
       else toggleMenu();
     },
     onBoard() { toggleBoard(); },
+    onChat() { openChat(); },
     onAnyKey() { GameAudio.unlock(); },
   });
 
@@ -667,12 +719,21 @@
         }
       }
       const roster = state.roster.get(id) || {};
+      // 聊天气泡（过期即清）
+      let bubble = null;
+      const bb = state.bubbles.get(id);
+      if (bb) {
+        const rem = bb.until - performance.now();
+        if (rem <= 0) state.bubbles.delete(id);
+        else bubble = { text: bb.text, alpha: Math.min(1, rem / 300) };
+      }
       players.push({
         id, ix, iy, dir, moving,
         alive: row[5] === 1,
         shield: row[6] === 1, inv: row[7] === 1,
         color: roster.color || 0,
         name: roster.name || '?',
+        bubble,
       });
     }
     for (const row of state.latest.m) {

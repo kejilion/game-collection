@@ -45,6 +45,16 @@ function send(ws, msg) {
   if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg));
 }
 
+// 聊天文本清洗：去控制字符、去首尾空白、截断 80 字
+function cleanChat(s) {
+  const chars = [];
+  for (const ch of String(s)) {
+    const code = ch.codePointAt(0);
+    if (code >= 32 && code !== 127) chars.push(ch);
+  }
+  return chars.join('').trim().slice(0, 80);
+}
+
 function broadcast(msg) {
   const raw = JSON.stringify(msg);
   for (const ws of clients.keys()) {
@@ -132,6 +142,16 @@ wss.on('connection', (ws) => {
       World.setInput(world, meta.playerId, msg.d);
     } else if (msg.t === 'bomb') {
       World.requestBomb(world, meta.playerId);
+    } else if (msg.t === 'chat') {
+      // 参照 arena-brawl：每人 700ms 节流防刷屏，文本清洗后广播
+      const p = world.players.get(meta.playerId);
+      if (!p || typeof msg.text !== 'string') return;
+      const nowMs = Date.now();
+      if (nowMs < (meta.chatReadyAt || 0)) return;
+      const text = cleanChat(msg.text);
+      if (!text) return;
+      meta.chatReadyAt = nowMs + 700;
+      broadcast({ t: 'chat', id: p.id, name: p.name, color: p.color, text });
     } else if (msg.t === 'leave') {
       // 回到选角：卸下玩家但保留连接
       detachPlayer(meta);

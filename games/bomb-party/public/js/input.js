@@ -13,7 +13,7 @@ window.GameInput = (function () {
     ArrowRight: 3, KeyD: 3,
   };
 
-  function create({ onDir, onBomb, onMenu, onBoard, onAnyKey }) {
+  function create({ onDir, onBomb, onMenu, onBoard, onChat, onAnyKey }) {
     const stack = []; // 当前按住的方向，后按的在末尾
     let lastSent = -1;
 
@@ -46,6 +46,11 @@ window.GameInput = (function () {
       } else if (ev.code === 'Tab') {
         ev.preventDefault();
         if (!ev.repeat && onBoard) onBoard();
+      } else if (ev.code === 'Enter' || ev.code === 'NumpadEnter') {
+        if (!ev.repeat && onChat) {
+          ev.preventDefault();
+          onChat();
+        }
       }
     });
 

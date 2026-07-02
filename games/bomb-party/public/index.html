@@ -41,6 +41,14 @@
 
     <div id="toast-area"></div>
 
+    <!-- 左下角聊天（参照 arena-brawl） -->
+    <div id="chat-panel">
+      <div id="chat-log"></div>
+      <form id="chat-form" autocomplete="off">
+        <input id="chat-input" maxlength="80" placeholder="按 Enter 聊天…" enterkeyhint="send">
+      </form>
+    </div>
+
     <!-- 阻挡式覆盖层 -->
     <div id="overlay" class="hidden">
       <!-- 选角界面 -->
@@ -107,6 +115,7 @@
       <div id="touch-move-zone"></div>
       <div id="joystick" class="hidden"><div id="joystick-knob"></div></div>
       <button id="bomb-btn">💣</button>
+      <button id="chat-btn" aria-label="聊天">💬</button>
     </div>
   </div>
 

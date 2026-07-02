@@ -582,6 +582,28 @@ window.Renderer = (function () {
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(label, cx, cy - r - 17.5);
+
+      // 聊天气泡
+      if (p.bubble) {
+        ctx.globalAlpha = p.bubble.alpha;
+        ctx.font = '600 11px "PingFang SC","Microsoft YaHei",sans-serif';
+        let txt = p.bubble.text;
+        if (txt.length > 26) txt = txt.slice(0, 25) + '…';
+        const bw = ctx.measureText(txt).width + 16;
+        const by = cy - r - 54;
+        ctx.fillStyle = 'rgba(255,255,255,.95)';
+        rr(cx - bw / 2, by, bw, 20, 10);
+        ctx.fill();
+        ctx.beginPath(); // 气泡小尾巴
+        ctx.moveTo(cx - 4, by + 19);
+        ctx.lineTo(cx + 4, by + 19);
+        ctx.lineTo(cx, by + 26);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = '#3a3350';
+        ctx.fillText(txt, cx, by + 10.5);
+        ctx.globalAlpha = 1;
+      }
     }
 
     // ---------- 特效更新与绘制 ----------

@@ -331,6 +331,59 @@ html, body {
 @keyframes toastIn { from { transform: translateY(-16px); opacity: 0; } }
 @keyframes toastOut { to { transform: translateY(-10px); opacity: 0; } }
 
+/* ---------- 聊天 ---------- */
+
+#chat-panel {
+  position: absolute;
+  left: 12px;
+  bottom: max(12px, env(safe-area-inset-bottom));
+  width: min(320px, 62vw);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  z-index: 22;
+}
+body.chat-open #chat-panel { z-index: 60; } /* 手机输入时压过触屏层 */
+
+#chat-log {
+  max-height: 168px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 6px 10px;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, .35);
+  backdrop-filter: blur(4px);
+  font-size: 12.5px;
+  color: #fff;
+  scrollbar-width: none;
+}
+#chat-log::-webkit-scrollbar { display: none; }
+#chat-log:empty { display: none; }
+#chat-log .line { line-height: 1.4; word-break: break-all; }
+#chat-log .line .who { font-weight: 700; }
+#chat-log .line.sys { color: #b9c2d8; opacity: .85; }
+
+#chat-input {
+  width: 100%;
+  border: none;
+  border-radius: 999px;
+  padding: 7px 14px;
+  font-size: 13px;
+  font-family: inherit;
+  background: rgba(0, 0, 0, .4);
+  backdrop-filter: blur(4px);
+  color: #fff;
+  outline: none;
+  transition: background .15s, box-shadow .15s;
+}
+#chat-input::placeholder { color: rgba(255, 255, 255, .45); }
+#chat-input:focus {
+  background: rgba(0, 0, 0, .65);
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
 /* ---------- 触屏控制 ---------- */
 
 #touch-controls { position: fixed; inset: 0; pointer-events: none; z-index: 30; }
@@ -375,6 +428,21 @@ html, body {
   transition: transform .08s;
 }
 #bomb-btn:active { transform: scale(.92); }
+
+#chat-btn {
+  position: absolute;
+  right: max(24px, env(safe-area-inset-right));
+  bottom: calc(max(30px, env(safe-area-inset-bottom)) + 104px);
+  width: 48px; height: 48px;
+  border-radius: 50%;
+  border: none;
+  font-size: 22px;
+  background: rgba(0, 0, 0, .45);
+  backdrop-filter: blur(4px);
+  pointer-events: auto;
+  transition: transform .08s;
+}
+#chat-btn:active { transform: scale(.9); }
 
 @media (max-width: 700px) {
   #players-panel { max-width: 132px; }
