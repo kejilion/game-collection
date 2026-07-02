@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>💣 炸弹派对 Bomb Party</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💣</text></svg>">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app">
+    <header id="hud">
+      <div class="hud-group" id="hud-round">
+        <span id="round-label">大厅</span>
+        <span id="timer">⏱ --</span>
+      </div>
+      <div class="hud-group" id="hud-stats">
+        <span class="stat" id="stat-bomb">💣 1</span>
+        <span class="stat" id="stat-fire">🔥 1</span>
+        <span class="stat" id="stat-speed">⚡ 0</span>
+        <span class="stat off" id="stat-shield">🛡️</span>
+      </div>
+      <div class="hud-group">
+        <button id="btn-sound" class="icon-btn" title="音效开关">🔊</button>
+        <button id="btn-music" class="icon-btn" title="音乐开关">🎵</button>
+      </div>
+    </header>
+
+    <main id="stage">
+      <canvas id="game"></canvas>
+
+      <aside id="players-panel"></aside>
+
+      <div id="overlay" class="hidden">
+        <!-- 加入界面 -->
+        <div id="join-screen" class="panel hidden">
+          <h1 class="title">💣 炸弹派对</h1>
+          <p class="subtitle">Q版联机炸弹人 · 同一网址就是同一战场</p>
+          <div class="join-row">
+            <input id="name-input" maxlength="12" placeholder="输入你的昵称" autocomplete="off">
+            <button id="join-btn" class="big-btn">加入游戏</button>
+          </div>
+          <div class="tips">
+            <span>🎮 方向键 / WASD 移动</span>
+            <span>💥 空格 / J 放炸弹</span>
+            <span>📱 手机：左侧滑动 + 右下按钮</span>
+          </div>
+          <div id="join-leaderboard"></div>
+        </div>
+
+        <!-- 倒计时 -->
+        <div id="countdown-screen" class="hidden">
+          <div id="countdown-num">3</div>
+        </div>
+
+        <!-- 回合结算 -->
+        <div id="result-screen" class="panel hidden">
+          <div id="result-title">🏆</div>
+          <div id="result-sub"></div>
+        </div>
+
+        <!-- 断线重连 -->
+        <div id="reconnect-screen" class="panel hidden">
+          <div class="spinner"></div>
+          <div>连接断开，正在重连…</div>
+        </div>
+      </div>
+
+      <div id="toast-area"></div>
+    </main>
+
+    <!-- 触屏控制 -->
+    <div id="touch-controls" class="hidden">
+      <div id="joystick"><div id="joystick-knob"></div></div>
+      <button id="bomb-btn">💣</button>
+    </div>
+  </div>
+
+  <script src="js/net.js"></script>
+  <script src="js/audio.js"></script>
+  <script src="js/input.js"></script>
+  <script src="js/render.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>

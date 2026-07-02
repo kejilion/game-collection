@@ -1,0 +1,12 @@
+services:
+  bomb-party:
+    image: ${IMAGE:-bomb-party:latest}
+    build: .
+    container_name: bomb-party
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+    volumes:
+      - /opt/bomb-party/data:/app/data
+    restart: unless-stopped

@@ -8,6 +8,7 @@ A growing collection of web-based games by kejilion.
 |------|------|--------|------|
 | 大乱斗 Arena Brawl | [`games/arena-brawl`](games/arena-brawl) | ✅ Active | [Live](https://github.com/kejilion/game-collection/tree/main/games/arena-brawl) |
 | 敲冰块大逃脱 Ice Climber Arena | [`games/ice-climber-arena`](games/ice-climber-arena) | ✅ Active | [Live](https://github.com/kejilion/game-collection/tree/main/games/ice-climber-arena) |
+| 炸弹派对 Bomb Party | [`games/bomb-party`](games/bomb-party) | ✅ Active | [Live](https://github.com/kejilion/game-collection/tree/main/games/bomb-party) |
 
 ## Getting Started
 
