@@ -1,11 +1,10 @@
 'use strict';
 
 // Canvas 渲染器：泡泡堂式 Q 版卡通风格，全部程序化绘制（无图片资源）。
-// 地砖 / 砖块 / 炸弹 / 火焰 / 道具 / 怪物 / Q版小人 / 粒子特效 / 屏幕震动。
+// 大世界摄像机跟随 + 视口裁剪 + 小地图；地砖/砖块/炸弹/火焰/道具/
+// 怪物/Q版小人/粒子特效/屏幕震动。
 
 window.Renderer = (function () {
-  const TS = 48; // 每格像素
-
   const PLAYER_COLORS = [
     ['#ff5a5a', '#c93a3a'], ['#4da3ff', '#2f7fd6'],
     ['#6fd44e', '#4aa930'], ['#ffd93d', '#d9ae14'],
@@ -19,20 +18,62 @@ window.Renderer = (function () {
     { icon: 'shield', color: '#39c5e8' },
   ];
 
-  function create(canvas, cols, rows) {
+  function create(canvas, minimapCanvas, cols, rows, tileSize) {
     const ctx = canvas.getContext('2d');
+    const mctx = minimapCanvas.getContext('2d');
+    const TS = tileSize || 48;
     const dpr = Math.min(2, window.devicePixelRatio || 1);
-    canvas.width = cols * TS * dpr;
-    canvas.height = rows * TS * dpr;
+
+    let viewW = 800, viewH = 600; // CSS 像素
+    const cam = { x: (cols * TS) / 2, y: (rows * TS) / 2 }; // 世界像素，视口中心
 
     const particles = [];
     const floatTexts = [];
-    const fallingBlocks = [];
+    const growBlocks = [];
     const ghosts = [];
-    const confetti = [];
+    const spawnFx = [];
+    let spotlightUntil = 0; // 出生聚光灯结束时刻（墙钟秒，低帧率下也不拖长）
+    const SPOT_DUR = 2.4;
     let shakeT = 0, shakeMag = 0;
+    let lastMinimap = 0;
 
     const px = (wx) => (wx + 0.5) * TS;
+
+    function resize(w, h) {
+      viewW = w; viewH = h;
+      canvas.width = Math.round(w * dpr);
+      canvas.height = Math.round(h * dpr);
+      // 小地图保持世界纵横比，宽 ~168px
+      const mw = 168;
+      const mh = Math.round((mw * rows) / cols);
+      minimapCanvas.width = mw;
+      minimapCanvas.height = mh;
+      minimapCanvas.style.width = mw + 'px';
+      minimapCanvas.style.height = mh + 'px';
+    }
+
+    function clampCam() {
+      const worldW = cols * TS, worldH = rows * TS;
+      const hw = viewW / 2, hh = viewH / 2;
+      cam.x = worldW <= viewW ? worldW / 2 : Math.max(hw, Math.min(worldW - hw, cam.x));
+      cam.y = worldH <= viewH ? worldH / 2 : Math.max(hh, Math.min(worldH - hh, cam.y));
+    }
+
+    // 摄像机瞄准某个世界坐标（格），带边界钳制与平滑
+    function aimCamera(fx, fy, dt) {
+      const tx = px(fx), ty = px(fy);
+      const k = Math.min(1, dt * 8);
+      cam.x += (tx - cam.x) * k;
+      cam.y += (ty - cam.y) * k;
+      clampCam();
+    }
+
+    // 出生/重生：镜头立即切过去，不做飞行过渡
+    function snapCamera(fx, fy) {
+      cam.x = px(fx);
+      cam.y = px(fy);
+      clampCam();
+    }
 
     // ---------- 特效接口 ----------
 
@@ -55,12 +96,41 @@ window.Renderer = (function () {
       floatTexts.push({ x: px(wx), y: px(wy) - 20, text, color, t: 0 });
     }
 
-    function addFallingBlock(wx, wy) {
-      fallingBlocks.push({ x: wx, y: wy, t: 0 });
+    function addGrowBlock(wx, wy) {
+      growBlocks.push({ x: wx, y: wy, t: 0 });
+    }
+
+    // 出生特效：全场压暗聚光灯 + 光柱 + 扩散光环 + 弹跳箭头“你在这里”
+    function addSpawnFx(wx, wy) {
+      spawnFx.push({ x: wx, y: wy, t: 0 });
+      spotlightUntil = performance.now() / 1000 + SPOT_DUR;
+      burst(wx, wy, 14, ['#ffd93d', '#fff', '#a5dd72'], 3, 0.6);
+    }
+
+    // 聚光灯：压暗全场，亮圈从大到小收缩聚焦到自己身上
+    function drawSpotlight(view, tNow) {
+      const remain = spotlightUntil - tNow;
+      if (remain <= 0) return;
+      const me = view.players.find((p) => p.id === view.myId && p.alive);
+      if (!me) return;
+      const t = SPOT_DUR - remain;
+      const cx = px(me.ix), cy = px(me.iy);
+      // 亮圈半径：0.8 秒内从 8 格收缩到 2.4 格（缓出）
+      const ease = 1 - Math.pow(1 - Math.min(1, t / 0.8), 3);
+      const rIn = TS * (8 - 5.6 * ease);
+      const rOut = rIn * 2.1;
+      // 快速压暗，最后 0.8 秒淡出
+      let alpha = 0.78 * Math.min(1, t / 0.15);
+      if (remain < 0.8) alpha *= remain / 0.8;
+      const g = ctx.createRadialGradient(cx, cy, rIn, cx, cy, rOut);
+      g.addColorStop(0, 'rgba(8,12,28,0)');
+      g.addColorStop(1, `rgba(8,12,28,${alpha})`);
+      ctx.fillStyle = g;
+      ctx.fillRect(cam.x - viewW / 2 - TS, cam.y - viewH / 2 - TS, viewW + TS * 2, viewH + TS * 2);
     }
 
     function addDeathGhost(wx, wy, colorIdx) {
-      ghosts.push({ x: px(wx), y: px(wy), t: 0, color: PLAYER_COLORS[colorIdx % 8][0] });
+      ghosts.push({ x: px(wx), y: px(wy), t: 0 });
       burst(wx, wy, 16, [PLAYER_COLORS[colorIdx % 8][0], '#fff', '#ffd93d'], 4, 0.7);
     }
 
@@ -69,20 +139,11 @@ window.Renderer = (function () {
       shakeT = Math.max(shakeT, dur);
     }
 
-    function winConfetti() {
-      for (let i = 0; i < 120; i++) {
-        confetti.push({
-          x: Math.random() * cols * TS,
-          y: -Math.random() * rows * TS * 0.5,
-          vy: (2 + Math.random() * 3) * TS * 0.5,
-          vx: (Math.random() - 0.5) * TS,
-          rot: Math.random() * Math.PI * 2,
-          vr: (Math.random() - 0.5) * 8,
-          size: 5 + Math.random() * 6,
-          color: ['#ff5a5a', '#ffd93d', '#4da3ff', '#6fd44e', '#ff8ad8', '#b28dff'][(Math.random() * 6) | 0],
-          t: 0,
-        });
-      }
+    // 世界坐标是否在视野附近（特效降噪用）
+    function inView(wx, wy, margin = 3) {
+      const x = px(wx), y = px(wy);
+      return Math.abs(x - cam.x) < viewW / 2 + margin * TS &&
+             Math.abs(y - cam.y) < viewH / 2 + margin * TS;
     }
 
     // ---------- 基础图形 ----------
@@ -95,12 +156,6 @@ window.Renderer = (function () {
       ctx.arcTo(x, y + h, x, y, r);
       ctx.arcTo(x, y, x + w, y, r);
       ctx.closePath();
-    }
-
-    function drawFloor(gx, gy) {
-      const x = gx * TS, y = gy * TS;
-      ctx.fillStyle = (gx + gy) % 2 === 0 ? '#b8e986' : '#a5dd72';
-      ctx.fillRect(x, y, TS, TS);
     }
 
     function drawWall(gx, gy) {
@@ -124,7 +179,6 @@ window.Renderer = (function () {
       ctx.fillStyle = '#e0995a';
       rr(x + 2, y + 2, TS - 4, TS - 8, 7);
       ctx.fill();
-      // 砖缝
       ctx.strokeStyle = 'rgba(120,60,20,.55)';
       ctx.lineWidth = 2;
       const v = (gx * 7 + gy * 13) % 2;
@@ -169,12 +223,10 @@ window.Renderer = (function () {
         ctx.arc(cx, cy, r, 0, Math.PI * 2);
         ctx.fill();
       }
-      // 高光
       ctx.fillStyle = 'rgba(255,255,255,.5)';
       ctx.beginPath();
       ctx.ellipse(cx - r * 0.3, cy - r * 0.35, r * 0.22, r * 0.14, -0.6, 0, Math.PI * 2);
       ctx.fill();
-      // 引信 + 火花
       ctx.strokeStyle = '#8a5a2c';
       ctx.lineWidth = 3;
       ctx.beginPath();
@@ -226,6 +278,8 @@ window.Renderer = (function () {
       const bob = Math.sin(tNow * 3 + u.x * 1.7 + u.y) * 3;
       const cx = px(u.x), cy = px(u.y) + bob;
       const st = POWERUP_STYLE[u.kind] || POWERUP_STYLE[0];
+      // 快过期时闪烁
+      if (u.ttl < 6 && Math.sin(tNow * 10) > 0.2) return;
       drawShadow(px(u.x), px(u.y), TS * 0.3);
       ctx.fillStyle = '#fffdf5';
       rr(cx - 15, cy - 15, 30, 30, 9);
@@ -304,11 +358,12 @@ window.Renderer = (function () {
       const cx = px(m.ix), cy = px(m.iy);
       const wob = Math.sin(tNow * 6 + m.id);
       if (m.type === 1) drawGhostMonster(cx, cy, tNow, m);
-      else drawSlime(cx, cy, tNow, m, m.type === 2 ? '#ff5a5a' : '#6fd44e',
-        m.type === 2 ? '#c93a3a' : '#4aa930', wob);
+      else if (m.type === 3) drawSlime(cx, cy, tNow, m, '#ffd24a', '#d9a412', wob, true);
+      else if (m.type === 2) drawSlime(cx, cy, tNow, m, '#ff5a5a', '#c93a3a', wob, false);
+      else drawSlime(cx, cy, tNow, m, '#6fd44e', '#4aa930', wob, false);
     }
 
-    function drawSlime(cx, cy, tNow, m, color, dark, wob) {
+    function drawSlime(cx, cy, tNow, m, color, dark, wob, golden) {
       const squish = 1 + wob * 0.12;
       const rw = TS * 0.36 * squish;
       const rh = TS * 0.32 / squish;
@@ -335,6 +390,18 @@ window.Renderer = (function () {
         ctx.lineTo(cx + rw * 0.7, cy - rh * 1.3);
         ctx.lineTo(cx + rw * 0.2, cy - rh * 0.8);
         ctx.fill();
+      }
+      if (golden) {
+        // 金光闪闪
+        ctx.fillStyle = `rgba(255,240,150,${0.4 + 0.3 * Math.sin(tNow * 8)})`;
+        for (let i = 0; i < 3; i++) {
+          const a = tNow * 3 + (i * Math.PI * 2) / 3;
+          const sx = cx + Math.cos(a) * rw * 1.2;
+          const sy = cy - rh * 0.4 + Math.sin(a) * rh * 0.9;
+          ctx.beginPath();
+          ctx.arc(sx, sy, 2, 0, Math.PI * 2);
+          ctx.fill();
+        }
       }
     }
 
@@ -381,7 +448,7 @@ window.Renderer = (function () {
 
     // ---------- Q 版小人 ----------
 
-    function drawPlayer(p, tNow, isMe) {
+    function drawPlayer(p, tNow, isMe, isTop) {
       const [color, dark] = PLAYER_COLORS[p.color % 8];
       const cx = px(p.ix);
       let cy = px(p.iy);
@@ -392,6 +459,16 @@ window.Renderer = (function () {
       if (p.inv) ctx.globalAlpha = 0.55 + 0.35 * Math.sin(tNow * 18);
 
       drawShadow(cx, cy + bob, r * 0.9);
+
+      // 自己脚下的常驻金圈，随时能在人群里找到自己
+      if (isMe) {
+        const pu = 0.6 + 0.4 * Math.sin(tNow * 4);
+        ctx.strokeStyle = `rgba(255,217,61,${0.35 + 0.35 * pu})`;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.ellipse(cx, cy + bob + TS * 0.32, r * 1.2, r * 0.5, 0, 0, Math.PI * 2);
+        ctx.stroke();
+      }
 
       // 小脚丫
       ctx.fillStyle = dark;
@@ -475,6 +552,25 @@ window.Renderer = (function () {
         ctx.fill();
       }
 
+      // 领跑者皇冠
+      if (isTop) {
+        const gy = cy - r - 30 + Math.sin(tNow * 3) * 2;
+        ctx.fillStyle = '#ffd24a';
+        ctx.strokeStyle = '#d9a412';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(cx - 9, gy + 7);
+        ctx.lineTo(cx - 9, gy);
+        ctx.lineTo(cx - 4.5, gy + 4);
+        ctx.lineTo(cx, gy - 3);
+        ctx.lineTo(cx + 4.5, gy + 4);
+        ctx.lineTo(cx + 9, gy);
+        ctx.lineTo(cx + 9, gy + 7);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+      }
+
       // 名牌
       ctx.font = '700 11px "PingFang SC","Microsoft YaHei",sans-serif';
       const label = (isMe ? '★' : '') + p.name;
@@ -491,7 +587,6 @@ window.Renderer = (function () {
     // ---------- 特效更新与绘制 ----------
 
     function drawEffects(dt, tNow) {
-      // 粒子
       for (let i = particles.length - 1; i >= 0; i--) {
         const p = particles[i];
         p.t += dt;
@@ -499,8 +594,7 @@ window.Renderer = (function () {
         p.vy += p.grav * dt;
         p.x += p.vx * dt;
         p.y += p.vy * dt;
-        const a = 1 - p.t / p.life;
-        ctx.globalAlpha = a;
+        ctx.globalAlpha = 1 - p.t / p.life;
         ctx.fillStyle = p.color;
         rr(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size, p.size * 0.3);
         ctx.fill();
@@ -512,9 +606,8 @@ window.Renderer = (function () {
         const gh = ghosts[i];
         gh.t += dt;
         if (gh.t > 1.4) { ghosts.splice(i, 1); continue; }
-        const a = 1 - gh.t / 1.4;
         const gy = gh.y - gh.t * 40;
-        ctx.globalAlpha = a * 0.9;
+        ctx.globalAlpha = (1 - gh.t / 1.4) * 0.9;
         ctx.fillStyle = '#fff';
         ctx.beginPath();
         ctx.arc(gh.x, gy, 12, Math.PI, 0);
@@ -529,11 +622,6 @@ window.Renderer = (function () {
         ctx.arc(gh.x - 4, gy - 2, 2, 0, Math.PI * 2);
         ctx.arc(gh.x + 4, gy - 2, 2, 0, Math.PI * 2);
         ctx.fill();
-        ctx.strokeStyle = '#2f3542';
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.arc(gh.x, gy + 3, 2.5, 0, Math.PI);
-        ctx.stroke();
       }
       ctx.globalAlpha = 1;
 
@@ -552,40 +640,124 @@ window.Renderer = (function () {
         ctx.fillText(ft.text, ft.x, ft.y - ft.t * 34);
       }
       ctx.globalAlpha = 1;
+    }
 
-      // 彩带
-      for (let i = confetti.length - 1; i >= 0; i--) {
-        const c = confetti[i];
-        c.t += dt;
-        if (c.t > 4 || c.y > rows * TS + 20) { confetti.splice(i, 1); continue; }
-        c.x += c.vx * dt + Math.sin(c.t * 5 + c.rot) * 0.8;
-        c.y += c.vy * dt;
-        c.rot += c.vr * dt;
+    // 出生特效
+    function drawSpawnFx(dt, tNow) {
+      for (let i = spawnFx.length - 1; i >= 0; i--) {
+        const fx = spawnFx[i];
+        fx.t += dt;
+        if (fx.t > 2.6) { spawnFx.splice(i, 1); continue; }
+        const cx = px(fx.x), cy = px(fx.y);
+        // 地面扩散光环 ×3
+        for (let k = 0; k < 3; k++) {
+          const ph = (fx.t - k * 0.22) / 0.9;
+          if (ph < 0 || ph > 1) continue;
+          ctx.globalAlpha = (1 - ph) * 0.85;
+          ctx.strokeStyle = k === 1 ? '#fff' : '#ffd93d';
+          ctx.lineWidth = 5 - ph * 3;
+          ctx.beginPath();
+          ctx.ellipse(cx, cy + TS * 0.3, TS * (0.25 + ph * 1.5), TS * (0.12 + ph * 0.75), 0, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        // 落地光柱（第一秒）
+        if (fx.t < 1) {
+          const a = 1 - fx.t;
+          const g = ctx.createLinearGradient(0, cy - TS * 3.2, 0, cy + TS * 0.3);
+          g.addColorStop(0, 'rgba(255,240,150,0)');
+          g.addColorStop(1, `rgba(255,230,120,${0.5 * a})`);
+          ctx.globalAlpha = 1;
+          ctx.fillStyle = g;
+          const wHalf = TS * (0.32 + 0.06 * Math.sin(fx.t * 20));
+          ctx.fillRect(cx - wHalf, cy - TS * 3.2, wHalf * 2, TS * 3.5);
+        }
+        // 弹跳箭头 + “你在这里”
+        const bounce = Math.abs(Math.sin(fx.t * 5)) * 10;
+        const ay = cy - TS * 1.6 - bounce;
+        ctx.globalAlpha = fx.t > 2.1 ? (2.6 - fx.t) / 0.5 : 1;
+        ctx.fillStyle = '#ffd93d';
+        ctx.strokeStyle = 'rgba(0,0,0,.45)';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(cx - 12, ay - 18);
+        ctx.lineTo(cx + 12, ay - 18);
+        ctx.lineTo(cx, ay);
+        ctx.closePath();
+        ctx.stroke();
+        ctx.fill();
+        ctx.font = '900 13px "PingFang SC","Microsoft YaHei",sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.strokeText('你在这里', cx, ay - 30);
+        ctx.fillStyle = '#fff';
+        ctx.fillText('你在这里', cx, ay - 30);
+        ctx.globalAlpha = 1;
+      }
+    }
+
+    // 砖块再生动画（从地里长出来）
+    function drawGrowBlocks(dt) {
+      for (let i = growBlocks.length - 1; i >= 0; i--) {
+        const gb = growBlocks[i];
+        gb.t += dt;
+        if (gb.t > 0.35) { growBlocks.splice(i, 1); continue; }
+        const k = gb.t / 0.35;
         ctx.save();
-        ctx.translate(c.x, c.y);
-        ctx.rotate(c.rot);
-        ctx.fillStyle = c.color;
-        ctx.fillRect(-c.size / 2, -c.size / 4, c.size, c.size / 2);
+        ctx.translate((gb.x + 0.5) * TS, (gb.y + 1) * TS);
+        ctx.scale(1, k);
+        ctx.translate(-(gb.x + 0.5) * TS, -(gb.y + 1) * TS);
+        drawBrick(gb.x, gb.y);
         ctx.restore();
       }
     }
 
-    function drawFallingBlocks(dt) {
-      for (let i = fallingBlocks.length - 1; i >= 0; i--) {
-        const fb = fallingBlocks[i];
-        fb.t += dt;
-        if (fb.t > 0.28) {
-          burst(fb.x, fb.y, 6, ['#98a9bf', '#d5dde8'], 2, 0.4);
-          fallingBlocks.splice(i, 1);
-          continue;
+    // ---------- 小地图 ----------
+
+    function drawMinimap(view) {
+      const mw = minimapCanvas.width, mh = minimapCanvas.height;
+      const sx = mw / cols, sy = mh / rows;
+      mctx.clearRect(0, 0, mw, mh);
+      mctx.fillStyle = 'rgba(20,26,46,.9)';
+      mctx.fillRect(0, 0, mw, mh);
+      const grid = view.grid;
+      for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < cols; x++) {
+          const v = grid[y][x];
+          if (v === 1) mctx.fillStyle = '#55617a';
+          else if (v === 2) mctx.fillStyle = '#a5713a';
+          else continue;
+          mctx.fillRect(x * sx, y * sy, sx + 0.5, sy + 0.5);
         }
-        const k = fb.t / 0.28;
-        const yOff = (1 - k * k) * -TS * 2.2;
-        ctx.save();
-        ctx.translate(0, yOff);
-        drawWall(fb.x, fb.y);
-        ctx.restore();
       }
+      // 道具
+      mctx.fillStyle = '#ffe066';
+      for (const u of view.powerups) mctx.fillRect(u.x * sx, u.y * sy, sx, sy);
+      // 怪物
+      for (const m of view.monsters) {
+        mctx.fillStyle = m.type === 3 ? '#ffd24a' : '#ff6b6b';
+        mctx.beginPath();
+        mctx.arc((m.ix + 0.5) * sx, (m.iy + 0.5) * sy, 1.8, 0, Math.PI * 2);
+        mctx.fill();
+      }
+      // 玩家
+      for (const p of view.players) {
+        if (!p.alive) continue;
+        mctx.fillStyle = PLAYER_COLORS[p.color % 8][0];
+        mctx.beginPath();
+        mctx.arc((p.ix + 0.5) * sx, (p.iy + 0.5) * sy, p.id === view.myId ? 3 : 2.2, 0, Math.PI * 2);
+        mctx.fill();
+        if (p.id === view.myId) {
+          mctx.strokeStyle = '#fff';
+          mctx.lineWidth = 1.2;
+          mctx.stroke();
+        }
+      }
+      // 视口范围框
+      const vx = (cam.x - viewW / 2) / TS * sx;
+      const vy = (cam.y - viewH / 2) / TS * sy;
+      mctx.strokeStyle = 'rgba(255,255,255,.55)';
+      mctx.lineWidth = 1;
+      mctx.strokeRect(vx, vy, (viewW / TS) * sx, (viewH / TS) * sy);
     }
 
     // ---------- 主渲染 ----------
@@ -597,50 +769,78 @@ window.Renderer = (function () {
       const dt = Math.min(0.05, tNow - lastT);
       lastT = tNow;
 
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      if (view.follow) aimCamera(view.follow.x, view.follow.y, dt);
 
-      // 屏幕震动
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      // 视口外底色
+      ctx.fillStyle = '#22304f';
+      ctx.fillRect(0, 0, viewW, viewH);
+
+      let ox = viewW / 2 - cam.x, oy = viewH / 2 - cam.y;
       if (shakeT > 0) {
         shakeT -= dt;
-        const m = shakeMag * (shakeT > 0 ? shakeT / 0.25 : 0);
-        ctx.translate((Math.random() - 0.5) * m * 2, (Math.random() - 0.5) * m * 2);
+        const m = shakeMag * Math.max(0, shakeT / 0.25);
+        ox += (Math.random() - 0.5) * m * 2;
+        oy += (Math.random() - 0.5) * m * 2;
         if (shakeT <= 0) shakeMag = 0;
       }
+      ctx.translate(ox, oy);
 
       const grid = view.grid;
       if (!grid) return;
 
-      // 地板与静态块
-      for (let y = 0; y < rows; y++) {
-        for (let x = 0; x < cols; x++) {
-          drawFloor(x, y);
+      // 可见范围裁剪
+      const x0 = Math.max(0, Math.floor((cam.x - viewW / 2) / TS) - 1);
+      const x1 = Math.min(cols - 1, Math.ceil((cam.x + viewW / 2) / TS) + 1);
+      const y0 = Math.max(0, Math.floor((cam.y - viewH / 2) / TS) - 1);
+      const y1 = Math.min(rows - 1, Math.ceil((cam.y + viewH / 2) / TS) + 1);
+
+      for (let y = y0; y <= y1; y++) {
+        for (let x = x0; x <= x1; x++) {
+          ctx.fillStyle = (x + y) % 2 === 0 ? '#b8e986' : '#a5dd72';
+          ctx.fillRect(x * TS, y * TS, TS, TS);
         }
       }
-      for (let y = 0; y < rows; y++) {
-        for (let x = 0; x < cols; x++) {
+      for (let y = y0; y <= y1; y++) {
+        for (let x = x0; x <= x1; x++) {
           const v = grid[y][x];
           if (v === 1) drawWall(x, y);
           else if (v === 2) drawBrick(x, y);
         }
       }
 
-      for (const u of view.powerups) drawPowerup(u, tNow);
-      for (const b of view.bombs) drawBomb(b, tNow);
-      for (const f of view.blasts) drawBlast(f, tNow);
-      drawFallingBlocks(dt);
-      for (const m of view.monsters) drawMonster(m, tNow);
-      // 按 y 排序绘制玩家，制造前后遮挡关系
+      const vis = (e) => e.x >= x0 - 1 && e.x <= x1 + 1 && e.y >= y0 - 1 && e.y <= y1 + 1;
+      for (const u of view.powerups) if (vis(u)) drawPowerup(u, tNow);
+      for (const b of view.bombs) if (vis(b)) drawBomb(b, tNow);
+      for (const f of view.blasts) if (vis(f)) drawBlast(f, tNow);
+      drawGrowBlocks(dt);
+      for (const m of view.monsters) {
+        if (m.ix >= x0 - 1 && m.ix <= x1 + 1 && m.iy >= y0 - 1 && m.iy <= y1 + 1) drawMonster(m, tNow);
+      }
       const alive = view.players.filter((p) => p.alive).sort((a, b) => a.iy - b.iy);
-      for (const p of alive) drawPlayer(p, tNow, p.id === view.myId);
+      for (const p of alive) {
+        if (p.ix >= x0 - 1 && p.ix <= x1 + 1 && p.iy >= y0 - 1 && p.iy <= y1 + 1) {
+          drawPlayer(p, tNow, p.id === view.myId, p.id === view.topId && view.players.length > 1);
+        }
+      }
 
+      drawSpotlight(view, tNow); // 先压暗，再画箭头/光环保证特效全亮
+      drawSpawnFx(dt, tNow);
       drawEffects(dt, tNow);
+
+      // 小地图节流重绘
+      if (tNow - lastMinimap > 0.15) {
+        lastMinimap = tNow;
+        drawMinimap(view);
+      }
     }
 
     return {
-      render, burst, addFloatText, addFallingBlock, addDeathGhost, shake, winConfetti,
-      TS,
+      render, resize, burst, addFloatText, addGrowBlock, addDeathGhost, addSpawnFx,
+      snapCamera, shake, inView,
+      cam, TS,
     };
   }
 
-  return { create, TS, PLAYER_COLORS };
+  return { create, PLAYER_COLORS };
 })();

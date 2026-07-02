@@ -66,37 +66,30 @@ window.GameAudio = (function () {
     src.start(t0);
   }
 
+  // 位置相关的音效带音量系数 k（0~1），供“按距离衰减”使用
   const sfx = {
-    place() { tone({ type: 'sine', freq: 300, to: 180, dur: 0.12, vol: 0.3 }); },
-    boom() {
-      noise({ dur: 0.5, vol: 0.55, freq: 500 });
-      tone({ type: 'sine', freq: 90, to: 40, dur: 0.4, vol: 0.5 });
+    place(k = 1) { tone({ type: 'sine', freq: 300, to: 180, dur: 0.12, vol: 0.3 * k }); },
+    boom(k = 1) {
+      noise({ dur: 0.5, vol: 0.55 * k, freq: 500 });
+      tone({ type: 'sine', freq: 90, to: 40, dur: 0.4, vol: 0.5 * k });
     },
-    brick() { noise({ dur: 0.15, vol: 0.2, freq: 1200 }); },
-    pick() {
-      tone({ type: 'square', freq: 660, dur: 0.07, vol: 0.2 });
-      tone({ type: 'square', freq: 990, dur: 0.1, vol: 0.2, when: 0.07 });
+    brick(k = 1) { noise({ dur: 0.15, vol: 0.2 * k, freq: 1200 }); },
+    pick(k = 1) {
+      tone({ type: 'square', freq: 660, dur: 0.07, vol: 0.2 * k });
+      tone({ type: 'square', freq: 990, dur: 0.1, vol: 0.2 * k, when: 0.07 });
     },
     shield() { tone({ type: 'triangle', freq: 500, to: 220, dur: 0.25, vol: 0.3 }); },
-    die() {
-      tone({ type: 'sawtooth', freq: 420, to: 80, dur: 0.5, vol: 0.3 });
-      tone({ type: 'square', freq: 620, to: 120, dur: 0.4, vol: 0.15, when: 0.05 });
+    die(k = 1) {
+      tone({ type: 'sawtooth', freq: 420, to: 80, dur: 0.5, vol: 0.3 * k });
+      tone({ type: 'square', freq: 620, to: 120, dur: 0.4, vol: 0.15 * k, when: 0.05 });
     },
-    mdie() { tone({ type: 'square', freq: 520, to: 900, dur: 0.18, vol: 0.22 }); },
-    count() { tone({ type: 'square', freq: 520, dur: 0.1, vol: 0.25 }); },
-    go() { tone({ type: 'square', freq: 780, dur: 0.3, vol: 0.3 }); },
-    win() {
+    mdie(k = 1) { tone({ type: 'square', freq: 520, to: 900, dur: 0.18, vol: 0.22 * k }); },
+    grow(k = 1) { tone({ type: 'sine', freq: 140, to: 220, dur: 0.2, vol: 0.12 * k }); },
+    streak() {
       [523, 659, 784, 1046].forEach((f, i) =>
         tone({ type: 'square', freq: f, dur: 0.18, vol: 0.25, when: i * 0.13 }));
     },
-    lose() {
-      [392, 330, 262].forEach((f, i) =>
-        tone({ type: 'triangle', freq: f, dur: 0.25, vol: 0.25, when: i * 0.2 }));
-    },
-    sd() {
-      [880, 880, 880].forEach((f, i) =>
-        tone({ type: 'sawtooth', freq: f, to: 660, dur: 0.2, vol: 0.3, when: i * 0.25 }));
-    },
+    respawn() { tone({ type: 'square', freq: 440, to: 880, dur: 0.25, vol: 0.22 }); },
   };
 
   // ---------- BGM：轻快的 8 小节循环 ----------

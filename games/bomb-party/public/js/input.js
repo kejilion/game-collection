@@ -1,6 +1,7 @@
 'use strict';
 
-// 输入处理：键盘（方向键/WASD + 空格/J）与触屏（虚拟摇杆 + 炸弹按钮）。
+// 输入处理：键盘（方向键/WASD + 空格/J + Esc 菜单 + Tab 排行榜）
+// 与触屏（左半屏动态摇杆 + 炸弹按钮）。
 // 方向采用“后按优先”栈，手感接近经典四方向游戏。
 
 window.GameInput = (function () {
@@ -12,7 +13,7 @@ window.GameInput = (function () {
     ArrowRight: 3, KeyD: 3,
   };
 
-  function create({ onDir, onBomb, onAnyKey }) {
+  function create({ onDir, onBomb, onMenu, onBoard, onAnyKey }) {
     const stack = []; // 当前按住的方向，后按的在末尾
     let lastSent = -1;
 
@@ -39,6 +40,12 @@ window.GameInput = (function () {
       } else if (ev.code === 'Space' || ev.code === 'KeyJ') {
         ev.preventDefault();
         if (!ev.repeat) onBomb();
+      } else if (ev.code === 'Escape') {
+        ev.preventDefault();
+        if (!ev.repeat && onMenu) onMenu();
+      } else if (ev.code === 'Tab') {
+        ev.preventDefault();
+        if (!ev.repeat && onBoard) onBoard();
       }
     });
 
@@ -56,19 +63,17 @@ window.GameInput = (function () {
       sync();
     });
 
-    // ---------- 触屏 ----------
+    // ---------- 触屏：左半屏任意位置按下即出现摇杆 ----------
     const touchUI = document.getElementById('touch-controls');
+    const zone = document.getElementById('touch-move-zone');
     const joy = document.getElementById('joystick');
     const knob = document.getElementById('joystick-knob');
     const bombBtn = document.getElementById('bomb-btn');
     let joyTouch = null;
     let joyOrigin = null;
 
-    function showTouchUI() {
-      touchUI.classList.remove('hidden');
-    }
     window.addEventListener('touchstart', function once() {
-      showTouchUI();
+      touchUI.classList.remove('hidden');
       window.removeEventListener('touchstart', once);
     }, { passive: true });
 
@@ -79,13 +84,17 @@ window.GameInput = (function () {
       return dy > 0 ? 1 : 0;
     }
 
-    joy.addEventListener('touchstart', (ev) => {
+    zone.addEventListener('touchstart', (ev) => {
       ev.preventDefault();
       if (onAnyKey) onAnyKey();
+      if (joyTouch != null) return;
       const t = ev.changedTouches[0];
       joyTouch = t.identifier;
-      const rect = joy.getBoundingClientRect();
-      joyOrigin = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+      joyOrigin = { x: t.clientX, y: t.clientY };
+      joy.style.left = t.clientX + 'px';
+      joy.style.top = t.clientY + 'px';
+      joy.classList.remove('hidden');
+      knob.style.transform = 'translate(-50%, -50%)';
     }, { passive: false });
 
     window.addEventListener('touchmove', (ev) => {
@@ -111,7 +120,7 @@ window.GameInput = (function () {
       for (const t of ev.changedTouches) {
         if (t.identifier !== joyTouch) continue;
         joyTouch = null;
-        knob.style.transform = 'translate(-50%, -50%)';
+        joy.classList.add('hidden');
         stack.length = 0;
         sync();
       }
@@ -126,6 +135,7 @@ window.GameInput = (function () {
     }, { passive: false });
 
     return {
+      currentDir,
       reset() {
         stack.length = 0;
         lastSent = -1;

@@ -34,20 +34,20 @@ function createLeaderboard(dataDir) {
   }
 
   return {
-    // 回合结束时记录：win 为是否夺冠，score 为该玩家当前累计分
-    record(name, { win = false, score = 0 } = {}) {
+    // 记录玩家战绩：best 取历史最高分，kills 按增量累计
+    record(name, { score = 0, killsDelta = 0 } = {}) {
       if (!name) return;
-      const entry = data.players[name] || { wins: 0, best: 0, rounds: 0 };
-      entry.rounds++;
-      if (win) entry.wins++;
+      const entry = data.players[name] || { best: 0, kills: 0 };
       if (score > entry.best) entry.best = score;
+      entry.kills = (entry.kills || 0) + Math.max(0, killsDelta);
+      entry.seen = Date.now();
       data.players[name] = entry;
       save();
     },
     top(n = 10) {
       return Object.entries(data.players)
-        .map(([name, e]) => ({ name, wins: e.wins, best: e.best, rounds: e.rounds }))
-        .sort((a, b) => b.wins - a.wins || b.best - a.best)
+        .map(([name, e]) => ({ name, best: e.best || 0, kills: e.kills || 0 }))
+        .sort((a, b) => b.best - a.best || b.kills - a.kills)
         .slice(0, n);
     },
     flush() {

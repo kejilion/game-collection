@@ -1,0 +1,15 @@
+node_modules/
+data/
+.claude/
+
+.env
+.env.*
+*.log
+
+coverage/
+dist/
+build/
+.cache/
+
+.DS_Store
+Thumbs.db

@@ -1,51 +1,80 @@
 'use strict';
 
-// 客户端主控：网络消息 → 世界状态 → 插值渲染 + HUD/特效/音效调度。
+// 客户端主控：网络消息 → 世界状态 → 预测/插值渲染 + HUD/特效/音效调度。
+//
+// 高延迟优化：
+//  - 本机玩家：本地预测移动（与服务端相同的碰撞规则）+ 快照平滑纠偏
+//  - 其他实体：双快照插值，插值延迟按实测快照间隔与抖动自适应
+//  - 音效/震动按与镜头的距离衰减，远处的战斗不打扰
 
 (function () {
   const $ = (id) => document.getElementById(id);
 
   const els = {
     canvas: $('game'),
+    minimap: $('minimap'),
     stage: $('stage'),
     overlay: $('overlay'),
     joinScreen: $('join-screen'),
     nameInput: $('name-input'),
     joinBtn: $('join-btn'),
     joinLb: $('join-leaderboard'),
-    countdownScreen: $('countdown-screen'),
-    countdownNum: $('countdown-num'),
-    resultScreen: $('result-screen'),
-    resultTitle: $('result-title'),
-    resultSub: $('result-sub'),
+    colorPicker: $('color-picker'),
+    menuScreen: $('menu-screen'),
+    boardScreen: $('board-screen'),
+    boardLive: $('board-live'),
+    boardHistory: $('board-history'),
+    quitScreen: $('quit-screen'),
     reconnectScreen: $('reconnect-screen'),
     playersPanel: $('players-panel'),
     toastArea: $('toast-area'),
-    roundLabel: $('round-label'),
-    timer: $('timer'),
+    respawnBanner: $('respawn-banner'),
+    respawnText: $('respawn-text'),
     statBomb: $('stat-bomb'),
     statFire: $('stat-fire'),
     statSpeed: $('stat-speed'),
     statShield: $('stat-shield'),
-    btnSound: $('btn-sound'),
-    btnMusic: $('btn-music'),
+    statScore: $('stat-score'),
+    statPing: $('stat-ping'),
+    btnBoard: $('btn-board'),
+    btnMenu: $('btn-menu'),
+    menuResume: $('menu-resume'),
+    menuSound: $('menu-sound'),
+    menuMusic: $('menu-music'),
+    menuReselect: $('menu-reselect'),
+    menuQuit: $('menu-quit'),
+    boardClose: $('board-close'),
+    quitRejoin: $('quit-rejoin'),
   };
 
   const POWERUP_NAMES = ['💣 炸弹+1', '🔥 火力+1', '⚡ 速度+1', '🛡️ 护盾'];
+  // 与 server/config.js 保持一致的移动常量（用于本地预测）
+  const BASE_SPEED = 3.0, SPEED_STEP = 0.35, PLAYER_R = 0.36;
 
   const state = {
-    cols: 15, rows: 13,
+    cols: 41, rows: 33,
     grid: null,
     myId: null,
     joined: false,
+    quit: false,
+    menuOpen: false,
+    boardOpen: false,
     myName: localStorage.getItem('bp-name') || '',
+    myColor: Number(localStorage.getItem('bp-color') || 0),
     roster: new Map(),
     snaps: [],          // 插值缓冲 {at, p:Map, m:Map}
-    latest: null,       // 最新快照
+    latest: null,
     blastAges: new Map(),
     tickRate: 30,
-    countShown: -1,
+    snapEvery: 2,
+    respawnDelay: 2.5,
     renderer: null,
+    // 本机预测
+    pred: { x: 0, y: 0, ok: false },
+    // 自适应插值延迟
+    gapEma: 66, jitterEma: 8, lastSnapAt: 0,
+    // 延迟测量
+    pingSeq: 0, pingSent: new Map(), rtt: 0,
   };
 
   window.__game = state; // 调试用
@@ -56,14 +85,14 @@
     onOpen() {
       els.reconnectScreen.classList.add('hidden');
       if (state.joined && state.myName) {
-        net.send({ t: 'join', name: state.myName });
+        net.send({ t: 'join', name: state.myName, color: state.myColor });
       }
       updateOverlay();
     },
     onClose() {
-      if (state.joined) {
+      if (state.joined && !state.quit) {
         els.reconnectScreen.classList.remove('hidden');
-        els.overlay.classList.remove('hidden');
+        updateOverlay();
       }
     },
     onMessage(msg) {
@@ -73,7 +102,17 @@
       else if (msg.t === 'you') {
         state.myId = msg.id;
         state.joined = true;
+        state.pred.ok = false;
         updateOverlay();
+      } else if (msg.t === 'pong') {
+        const sent = state.pingSent.get(msg.id);
+        if (sent != null) {
+          state.pingSent.delete(msg.id);
+          const rtt = performance.now() - sent;
+          state.rtt = state.rtt === 0 ? rtt : state.rtt * 0.7 + rtt * 0.3;
+        }
+      } else if (msg.t === 'full') {
+        toast('😥 房间已满，稍后再试');
       }
     },
   });
@@ -82,9 +121,12 @@
     state.cols = msg.cols;
     state.rows = msg.rows;
     state.tickRate = msg.tick || 30;
+    state.snapEvery = msg.snapEvery || 2;
+    state.respawnDelay = msg.respawn || 2.5;
     state.grid = msg.grid.map((row) => row.split('').map(Number));
     if (!state.renderer) {
-      state.renderer = Renderer.create(els.canvas, state.cols, state.rows);
+      const ts = Math.min(window.innerWidth, window.innerHeight) < 620 ? 40 : 48;
+      state.renderer = Renderer.create(els.canvas, els.minimap, state.cols, state.rows, ts);
       resize();
     }
     renderJoinLeaderboard(msg.lb);
@@ -99,11 +141,38 @@
   function onSnapshot(s) {
     state.latest = s;
     const at = performance.now();
+    // 自适应插值延迟：跟踪快照到达间隔与抖动
+    if (state.lastSnapAt > 0) {
+      const gap = at - state.lastSnapAt;
+      if (gap < 1000) {
+        state.gapEma = state.gapEma * 0.9 + gap * 0.1;
+        state.jitterEma = state.jitterEma * 0.9 + Math.abs(gap - state.gapEma) * 0.1;
+      }
+    }
+    state.lastSnapAt = at;
+
     const pm = new Map(), mm = new Map();
     for (const row of s.p) pm.set(row[0], row);
     for (const row of s.m) mm.set(row[0], row);
     state.snaps.push({ at, p: pm, m: mm });
-    if (state.snaps.length > 12) state.snaps.shift();
+    if (state.snaps.length > 16) state.snaps.shift();
+
+    // 本机预测纠偏
+    const me = pm.get(state.myId);
+    if (me && me[5] === 1) {
+      if (!state.pred.ok) {
+        state.pred.x = me[1]; state.pred.y = me[2]; state.pred.ok = true;
+      } else {
+        const dx = me[1] - state.pred.x, dy = me[2] - state.pred.y;
+        if (Math.abs(dx) + Math.abs(dy) > 2) {
+          state.pred.x = me[1]; state.pred.y = me[2];
+        } else {
+          const k = input && input.currentDir() >= 0 ? 0.18 : 0.35;
+          state.pred.x += dx * k;
+          state.pred.y += dy * k;
+        }
+      }
+    }
 
     // 火焰出现时间（用于动画相位）
     const seen = new Set();
@@ -118,162 +187,179 @@
 
     for (const ev of s.e) handleEvent(ev);
     updateHUD(s);
-    updateOverlay();
   }
 
-  // ---------- 事件（音效/特效/提示） ----------
+  // ---------- 事件（音效/特效/播报） ----------
+
+  // 距离衰减：以镜头为中心，近满响、远渐弱、太远不响
+  function volAt(x, y) {
+    const R = state.renderer;
+    if (!R) return 1;
+    const dx = Math.abs((x + 0.5) * R.TS - R.cam.x) / R.TS;
+    const dy = Math.abs((y + 0.5) * R.TS - R.cam.y) / R.TS;
+    const d = Math.max(dx, dy);
+    if (d > 16) return 0;
+    if (d < 7) return 1;
+    return Math.max(0.12, 1 - (d - 7) / 9);
+  }
+
+  function nameOf(id) {
+    const p = state.roster.get(id);
+    return p ? p.name : '???';
+  }
 
   function handleEvent(ev) {
     const R = state.renderer;
     switch (ev.e) {
-      case 'round':
-        state.grid = ev.map.map((row) => row.split('').map(Number));
-        state.blastAges.clear();
-        state.countShown = -1;
+      case 'bomb': {
+        const k = volAt(ev.x, ev.y);
+        if (k > 0) GameAudio.sfx.place(k);
         break;
-      case 'go':
-        GameAudio.sfx.go();
-        toast('🚀 开战！');
-        break;
-      case 'bomb':
-        GameAudio.sfx.place();
-        break;
-      case 'boom':
-        GameAudio.sfx.boom();
-        if (R) {
-          R.shake(4 + Math.min(4, ev.r), 0.25);
+      }
+      case 'boom': {
+        const k = volAt(ev.x, ev.y);
+        if (k > 0) GameAudio.sfx.boom(k);
+        if (R && R.inView(ev.x, ev.y, 4)) {
+          R.shake((2 + Math.min(4, ev.r)) * k, 0.25);
           R.burst(ev.x, ev.y, 10, ['#ffd93d', '#ff8c42', '#fff'], 4, 0.5);
         }
         break;
+      }
       case 'tile':
         if (state.grid) state.grid[ev.y][ev.x] = ev.v;
         if (ev.fx === 'brick') {
-          GameAudio.sfx.brick();
-          if (R) R.burst(ev.x, ev.y, 8, ['#e0995a', '#b06a2c', '#8a5a2c'], 3, 0.5);
-        } else if (ev.fx === 'sd' && R) {
-          R.addFallingBlock(ev.x, ev.y);
+          const k = volAt(ev.x, ev.y);
+          if (k > 0) GameAudio.sfx.brick(k);
+          if (R && R.inView(ev.x, ev.y)) R.burst(ev.x, ev.y, 8, ['#e0995a', '#b06a2c', '#8a5a2c'], 3, 0.5);
+        } else if (ev.fx === 'grow' && R && R.inView(ev.x, ev.y)) {
+          R.addGrowBlock(ev.x, ev.y);
+          const k = volAt(ev.x, ev.y);
+          if (k > 0) GameAudio.sfx.grow(k);
         }
         break;
       case 'pick': {
-        GameAudio.sfx.pick();
-        if (R) R.addFloatText(ev.x, ev.y, POWERUP_NAMES[ev.k] || '?', '#ffd93d');
+        const mine = ev.id === state.myId;
+        GameAudio.sfx.pick(mine ? 1 : volAt(ev.x, ev.y) * 0.6);
+        if (R && R.inView(ev.x, ev.y)) R.addFloatText(ev.x, ev.y, POWERUP_NAMES[ev.k] || '?', '#ffd93d');
         break;
       }
       case 'burn':
-        if (R) R.burst(ev.x, ev.y, 5, ['#ffd93d', '#aaa'], 2, 0.4);
+        if (R && R.inView(ev.x, ev.y)) R.burst(ev.x, ev.y, 5, ['#ffd93d', '#aaa'], 2, 0.4);
         break;
       case 'die': {
-        GameAudio.sfx.die();
+        const mine = ev.id === state.myId;
+        GameAudio.sfx.die(mine ? 1 : volAt(ev.x, ev.y));
         const p = state.roster.get(ev.id);
-        if (R && p) R.addDeathGhost(ev.x, ev.y, p.color);
-        if (ev.id === state.myId) toast('💥 你被炸飞了！观战中…');
-        else if (p) toast(`💀 ${p.name} 被淘汰`);
+        if (R && p && R.inView(ev.x, ev.y)) R.addDeathGhost(ev.x, ev.y, p.color);
+        // 击杀播报
+        const victim = nameOf(ev.id);
+        if (ev.by == null) toast(`👾 ${victim} 被怪物抓住了`);
+        else if (ev.by === ev.id) toast(`💫 ${victim} 被自己炸飞了`);
+        else toast(`💥 ${nameOf(ev.by)} 炸飞了 ${victim}`);
+        if (mine && navigator.vibrate) navigator.vibrate(180);
         break;
       }
-      case 'mdie':
-        GameAudio.sfx.mdie();
-        if (R) {
-          R.burst(ev.x, ev.y, 12, ['#6fd44e', '#b28dff', '#fff'], 4, 0.6);
-          R.addFloatText(ev.x, ev.y, '+100', '#6fd44e');
+      case 'mdie': {
+        const k = volAt(ev.x, ev.y);
+        if (k > 0) GameAudio.sfx.mdie(k);
+        if (R && R.inView(ev.x, ev.y)) {
+          const gold = ev.mt === 3;
+          R.burst(ev.x, ev.y, gold ? 20 : 12, gold ? ['#ffd24a', '#fff', '#ffb800'] : ['#6fd44e', '#b28dff', '#fff'], 4, 0.6);
+          R.addFloatText(ev.x, ev.y, gold ? '+500' : ['+50', '+100', '+150'][ev.mt] || '+50', gold ? '#ffd24a' : '#6fd44e');
         }
+        if (ev.mt === 3) toast('✨ 金史莱姆被抓住了！');
         break;
+      }
       case 'shield':
         GameAudio.sfx.shield();
         if (ev.id === state.myId) toast('🛡️ 护盾抵挡了一次伤害！');
         break;
-      case 'sd':
-        GameAudio.sfx.sd();
-        toast('⚠️ 突然死亡！墙壁开始坍塌！');
+      case 'streak': {
+        const label = ev.n >= 5 ? '超神' : ev.n === 4 ? '四连杀' : ev.n === 3 ? '三连杀' : '双杀';
+        toast(`🔥 ${nameOf(ev.id)} ${label}！`, true);
+        if (ev.id === state.myId) GameAudio.sfx.streak();
         break;
-      case 'end':
-        onRoundEnd(ev);
-        break;
+      }
       case 'spawn':
-        if (ev.id === state.myId) toast('🎮 已加入战斗！');
+        if (ev.id === state.myId) {
+          state.pred.x = ev.x;
+          state.pred.y = ev.y;
+          state.pred.ok = true;
+          GameAudio.sfx.respawn();
+          // 镜头直接切到出生点 + 出生特效，一眼找到自己
+          if (R) {
+            R.snapCamera(ev.x, ev.y);
+            R.addSpawnFx(ev.x, ev.y);
+          }
+        }
         break;
       case 'join':
-        if (ev.id !== state.myId) toast(`👋 ${ev.name} 加入了房间`);
+        if (ev.id !== state.myId) toast(`👋 ${ev.name} 加入了战场`);
         break;
       case 'leave':
-        toast(`🚪 ${ev.name} 离开了房间`);
+        toast(`🚪 ${ev.name} 离开了战场`);
         break;
     }
-  }
-
-  function onRoundEnd(ev) {
-    const R = state.renderer;
-    if (ev.name) {
-      els.resultTitle.textContent = `🏆 ${ev.name} 获胜！`;
-      if (ev.id === state.myId) {
-        GameAudio.sfx.win();
-        if (R) R.winConfetti();
-      } else {
-        GameAudio.sfx.lose();
-      }
-    } else {
-      els.resultTitle.textContent = ev.n >= 2 ? '💥 同归于尽…平局！' : '💀 全军覆没…再来一局！';
-      GameAudio.sfx.lose();
-    }
-    els.resultSub.textContent = '几秒后自动开始下一回合';
-    if (ev.lb) renderJoinLeaderboard(ev.lb);
   }
 
   // ---------- HUD ----------
 
   function updateHUD(s) {
-    const labels = { lobby: '大厅', countdown: '准备', playing: `第${s.rn}回合`, ended: '结算' };
-    els.roundLabel.textContent = labels[s.st] || s.st;
-
-    if (s.st === 'playing') {
-      const mm = Math.floor(s.tl / 60), ss = s.tl % 60;
-      els.timer.textContent = s.sd ? '☠️ 坍塌中' : `⏱ ${mm}:${String(ss).padStart(2, '0')}`;
-      els.timer.classList.toggle('danger', s.sd === 1 || s.tl <= 30);
-    } else {
-      els.timer.textContent = '⏱ --';
-      els.timer.classList.remove('danger');
-    }
-
     const me = s.p.find((row) => row[0] === state.myId);
     if (me) {
       els.statBomb.textContent = `💣 ${me[8]}`;
       els.statFire.textContent = `🔥 ${me[9]}`;
       els.statSpeed.textContent = `⚡ ${me[10]}`;
       els.statShield.classList.toggle('off', me[6] !== 1);
+      els.statScore.textContent = `⭐ ${me[11]}`;
+      // 重生倒计时
+      if (me[5] === 0) {
+        els.respawnBanner.classList.remove('hidden');
+        els.respawnText.textContent = `${Math.max(0, me[13]).toFixed(1)}s 后重生`;
+      } else {
+        els.respawnBanner.classList.add('hidden');
+      }
+    } else {
+      els.respawnBanner.classList.add('hidden');
     }
 
-    // 分数实时刷新（roster 里的 score 用快照更新）
+    // 分数实时刷新
     let dirty = false;
     for (const row of s.p) {
       const r = state.roster.get(row[0]);
-      if (r && (r.score !== row[11] || r.alive !== (row[5] === 1))) {
+      if (r && (r.score !== row[11] || r.alive !== (row[5] === 1) || r.kills !== row[12])) {
         r.score = row[11];
+        r.kills = row[12];
         r.alive = row[5] === 1;
         dirty = true;
       }
     }
-    if (dirty) renderPlayersPanel();
+    if (dirty) {
+      renderPlayersPanel();
+      if (state.boardOpen) renderBoardLive();
+    }
   }
 
   function renderPlayersPanel() {
     const rows = [...state.roster.values()]
       .sort((a, b) => b.score - a.score)
+      .slice(0, 8)
       .map((p) => {
         const cls = ['player-row'];
-        if (!p.alive && !p.spec) cls.push('dead');
+        if (!p.alive) cls.push('dead');
         if (p.id === state.myId) cls.push('me');
         const color = Renderer.PLAYER_COLORS[p.color % 8][0];
-        const tag = p.spec ? ' 👁' : '';
         return `<div class="${cls.join(' ')}">
           <span class="dot" style="background:${color}"></span>
-          <span class="pname">${escapeHtml(p.name)}${tag}</span>
-          <span class="pscore">${p.score}🏆${p.wins}</span>
+          <span class="pname">${escapeHtml(p.name)}</span>
+          <span class="pscore">${p.score}</span>
         </div>`;
       });
     els.playersPanel.innerHTML = rows.join('');
   }
 
   function escapeHtml(s) {
-    return s.replace(/[&<>"']/g, (c) => ({
+    return String(s).replace(/[&<>"']/g, (c) => ({
       '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
     }[c]));
   }
@@ -284,49 +370,76 @@
       return;
     }
     const rows = lb.map((e, i) =>
-      `<tr><td>${['🥇', '🥈', '🥉', '4.', '5.'][i] || ''}</td><td>${escapeHtml(e.name)}</td><td>${e.wins} 胜</td><td>${e.best} 分</td></tr>`);
-    els.joinLb.innerHTML = `<div class="lb-title">🏆 排行榜</div><table>${rows.join('')}</table>`;
+      `<tr><td>${['🥇', '🥈', '🥉', '4.', '5.'][i] || ''}</td><td>${escapeHtml(e.name)}</td><td>${e.best} 分</td><td>${e.kills} 杀</td></tr>`);
+    els.joinLb.innerHTML = `<div class="lb-title">📜 历史最佳</div><table>${rows.join('')}</table>`;
   }
 
-  function toast(text) {
+  function toast(text, big = false) {
     const div = document.createElement('div');
-    div.className = 'toast';
+    div.className = big ? 'toast big' : 'toast';
     div.textContent = text;
     els.toastArea.appendChild(div);
     setTimeout(() => div.remove(), 3000);
     while (els.toastArea.children.length > 4) els.toastArea.firstChild.remove();
   }
 
+  // ---------- 排行榜界面 ----------
+
+  function renderBoardLive() {
+    const rows = [...state.roster.values()]
+      .sort((a, b) => b.score - a.score)
+      .map((p, i) => `<tr class="${p.id === state.myId ? 'me' : ''}">
+        <td>${i + 1}.</td><td>${escapeHtml(p.name)}</td>
+        <td>⭐${p.score}</td><td>⚔️${p.kills}</td><td>💀${p.deaths}</td>
+      </tr>`);
+    els.boardLive.innerHTML = rows.join('') || '<tr><td>暂无玩家</td></tr>';
+  }
+
+  async function renderBoardHistory() {
+    try {
+      const res = await fetch('api/leaderboard');
+      const lb = await res.json();
+      const rows = lb.map((e, i) =>
+        `<tr><td>${i + 1}.</td><td>${escapeHtml(e.name)}</td><td>⭐${e.best}</td><td>⚔️${e.kills}</td></tr>`);
+      els.boardHistory.innerHTML = rows.join('') || '<tr><td>暂无记录</td></tr>';
+    } catch {
+      els.boardHistory.innerHTML = '<tr><td>加载失败</td></tr>';
+    }
+  }
+
   // ---------- 覆盖层 ----------
 
   function updateOverlay() {
-    const s = state.latest;
-    const showJoin = !state.joined;
-    const showCountdown = state.joined && s && s.st === 'countdown';
-    const showResult = state.joined && s && s.st === 'ended';
+    const showJoin = !state.joined && !state.quit;
+    const showMenu = state.joined && state.menuOpen;
+    const showBoard = state.boardOpen;
+    const showQuit = state.quit;
     const showReconnect = !els.reconnectScreen.classList.contains('hidden');
 
-    els.joinScreen.classList.toggle('hidden', !showJoin);
-    els.countdownScreen.classList.toggle('hidden', !showCountdown);
-    els.resultScreen.classList.toggle('hidden', !showResult);
+    els.joinScreen.classList.toggle('hidden', !showJoin || showBoard);
+    els.menuScreen.classList.toggle('hidden', !showMenu || showBoard);
+    els.boardScreen.classList.toggle('hidden', !showBoard);
+    els.quitScreen.classList.toggle('hidden', !showQuit);
 
-    if (showCountdown && s) {
-      const n = Math.max(1, Math.ceil(s.ct));
-      if (n !== state.countShown) {
-        state.countShown = n;
-        els.countdownNum.textContent = n;
-        els.countdownNum.style.animation = 'none';
-        void els.countdownNum.offsetWidth; // 重启动画
-        els.countdownNum.style.animation = '';
-        GameAudio.sfx.count();
-      }
-    }
-
-    const any = showJoin || showCountdown || showResult || showReconnect;
+    const any = showJoin || showMenu || showBoard || showQuit || showReconnect;
     els.overlay.classList.toggle('hidden', !any);
   }
 
-  // ---------- 加入 ----------
+  // ---------- 选角与加入 ----------
+
+  function buildColorPicker() {
+    els.colorPicker.innerHTML = Renderer.PLAYER_COLORS.map(([c], i) =>
+      `<div class="swatch ${i === state.myColor ? 'sel' : ''}" data-c="${i}" style="background:${c}"></div>`).join('');
+    els.colorPicker.querySelectorAll('.swatch').forEach((el) => {
+      el.addEventListener('click', () => {
+        state.myColor = Number(el.dataset.c);
+        localStorage.setItem('bp-color', String(state.myColor));
+        els.colorPicker.querySelectorAll('.swatch').forEach((e) =>
+          e.classList.toggle('sel', e === el));
+      });
+    });
+  }
+  buildColorPicker();
 
   function join() {
     const name = els.nameInput.value.trim() || '玩家' + Math.floor(Math.random() * 999);
@@ -334,7 +447,7 @@
     localStorage.setItem('bp-name', name);
     GameAudio.unlock();
     GameAudio.startMusic();
-    net.send({ t: 'join', name });
+    net.send({ t: 'join', name, color: state.myColor });
   }
 
   els.nameInput.value = state.myName;
@@ -343,25 +456,164 @@
     if (ev.key === 'Enter') join();
   });
 
-  els.btnSound.addEventListener('click', () => {
-    els.btnSound.classList.toggle('off', !GameAudio.toggleSfx());
+  // ---------- 菜单 ----------
+
+  function toggleMenu(force) {
+    if (!state.joined) return;
+    state.menuOpen = force != null ? force : !state.menuOpen;
+    state.boardOpen = false;
+    updateOverlay();
+  }
+
+  function toggleBoard(force) {
+    state.boardOpen = force != null ? force : !state.boardOpen;
+    if (state.boardOpen) {
+      renderBoardLive();
+      renderBoardHistory();
+    }
+    updateOverlay();
+  }
+
+  function updateAudioLabels() {
+    els.menuSound.textContent = GameAudio.sfxOn ? '🔊 音效：开' : '🔇 音效：关';
+    els.menuMusic.textContent = GameAudio.musicOn ? '🎵 音乐：开' : '🎵 音乐：关';
+  }
+
+  els.btnMenu.addEventListener('click', () => toggleMenu());
+  els.btnBoard.addEventListener('click', () => toggleBoard());
+  els.menuResume.addEventListener('click', () => toggleMenu(false));
+  els.menuSound.addEventListener('click', () => { GameAudio.toggleSfx(); updateAudioLabels(); });
+  els.menuMusic.addEventListener('click', () => { GameAudio.toggleMusic(); updateAudioLabels(); });
+  els.menuReselect.addEventListener('click', () => {
+    net.send({ t: 'leave' });
+    state.joined = false;
+    state.myId = null;
+    state.menuOpen = false;
+    state.pred.ok = false;
+    updateOverlay();
   });
-  els.btnMusic.addEventListener('click', () => {
-    els.btnMusic.classList.toggle('off', !GameAudio.toggleMusic());
+  els.menuQuit.addEventListener('click', () => {
+    net.send({ t: 'leave' });
+    state.quit = true;
+    state.menuOpen = false;
+    net.destroy();
+    updateOverlay();
   });
+  els.boardClose.addEventListener('click', () => toggleBoard(false));
+  els.quitRejoin.addEventListener('click', () => location.reload());
+  updateAudioLabels();
 
   // ---------- 输入 ----------
 
-  GameInput.create({
+  const input = GameInput.create({
     onDir(d) { net.send({ t: 'in', d }); },
-    onBomb() { net.send({ t: 'bomb' }); },
+    onBomb() {
+      if (state.menuOpen || state.boardOpen) return;
+      net.send({ t: 'bomb' });
+    },
+    onMenu() {
+      if (state.boardOpen) toggleBoard(false);
+      else toggleMenu();
+    },
+    onBoard() { toggleBoard(); },
     onAnyKey() { GameAudio.unlock(); },
   });
+
+  // ---------- 延迟测量 ----------
+
+  setInterval(() => {
+    if (!net.connected) return;
+    const id = ++state.pingSeq;
+    state.pingSent.set(id, performance.now());
+    if (state.pingSent.size > 10) {
+      state.pingSent.delete(state.pingSeq - 10);
+    }
+    net.send({ t: 'ping', id });
+    els.statPing.textContent = state.rtt > 0 ? `📶 ${Math.round(state.rtt)}ms` : '📶 --';
+  }, 2000);
+
+  // ---------- 本机移动预测（与服务端相同的碰撞规则） ----------
+
+  function tileSolidLocal(tx, ty) {
+    if (tx < 0 || ty < 0 || tx >= state.cols || ty >= state.rows) return true;
+    if (state.grid[ty][tx] !== 0) return true;
+    if (state.latest) {
+      for (const b of state.latest.b) {
+        if (b[1] === tx && b[2] === ty) {
+          // 自己正压着的炸弹可以继续通过（对应服务端 passers 规则）
+          const over = Math.abs(state.pred.x - tx) < 0.5 + PLAYER_R &&
+                       Math.abs(state.pred.y - ty) < 0.5 + PLAYER_R;
+          if (!over) return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  function boxHitsLocal(x, y) {
+    const r = PLAYER_R;
+    const minX = Math.round(x - r), maxX = Math.round(x + r);
+    const minY = Math.round(y - r), maxY = Math.round(y + r);
+    for (let ty = minY; ty <= maxY; ty++) {
+      for (let tx = minX; tx <= maxX; tx++) {
+        if (tileSolidLocal(tx, ty)) return true;
+      }
+    }
+    return false;
+  }
+
+  function movePredict(dir, dist) {
+    const p = state.pred;
+    const V = [[0, -1], [0, 1], [-1, 0], [1, 0]][dir];
+    const axis = V[0] !== 0 ? 'x' : 'y';
+    const other = V[0] !== 0 ? 'y' : 'x';
+    const sign = V[0] !== 0 ? V[0] : V[1];
+
+    const nx = axis === 'x' ? p.x + V[0] * dist : p.x;
+    const ny = axis === 'y' ? p.y + V[1] * dist : p.y;
+    if (!boxHitsLocal(nx, ny)) { p.x = nx; p.y = ny; return; }
+
+    let remaining = dist;
+    const cur = p[axis];
+    const curTile = Math.round(cur);
+    const flush = curTile + sign * (0.5 - PLAYER_R - 0.001);
+    if ((flush - cur) * sign > 0) {
+      const fx = axis === 'x' ? flush : p.x;
+      const fy = axis === 'y' ? flush : p.y;
+      if (!boxHitsLocal(fx, fy)) {
+        p.x = fx; p.y = fy;
+        remaining = Math.max(0, dist - Math.abs(flush - cur));
+      }
+    }
+    if (remaining <= 0) remaining = dist * 0.5;
+
+    const oc = Math.round(p[other]);
+    const off = p[other] - oc;
+    const aheadX = axis === 'x' ? curTile + sign : oc;
+    const aheadY = axis === 'y' ? curTile + sign : oc;
+    if (!tileSolidLocal(aheadX, aheadY) && Math.abs(off) > 0.001) {
+      const slide = Math.min(Math.abs(off), remaining) * -Math.sign(off);
+      const sx = other === 'x' ? p.x + slide : p.x;
+      const sy = other === 'y' ? p.y + slide : p.y;
+      if (!boxHitsLocal(sx, sy)) { p.x = sx; p.y = sy; }
+    } else if (Math.abs(off) > 0.25) {
+      const so = Math.sign(off);
+      const dgX = axis === 'x' ? curTile + sign : oc + so;
+      const dgY = axis === 'y' ? curTile + sign : oc + so;
+      if (!tileSolidLocal(dgX, dgY)) {
+        const slide = so * remaining;
+        const sx = other === 'x' ? p.x + slide : p.x;
+        const sy = other === 'y' ? p.y + slide : p.y;
+        if (!boxHitsLocal(sx, sy)) { p.x = sx; p.y = sy; }
+      }
+    }
+  }
 
   // ---------- 插值 ----------
 
   function interpolated() {
-    const delay = (2.5 / state.tickRate) * 1000; // 约 2.5 个快照的缓冲
+    // 插值延迟自适应：平均快照间隔 * 1.5 + 抖动余量
+    const delay = Math.min(280, Math.max(60, state.gapEma * 1.5 + state.jitterEma * 2));
     const rt = performance.now() - delay;
     const snaps = state.snaps;
     const players = [];
@@ -379,21 +631,31 @@
     const span = b.at - a.at;
     const k = span > 0 ? Math.min(1, Math.max(0, (rt - a.at) / span)) : 1;
 
+    const heldDir = input.currentDir();
     for (const row of state.latest.p) {
       const id = row[0];
-      const ra = a.p.get(id), rb = b.p.get(id);
+      const isMe = id === state.myId;
       let ix = row[1], iy = row[2];
-      if (ra && rb) {
-        // 玩家瞬移（重生）时不插值
-        if (Math.abs(rb[1] - ra[1]) + Math.abs(rb[2] - ra[2]) < 3) {
-          ix = ra[1] + (rb[1] - ra[1]) * k;
-          iy = ra[2] + (rb[2] - ra[2]) * k;
+      let dir = row[3], moving = row[4] === 1;
+      if (isMe && state.pred.ok && row[5] === 1) {
+        // 本机：用预测位置 + 本地输入的朝向（零延迟手感）
+        ix = state.pred.x; iy = state.pred.y;
+        if (heldDir >= 0) { dir = heldDir; moving = true; }
+        else moving = false;
+      } else {
+        const ra = a.p.get(id), rb = b.p.get(id);
+        if (ra && rb) {
+          // 瞬移（重生）不插值
+          if (Math.abs(rb[1] - ra[1]) + Math.abs(rb[2] - ra[2]) < 3) {
+            ix = ra[1] + (rb[1] - ra[1]) * k;
+            iy = ra[2] + (rb[2] - ra[2]) * k;
+          }
         }
       }
       const roster = state.roster.get(id) || {};
       players.push({
-        id, ix, iy,
-        dir: row[3], moving: row[4] === 1, alive: row[5] === 1,
+        id, ix, iy, dir, moving,
+        alive: row[5] === 1,
         shield: row[6] === 1, inv: row[7] === 1,
         color: roster.color || 0,
         name: roster.name || '?',
@@ -414,49 +676,62 @@
 
   // ---------- 渲染循环 ----------
 
+  let lastFrameT = performance.now();
+
   function frame() {
-    lastFrame = performance.now();
+    const now = performance.now();
+    const dt = Math.min(0.05, (now - lastFrameT) / 1000);
+    lastFrameT = now;
+
+    // 本机预测推进
+    if (state.joined && state.pred.ok && state.latest) {
+      const meRow = state.latest.p.find((r) => r[0] === state.myId);
+      if (meRow && meRow[5] === 1) {
+        const d = input.currentDir();
+        if (d >= 0) {
+          const speed = BASE_SPEED + meRow[10] * SPEED_STEP;
+          movePredict(d, speed * dt);
+        }
+      }
+    }
+
     if (state.renderer && state.grid && state.latest) {
       const { players, monsters } = interpolated();
-      const now = performance.now();
+      const me = players.find((p) => p.id === state.myId);
+      const follow = me
+        ? { x: me.ix, y: me.iy }
+        : { x: (state.cols - 1) / 2, y: (state.rows - 1) / 2 };
       state.renderer.render({
         grid: state.grid,
         players,
         monsters,
         myId: state.myId,
+        topId: state.latest.top,
+        follow,
         bombs: state.latest.b.map((r) => ({ id: r[0], x: r[1], y: r[2], fuse: r[3] })),
         blasts: state.latest.f.map((r) => {
           const key = r[0] + ',' + r[1];
           const t0 = state.blastAges.get(key) || now;
           return { x: r[0], y: r[1], part: r[2], dir: r[3], age: (now - t0) / 1000 };
         }),
-        powerups: state.latest.u.map((r) => ({ id: r[0], x: r[1], y: r[2], kind: r[3] })),
+        powerups: state.latest.u.map((r) => ({ id: r[0], x: r[1], y: r[2], kind: r[3], ttl: r[4] })),
       });
     }
     requestAnimationFrame(frame);
   }
 
-  let lastFrame = performance.now();
   requestAnimationFrame(frame);
   // 后台标签页 / 无头环境下 rAF 停摆时的兜底渲染
   setInterval(() => {
-    if (performance.now() - lastFrame > 250) frame();
+    if (performance.now() - lastFrameT > 250) frame();
   }, 250);
 
   // ---------- 自适应尺寸 ----------
 
   function resize() {
-    const pad = 16;
-    const availW = els.stage.clientWidth - pad;
-    const availH = els.stage.clientHeight - pad;
-    const aspect = state.cols / state.rows;
-    let w = availW, h = w / aspect;
-    if (h > availH) {
-      h = availH;
-      w = h * aspect;
+    if (state.renderer) {
+      state.renderer.resize(els.stage.clientWidth, els.stage.clientHeight);
     }
-    els.canvas.style.width = w + 'px';
-    els.canvas.style.height = h + 'px';
   }
   window.addEventListener('resize', resize);
   resize();

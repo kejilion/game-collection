@@ -1,7 +1,8 @@
 'use strict';
 
-// 游戏世界权威模拟：地图生成、移动碰撞、炸弹/爆炸/连锁、道具、
-// 怪物 AI、突然死亡与回合流程。纯逻辑，无 IO，便于单元测试。
+// 常驻世界权威模拟（无回合制，开服永久运行）：
+// 大地图、随机空旷出生、死亡自动重生并掉落强化、怪物种群维持、
+// 砖块定时再生、道具时效、连杀计分。纯逻辑无 IO，便于单元测试。
 
 const BASE_CONFIG = require('./config');
 
@@ -14,7 +15,7 @@ const DIR_VEC = [
   { x: 1, y: 0 },
 ];
 const POWERUP_KINDS = ['bomb', 'fire', 'speed', 'shield'];
-const MONSTER_TYPES = ['slime', 'ghost', 'imp'];
+const MONSTER_TYPES = ['slime', 'ghost', 'imp', 'gold'];
 const MONSTER_RADIUS = 0.38;
 
 function mulberry32(seed) {
@@ -40,32 +41,14 @@ function create(opts = {}) {
     blasts: [],
     powerups: [],
     pendingPowerups: [],
+    regrow: [], // 待再生的砖块 {x, y, at}
     events: [],
     nextId: 1,
     time: 0,
-    round: {
-      state: 'lobby', // lobby | countdown | playing | ended
-      num: 0,
-      t: 0, // countdown/ended 时为剩余秒数；playing 时为已进行秒数
-      timeLeft: C.ROUND_TIME,
-      winnerId: null,
-      winnerName: null,
-      participants: 0,
-      monstersSpawned: 0,
-    },
-    sudden: { active: false, order: [], idx: 0, timer: 0 },
+    monsterTimer: 0,
   };
   generateMap(w);
   return w;
-}
-
-function spawnPoints(C) {
-  const R = C.COLS - 2, B = C.ROWS - 2;
-  const mx = (C.COLS - 1) >> 1, my = (C.ROWS - 1) >> 1;
-  return [
-    { x: 1, y: 1 }, { x: R, y: B }, { x: R, y: 1 }, { x: 1, y: B },
-    { x: mx, y: 1 }, { x: mx, y: B }, { x: 1, y: my }, { x: R, y: my },
-  ].slice(0, C.MAX_PLAYERS);
 }
 
 function generateMap(w) {
@@ -76,43 +59,16 @@ function generateMap(w) {
     for (let x = 0; x < C.COLS; x++) {
       if (x === 0 || y === 0 || x === C.COLS - 1 || y === C.ROWS - 1) row.push(TILE.WALL);
       else if (x % 2 === 0 && y % 2 === 0) row.push(TILE.WALL);
+      else if (w.rng() < C.BRICK_DENSITY) row.push(TILE.BRICK);
       else row.push(TILE.EMPTY);
     }
     g.push(row);
-  }
-  // 出生点十字范围留空，保证开局可移动、可躲开首颗炸弹
-  const clear = new Set();
-  for (const s of spawnPoints(C)) {
-    for (let d = -2; d <= 2; d++) {
-      clear.add(s.x + d + ',' + s.y);
-      clear.add(s.x + ',' + (s.y + d));
-    }
-  }
-  for (let y = 1; y < C.ROWS - 1; y++) {
-    for (let x = 1; x < C.COLS - 1; x++) {
-      if (g[y][x] !== TILE.EMPTY) continue;
-      if (clear.has(x + ',' + y)) continue;
-      if (w.rng() < C.BRICK_DENSITY) g[y][x] = TILE.BRICK;
-    }
   }
   w.grid = g;
 }
 
 function serializeGrid(w) {
   return w.grid.map((row) => row.join(''));
-}
-
-function spiralOrder(C) {
-  const out = [];
-  let x0 = 1, y0 = 1, x1 = C.COLS - 2, y1 = C.ROWS - 2;
-  while (x0 <= x1 && y0 <= y1) {
-    for (let x = x0; x <= x1; x++) out.push([x, y0]);
-    for (let y = y0 + 1; y <= y1; y++) out.push([x1, y]);
-    if (y1 > y0) for (let x = x1 - 1; x >= x0; x--) out.push([x, y1]);
-    if (x1 > x0) for (let y = y1 - 1; y >= y0 + 1; y--) out.push([x0, y]);
-    x0++; y0++; x1--; y1--;
-  }
-  return out;
 }
 
 function weightedPick(rng, weights) {
@@ -126,25 +82,67 @@ function weightedPick(rng, weights) {
   return Object.keys(weights)[0];
 }
 
+// ---------- 出生点选择 ----------
+
+function hasOpenNeighbor(w, x, y) {
+  for (const d of DIR_VEC) {
+    const v = w.grid[y + d.y] && w.grid[y + d.y][x + d.x];
+    if (v === TILE.EMPTY) return true;
+  }
+  return false;
+}
+
+function tileClearOfBlast(w, x, y) {
+  if (w.blasts.some((f) => f.x === x && f.y === y)) return false;
+  if (w.bombs.some((b) => Math.abs(b.x - x) + Math.abs(b.y - y) <= 1)) return false;
+  return true;
+}
+
+// 随机挑一块空旷地：优先远离怪物与其他玩家，逐级放宽
+function randomSpawn(w) {
+  const { C } = w;
+  const passes = [
+    { monster: C.SPAWN_MONSTER_DIST, player: C.SPAWN_PLAYER_DIST },
+    { monster: C.SPAWN_MONSTER_DIST, player: 0 },
+    { monster: 2, player: 0 },
+  ];
+  for (const rule of passes) {
+    for (let i = 0; i < 80; i++) {
+      const x = 1 + Math.floor(w.rng() * (C.COLS - 2));
+      const y = 1 + Math.floor(w.rng() * (C.ROWS - 2));
+      if (w.grid[y][x] !== TILE.EMPTY) continue;
+      if (!hasOpenNeighbor(w, x, y)) continue;
+      if (!tileClearOfBlast(w, x, y)) continue;
+      if (rule.monster > 0 &&
+          w.monsters.some((m) => Math.abs(m.x - x) + Math.abs(m.y - y) < rule.monster)) continue;
+      if (rule.player > 0 &&
+          [...w.players.values()].some((p) => p.alive && Math.abs(p.x - x) + Math.abs(p.y - y) < rule.player)) continue;
+      return { x, y };
+    }
+  }
+  // 兜底：全图扫第一块可用空地
+  for (let y = 1; y < C.ROWS - 1; y++) {
+    for (let x = 1; x < C.COLS - 1; x++) {
+      if (w.grid[y][x] === TILE.EMPTY && hasOpenNeighbor(w, x, y)) return { x, y };
+    }
+  }
+  return { x: 1, y: 1 };
+}
+
 // ---------- 玩家 ----------
 
 const COLOR_COUNT = 8;
 
-function addPlayer(w, { name } = {}) {
+function addPlayer(w, { name, color } = {}) {
   const id = w.nextId++;
-  const used = new Map();
-  for (const p of w.players.values()) used.set(p.color, (used.get(p.color) || 0) + 1);
-  let color = 0;
-  for (let c = 0; c < COLOR_COUNT; c++) {
-    if ((used.get(c) || 0) < (used.get(color) || 0)) color = c;
-    if (!used.has(c)) { color = c; break; }
-  }
   const p = {
     id,
     name: sanitizeName(name) || '玩家' + id,
-    color,
-    score: 0, wins: 0, kills: 0, deaths: 0,
-    spec: true, alive: false,
+    color: Number.isInteger(color) && color >= 0 && color < COLOR_COUNT
+      ? color
+      : Math.floor(w.rng() * COLOR_COUNT),
+    score: 0, kills: 0, deaths: 0, streak: 0,
+    alive: false, deadUntil: 0,
     x: 0, y: 0, dir: 1, moving: false,
     input: -1, wantBomb: false,
     maxBombs: w.C.BASE_BOMBS, range: w.C.BASE_RANGE, speed: w.C.BASE_SPEED,
@@ -153,10 +151,7 @@ function addPlayer(w, { name } = {}) {
   };
   w.players.set(id, p);
   w.events.push({ e: 'join', id, name: p.name });
-  const st = w.round.state;
-  if ((st === 'playing' && w.round.t < w.C.JOIN_GRACE) || st === 'countdown') {
-    trySpawn(w, p);
-  }
+  spawnPlayer(w, p);
   return p;
 }
 
@@ -168,6 +163,23 @@ function sanitizeName(name) {
     if (code >= 32 && code !== 127) chars.push(ch);
   }
   return chars.join('').trim().slice(0, 12);
+}
+
+function spawnPlayer(w, p) {
+  const { C } = w;
+  const s = randomSpawn(w);
+  p.alive = true;
+  p.x = s.x; p.y = s.y;
+  p.dir = 1; p.moving = false;
+  p.input = -1; p.wantBomb = false;
+  p.maxBombs = C.BASE_BOMBS;
+  p.range = C.BASE_RANGE;
+  p.speed = C.BASE_SPEED;
+  p.activeBombs = 0;
+  p.shield = false;
+  p.spawnShield = C.SPAWN_SHIELD;
+  p.invuln = 0;
+  w.events.push({ e: 'spawn', id: p.id, x: s.x, y: s.y });
 }
 
 function removePlayer(w, id) {
@@ -188,146 +200,83 @@ function requestBomb(w, id) {
   if (p) p.wantBomb = true;
 }
 
-function resetPlayerForRound(w, p, spawn) {
+// 死亡掉落：把生前的强化按比例还给战场，奖励击杀者
+function dropUpgrades(w, p) {
   const { C } = w;
-  p.spec = false;
-  p.alive = true;
-  p.x = spawn.x; p.y = spawn.y;
-  p.dir = 1; p.moving = false;
-  p.input = -1; p.wantBomb = false;
-  p.maxBombs = C.BASE_BOMBS;
-  p.range = C.BASE_RANGE;
-  p.speed = C.BASE_SPEED;
-  p.activeBombs = 0;
-  p.shield = false;
-  p.spawnShield = C.SPAWN_SHIELD;
-  p.invuln = 0;
-}
-
-// 回合中途加入：还有空出生点就直接参战
-function trySpawn(w, p) {
-  const points = spawnPoints(w.C);
-  const taken = new Set();
-  for (const q of w.players.values()) {
-    if (!q.spec && q.id !== p.id) {
-      // 找离每个玩家最近的出生点视为已占用
-      let best = 0, bd = Infinity;
-      points.forEach((s, i) => {
-        const d = Math.abs(q.x - s.x) + Math.abs(q.y - s.y);
-        if (d < bd) { bd = d; best = i; }
-      });
-      taken.add(best);
-    }
+  const pool = [];
+  for (let i = C.BASE_BOMBS; i < p.maxBombs; i++) pool.push('bomb');
+  for (let i = C.BASE_RANGE; i < p.range; i++) pool.push('fire');
+  for (let i = 0; i < Math.round((p.speed - C.BASE_SPEED) / C.SPEED_STEP); i++) pool.push('speed');
+  if (pool.length === 0) return;
+  const cx = Math.round(p.x), cy = Math.round(p.y);
+  const spots = [[cx, cy], [cx + 1, cy], [cx - 1, cy], [cx, cy + 1], [cx, cy - 1]]
+    .filter(([x, y]) =>
+      x > 0 && y > 0 && x < C.COLS - 1 && y < C.ROWS - 1 &&
+      w.grid[y][x] === TILE.EMPTY &&
+      !w.powerups.some((u) => u.x === x && u.y === y) &&
+      !w.pendingPowerups.some((u) => u.x === x && u.y === y));
+  const count = Math.min(C.DEATH_DROPS, pool.length, spots.length);
+  for (let i = 0; i < count; i++) {
+    const kind = pool.splice(Math.floor(w.rng() * pool.length), 1)[0];
+    const [x, y] = spots[i];
+    w.pendingPowerups.push({ x, y, kind, at: w.time + 0.8 });
   }
-  const activeCount = [...w.players.values()].filter((q) => !q.spec).length;
-  if (activeCount >= w.C.MAX_PLAYERS) return false;
-  for (let i = 0; i < points.length; i++) {
-    if (taken.has(i)) continue;
-    const s = points[i];
-    resetPlayerForRound(w, p, s);
-    // 清掉出生点周围可能重新生成的障碍（中途加入时地图已在使用中，仅清出生格）
-    w.round.participants++;
-    w.events.push({ e: 'spawn', id: p.id });
-    return true;
-  }
-  return false;
-}
-
-// ---------- 回合流程 ----------
-
-function startRound(w) {
-  const { C } = w;
-  w.round.num++;
-  w.round.state = 'countdown';
-  w.round.t = C.START_COUNTDOWN;
-  w.round.timeLeft = C.ROUND_TIME;
-  w.round.winnerId = null;
-  w.round.winnerName = null;
-  w.bombs = [];
-  w.blasts = [];
-  w.powerups = [];
-  w.pendingPowerups = [];
-  w.sudden = { active: false, order: spiralOrder(C), idx: 0, timer: 0 };
-  generateMap(w);
-
-  const points = spawnPoints(C);
-  let slot = 0;
-  for (const p of w.players.values()) {
-    if (slot < points.length) {
-      resetPlayerForRound(w, p, points[slot]);
-      slot++;
-    } else {
-      p.spec = true;
-      p.alive = false;
-    }
-  }
-  w.round.participants = slot;
-  spawnMonsters(w, slot);
-  w.events.push({ e: 'round', n: w.round.num, map: serializeGrid(w) });
-}
-
-function endRound(w, winner) {
-  const { C } = w;
-  w.round.state = 'ended';
-  w.round.t = C.ROUND_END_DELAY;
-  if (winner) {
-    winner.score += C.SCORE.win;
-    winner.wins++;
-    w.round.winnerId = winner.id;
-    w.round.winnerName = winner.name;
-  }
-  w.events.push({
-    e: 'end',
-    id: winner ? winner.id : null,
-    name: winner ? winner.name : null,
-    n: w.round.participants,
-  });
 }
 
 // ---------- 怪物 ----------
 
-function spawnMonsters(w, playerCount) {
+function targetMonsterCount(w) {
   const { C } = w;
-  w.monsters = [];
-  const count = Math.min(
-    C.MONSTER_MAX,
-    C.MONSTER_BASE + Math.floor(playerCount * C.MONSTER_PER_PLAYER)
-  );
-  w.round.monstersSpawned = 0;
-  if (count <= 0) return;
-  const points = spawnPoints(C);
-  const candidates = [];
-  for (let y = 1; y < C.ROWS - 1; y++) {
-    for (let x = 1; x < C.COLS - 1; x++) {
+  return Math.min(C.MONSTER_MAX, C.MONSTER_BASE + C.MONSTER_PER_PLAYER * w.players.size);
+}
+
+function maintainMonsters(w, dt) {
+  const { C } = w;
+  w.monsterTimer += dt;
+  while (w.monsterTimer >= C.MONSTER_RESPAWN_INTERVAL) {
+    w.monsterTimer -= C.MONSTER_RESPAWN_INTERVAL;
+    if (w.players.size === 0) continue;
+    if (w.monsters.length >= targetMonsterCount(w)) continue;
+    spawnMonster(w);
+  }
+}
+
+function spawnMonster(w) {
+  const { C } = w;
+  let spot = null;
+  for (const minDist of [C.MONSTER_PLAYER_DIST, 4]) {
+    for (let i = 0; i < 60 && !spot; i++) {
+      const x = 1 + Math.floor(w.rng() * (C.COLS - 2));
+      const y = 1 + Math.floor(w.rng() * (C.ROWS - 2));
       if (w.grid[y][x] !== TILE.EMPTY) continue;
-      let ok = true;
-      for (const s of points) {
-        if (Math.abs(x - s.x) + Math.abs(y - s.y) < 5) { ok = false; break; }
-      }
-      if (ok) candidates.push({ x, y });
+      if (!hasOpenNeighbor(w, x, y)) continue;
+      if ([...w.players.values()].some((p) => p.alive && Math.abs(p.x - x) + Math.abs(p.y - y) < minDist)) continue;
+      spot = { x, y };
     }
+    if (spot) break;
   }
-  for (let i = 0; i < count && candidates.length > 0; i++) {
-    const idx = Math.floor(w.rng() * candidates.length);
-    const spot = candidates.splice(idx, 1)[0];
-    const type = weightedPick(w.rng, C.MONSTER_WEIGHTS);
-    w.monsters.push({
-      id: w.nextId++,
-      type,
-      typeIdx: MONSTER_TYPES.indexOf(type),
-      x: spot.x, y: spot.y,
-      dir: 1,
-      speed: C.MONSTER_SPEED[type],
-      target: null,
-    });
-    w.round.monstersSpawned++;
-  }
+  if (!spot) return null;
+  const hasGold = w.monsters.some((m) => m.type === 'gold');
+  const type = !hasGold && w.rng() < C.GOLD_CHANCE
+    ? 'gold'
+    : weightedPick(w.rng, C.MONSTER_WEIGHTS);
+  const m = {
+    id: w.nextId++,
+    type,
+    typeIdx: MONSTER_TYPES.indexOf(type),
+    x: spot.x, y: spot.y,
+    dir: 1,
+    speed: C.MONSTER_SPEED[type],
+    target: null,
+  };
+  w.monsters.push(m);
+  return m;
 }
 
 function updateMonsters(w, dt) {
   for (const m of w.monsters) {
     if (m.target) {
-      // 途中目标格被封（炸弹/坍塌）且尚未进入则重新决策
+      // 途中目标格被封（炸弹/再生砖）且尚未进入则重新决策
       if (tileSolidFor(w, m.target.x, m.target.y, m) &&
           (Math.abs(m.x - m.target.x) > 0.5 || Math.abs(m.y - m.target.y) > 0.5)) {
         m.target = null;
@@ -353,6 +302,16 @@ function updateMonsters(w, dt) {
   }
 }
 
+function nearestAlivePlayer(w, x, y) {
+  let target = null, best = Infinity;
+  for (const p of w.players.values()) {
+    if (!p.alive) continue;
+    const d = Math.abs(p.x - x) + Math.abs(p.y - y);
+    if (d < best) { best = d; target = p; }
+  }
+  return target;
+}
+
 function chooseMonsterTarget(w, m) {
   const cx = Math.round(m.x), cy = Math.round(m.y);
   const open = [];
@@ -365,12 +324,7 @@ function chooseMonsterTarget(w, m) {
   const reverse = m.dir === 0 ? 1 : m.dir === 1 ? 0 : m.dir === 2 ? 3 : 2;
   if (m.type === 'ghost' && w.rng() < 0.75) {
     // 幽灵：贪心追最近的存活玩家
-    let target = null, best = Infinity;
-    for (const p of w.players.values()) {
-      if (!p.alive) continue;
-      const d = Math.abs(p.x - m.x) + Math.abs(p.y - m.y);
-      if (d < best) { best = d; target = p; }
-    }
+    const target = nearestAlivePlayer(w, m.x, m.y);
     if (target) {
       let bd = Infinity;
       for (const d of open) {
@@ -379,9 +333,20 @@ function chooseMonsterTarget(w, m) {
         if (dd < bd) { bd = dd; dir = d; }
       }
     }
+  } else if (m.type === 'gold' && w.rng() < 0.75) {
+    // 金史莱姆：逃离最近的玩家
+    const target = nearestAlivePlayer(w, m.x, m.y);
+    if (target) {
+      let bd = -Infinity;
+      for (const d of open) {
+        const nx = cx + DIR_VEC[d].x, ny = cy + DIR_VEC[d].y;
+        const dd = Math.abs(target.x - nx) + Math.abs(target.y - ny);
+        if (dd > bd) { bd = dd; dir = d; }
+      }
+    }
   }
   if (dir == null) {
-    // 慢速怪：尽量不走回头路
+    // 尽量不走回头路的随机游走
     const forward = open.filter((d) => d !== reverse);
     const pool = forward.length > 0 && w.rng() < 0.8 ? forward : open;
     dir = pool[Math.floor(w.rng() * pool.length)];
@@ -489,7 +454,7 @@ function placeBomb(w, p) {
     passers,
   });
   p.activeBombs++;
-  w.events.push({ e: 'bomb', x: tx, y: ty });
+  w.events.push({ e: 'bomb', x: tx, y: ty, id: p.id });
   return true;
 }
 
@@ -563,25 +528,56 @@ function destroyBrick(w, x, y, byId) {
     const kind = weightedPick(w.rng, C.POWERUP_WEIGHTS);
     w.pendingPowerups.push({ x, y, kind, at: w.time + C.BLAST_TIME + 0.05 });
   }
+  // 安排再生
+  const delay = C.BRICK_REGROW_MIN + w.rng() * (C.BRICK_REGROW_MAX - C.BRICK_REGROW_MIN);
+  w.regrow.push({ x, y, at: w.time + delay });
 }
 
 function updateBlasts(w) {
+  const { C } = w;
   w.blasts = w.blasts.filter((f) => f.until > w.time);
+  // 道具过期
+  w.powerups = w.powerups.filter((u) => u.until > w.time);
+  // 延迟生成的道具（等火焰散去）
   if (w.pendingPowerups.length > 0) {
     const remain = [];
     for (const pp of w.pendingPowerups) {
       if (w.time < pp.at) { remain.push(pp); continue; }
-      if (w.grid[pp.y][pp.x] !== TILE.EMPTY) continue; // 被突然死亡压掉
+      if (w.grid[pp.y][pp.x] !== TILE.EMPTY) continue;
       if (w.blasts.some((f) => f.x === pp.x && f.y === pp.y)) { remain.push(pp); continue; }
       w.powerups.push({
         id: w.nextId++,
         x: pp.x, y: pp.y,
         kind: pp.kind,
         kindIdx: POWERUP_KINDS.indexOf(pp.kind),
+        until: w.time + C.POWERUP_TTL,
       });
     }
     w.pendingPowerups = remain;
   }
+}
+
+function regrowBricks(w) {
+  if (w.regrow.length === 0) return;
+  const remain = [];
+  for (const r of w.regrow) {
+    if (w.time < r.at) { remain.push(r); continue; }
+    const blocked =
+      w.grid[r.y][r.x] !== TILE.EMPTY ||
+      w.bombs.some((b) => b.x === r.x && b.y === r.y) ||
+      w.powerups.some((u) => u.x === r.x && u.y === r.y) ||
+      w.pendingPowerups.some((u) => u.x === r.x && u.y === r.y) ||
+      [...w.players.values()].some((p) => p.alive && Math.abs(p.x - r.x) < 1.3 && Math.abs(p.y - r.y) < 1.3) ||
+      w.monsters.some((m) => Math.abs(m.x - r.x) < 1.3 && Math.abs(m.y - r.y) < 1.3);
+    if (blocked) {
+      r.at = w.time + 5; // 位置被占，稍后再试
+      remain.push(r);
+      continue;
+    }
+    w.grid[r.y][r.x] = TILE.BRICK;
+    w.events.push({ e: 'tile', x: r.x, y: r.y, v: TILE.BRICK, fx: 'grow' });
+  }
+  w.regrow = remain;
 }
 
 function applyBlastDamage(w) {
@@ -590,7 +586,7 @@ function applyBlastDamage(w) {
   const hit = (x, y, bx, by, tol) => Math.abs(x - bx) < tol && Math.abs(y - by) < tol;
   for (const f of w.blasts) {
     for (const p of w.players.values()) {
-      if (p.alive && hit(p.x, p.y, f.x, f.y, 0.55)) hitPlayer(w, p, f.owner, false);
+      if (p.alive && hit(p.x, p.y, f.x, f.y, 0.55)) hitPlayer(w, p, f.owner);
     }
     for (const m of [...w.monsters]) {
       if (hit(m.x, m.y, f.x, f.y, 0.6)) killMonster(w, m, f.owner);
@@ -609,11 +605,11 @@ function applyBlastDamage(w) {
   }
 }
 
-function hitPlayer(w, p, byId, force) {
+function hitPlayer(w, p, byId) {
   const { C } = w;
   if (!p.alive) return;
-  if (!force && (p.spawnShield > 0 || p.invuln > 0)) return;
-  if (!force && p.shield) {
+  if (p.spawnShield > 0 || p.invuln > 0) return;
+  if (p.shield) {
     p.shield = false;
     p.invuln = C.HIT_INVULN;
     w.events.push({ e: 'shield', id: p.id });
@@ -621,12 +617,20 @@ function hitPlayer(w, p, byId, force) {
   }
   p.alive = false;
   p.deaths++;
+  p.streak = 0;
   p.input = -1;
-  w.events.push({ e: 'die', id: p.id, x: p.x, y: p.y });
+  p.deadUntil = w.time + C.RESPAWN_DELAY;
+  dropUpgrades(w, p);
+  w.events.push({ e: 'die', id: p.id, x: p.x, y: p.y, by: byId != null ? byId : null });
   const killer = byId != null ? w.players.get(byId) : null;
   if (killer && killer.id !== p.id) {
-    killer.score += C.SCORE.kill;
     killer.kills++;
+    killer.streak++;
+    const bonus = Math.min(C.SCORE.streakBonus * (killer.streak - 1), C.SCORE.streakCap);
+    killer.score += C.SCORE.kill + bonus;
+    if (killer.streak >= 2) {
+      w.events.push({ e: 'streak', id: killer.id, n: killer.streak });
+    }
   }
 }
 
@@ -635,10 +639,11 @@ function killMonster(w, m, byId) {
   w.monsters = w.monsters.filter((x) => x !== m);
   w.events.push({ e: 'mdie', id: m.id, x: m.x, y: m.y, mt: m.typeIdx });
   const killer = byId != null ? w.players.get(byId) : null;
-  if (killer) killer.score += C.SCORE.monster;
+  if (killer) killer.score += C.MONSTER_SCORE[m.type] || 50;
+  const dropChance = m.type === 'gold' ? 1 : C.MONSTER_DROP_CHANCE;
   const tx = Math.round(m.x), ty = Math.round(m.y);
   if (
-    w.rng() < C.MONSTER_DROP_CHANCE &&
+    w.rng() < dropChance &&
     w.grid[ty][tx] === TILE.EMPTY &&
     !w.powerups.some((u) => u.x === tx && u.y === ty)
   ) {
@@ -672,86 +677,26 @@ function applyPickups(w) {
 function applyMonsterTouch(w) {
   const { C } = w;
   for (const m of w.monsters) {
+    if (m.type === 'gold') continue; // 金史莱姆无害，只会逃
     for (const p of w.players.values()) {
       if (!p.alive) continue;
       if (Math.abs(p.x - m.x) < C.MONSTER_TOUCH && Math.abs(p.y - m.y) < C.MONSTER_TOUCH) {
-        hitPlayer(w, p, null, false);
+        hitPlayer(w, p, null);
       }
     }
   }
-}
-
-// ---------- 突然死亡 ----------
-
-function updateSuddenDeath(w, dt) {
-  const { C } = w;
-  if (!w.sudden.active) {
-    if (w.round.timeLeft <= 0) {
-      w.sudden.active = true;
-      w.events.push({ e: 'sd' });
-    }
-    return;
-  }
-  w.sudden.timer += dt;
-  while (w.sudden.timer >= C.SUDDEN_DEATH_INTERVAL && w.sudden.idx < w.sudden.order.length) {
-    w.sudden.timer -= C.SUDDEN_DEATH_INTERVAL;
-    const [x, y] = w.sudden.order[w.sudden.idx++];
-    if (w.grid[y][x] === TILE.WALL) continue;
-    w.grid[y][x] = TILE.WALL;
-    w.events.push({ e: 'tile', x, y, v: TILE.WALL, fx: 'sd' });
-    w.bombs = w.bombs.filter((b) => !(b.x === x && b.y === y) || releaseBomb(w, b));
-    w.powerups = w.powerups.filter((u) => !(u.x === x && u.y === y));
-    for (const p of w.players.values()) {
-      if (p.alive && Math.round(p.x) === x && Math.round(p.y) === y) hitPlayer(w, p, null, true);
-    }
-    for (const m of [...w.monsters]) {
-      if (Math.round(m.x) === x && Math.round(m.y) === y) killMonster(w, m, null);
-    }
-  }
-}
-
-function releaseBomb(w, b) {
-  const owner = w.players.get(b.owner);
-  if (owner) owner.activeBombs = Math.max(0, owner.activeBombs - 1);
-  return false; // filter 用：总是移除
 }
 
 // ---------- 主循环 ----------
 
 function step(w, dt) {
   w.time += dt;
-  const { C } = w;
-  const humans = [...w.players.values()];
-  const st = w.round.state;
-
-  if (st === 'lobby') {
-    if (humans.length > 0) startRound(w);
-    return;
-  }
-  if (st === 'countdown') {
-    w.round.t -= dt;
-    if (w.round.t <= 0) {
-      w.round.state = 'playing';
-      w.round.t = 0;
-      w.events.push({ e: 'go' });
-    }
-    return;
-  }
-  if (st === 'ended') {
-    w.round.t -= dt;
-    if (w.round.t <= 0) {
-      if (humans.length > 0) startRound(w);
-      else w.round.state = 'lobby';
-    }
-    return;
-  }
-
-  // playing
-  w.round.t += dt;
-  w.round.timeLeft = Math.max(0, w.round.timeLeft - dt);
 
   for (const p of w.players.values()) {
-    if (!p.alive) continue;
+    if (!p.alive) {
+      if (w.time >= p.deadUntil) spawnPlayer(w, p); // 自动重生
+      continue;
+    }
     if (p.spawnShield > 0) p.spawnShield -= dt;
     if (p.invuln > 0) p.invuln -= dt;
     p.moving = false;
@@ -767,34 +712,24 @@ function step(w, dt) {
   }
 
   updateMonsters(w, dt);
+  maintainMonsters(w, dt);
   updateBombs(w, dt);
   updateBlasts(w);
   applyBlastDamage(w);
   applyPickups(w);
   applyMonsterTouch(w);
-  updateSuddenDeath(w, dt);
-
-  // 胜负判定
-  const alive = humans.filter((p) => !p.spec && p.alive);
-  if (w.round.participants >= 2) {
-    if (alive.length === 0) endRound(w, null);
-    else if (alive.length === 1) endRound(w, alive[0]);
-  } else {
-    if (alive.length === 0) endRound(w, null);
-    else if (w.monsters.length === 0 && w.round.monstersSpawned > 0) endRound(w, alive[0]);
-  }
+  regrowBricks(w);
 }
 
 module.exports = {
   create,
   step,
-  startRound,
   addPlayer,
   removePlayer,
   setInput,
   requestBomb,
   serializeGrid,
-  spawnPoints,
+  randomSpawn,
   TILE,
   POWERUP_KINDS,
   MONSTER_TYPES,
