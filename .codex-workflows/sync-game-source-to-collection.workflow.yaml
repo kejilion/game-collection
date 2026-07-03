@@ -1,0 +1,132 @@
+---
+name: sync-game-source-to-collection
+description: "Sync a standalone local game directory into the game-collection repo, test it, commit only that game, push main, and verify GitHub matches local HEAD."
+version: "1.0.0"
+author: "Codex"
+tags: [git, github, game, sync, test]
+params: [source_dir, project_dir, game_dir, branch, remote, source_test_command, destination_test_command, commit_message, ssh_key]
+created: "2026-07-03T01:32:35Z"
+updated: "2026-07-03T01:32:35Z"
+---
+
+# Sync Game Source To Collection
+
+## Purpose
+
+Move the latest code from an independently edited game folder such as `C:\炸蛋人2`
+into the multi-game collection repository, while preserving unrelated work and
+keeping GitHub `main` exactly aligned with the verified local commit.
+
+## Prerequisites
+
+- `${{project_dir}}` is the game collection Git worktree.
+- `${{source_dir}}` is the standalone game directory edited day to day.
+- `${{game_dir}}` is the target folder inside the collection, for example `games/bomb-party`.
+- SSH access to GitHub is available through `${{ssh_key}}`.
+- `robocopy`, `git`, and `npm.cmd` are available on Windows.
+- Do not commit unrelated files already present in the worktree.
+
+## Steps
+
+### 1. Inspect repository state and remote drift
+
+```powershell
+$repo = "${{project_dir}}"
+$env:GIT_SSH_COMMAND = 'ssh -i "${{ssh_key}}" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15'
+git -C $repo status --short --branch
+git -C $repo remote -v
+git -C $repo fetch ${{remote}} --prune
+git -C $repo rev-list --left-right --count "${{remote}}/${{branch}}...${{branch}}"
+```
+
+**Expected output:** The intended branch and GitHub remote are confirmed. If the remote side is ahead, stop and resolve deliberately before syncing; do not force push.
+
+### 2. Run source project tests
+
+```powershell
+Set-Location "${{source_dir}}"
+${{source_test_command}}
+```
+
+**Expected output:** The source project test command exits 0. For the current Bomb Party game this is normally `npm.cmd test`.
+
+### 3. Mirror source into the collection target
+
+```powershell
+$src = "${{source_dir}}"
+$dst = Join-Path "${{project_dir}}" "${{game_dir}}"
+robocopy $src $dst /MIR /XD .git .claude node_modules data test-results /XF .devpid.txt *.log _srv.* /NFL /NDL /NJH /NJS
+if ($LASTEXITCODE -ge 8) { exit $LASTEXITCODE } else { $global:LASTEXITCODE = 0 }
+```
+
+**Expected output:** `robocopy` exits 0 through 7. This mirrors real source files while excluding Git metadata, dependencies, runtime data, test artifacts, and logs.
+
+### 4. Run collection-target tests
+
+```powershell
+Set-Location (Join-Path "${{project_dir}}" "${{game_dir}}")
+${{destination_test_command}}
+```
+
+**Expected output:** The copied game also passes inside the collection folder.
+
+### 5. Review, stage, and commit only the target game
+
+```powershell
+$repo = "${{project_dir}}"
+git -C $repo diff --stat -- "${{game_dir}}"
+git -C $repo diff --name-status -- "${{game_dir}}"
+git -C $repo add -- "${{game_dir}}"
+git -C $repo diff --cached --check
+git -C $repo diff --cached --stat
+git -C $repo commit -m "${{commit_message}}"
+```
+
+**Expected output:** The staged diff contains only `${{game_dir}}`. Unrelated files such as other workflows, logs, or local experiments remain uncommitted.
+
+### 6. Push and verify local/remote equality
+
+```powershell
+$repo = "${{project_dir}}"
+$env:GIT_SSH_COMMAND = 'ssh -i "${{ssh_key}}" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15'
+git -C $repo fetch ${{remote}} --prune
+git -C $repo rev-list --left-right --count "${{remote}}/${{branch}}...${{branch}}"
+git -C $repo push ${{remote}} "${{branch}}"
+git -C $repo fetch ${{remote}} --prune
+$localHead = git -C $repo rev-parse HEAD
+$remoteHead = git -C $repo rev-parse "${{remote}}/${{branch}}"
+git -C $repo rev-list --left-right --count "${{remote}}/${{branch}}...${{branch}}"
+git -C $repo status --short
+Write-Output "LOCAL_HEAD=$localHead"
+Write-Output "REMOTE_HEAD=$remoteHead"
+Write-Output "MATCH=$($localHead -eq $remoteHead)"
+```
+
+**Expected output:** Push succeeds, ahead/behind count is `0 0`, and `MATCH=True`.
+
+## Parameters
+
+- `${{source_dir}}`: Absolute path of the standalone game source, for example `C:\炸蛋人2`.
+- `${{project_dir}}`: Absolute path of the collection repo, normally `C:\KEJILION大乱动`.
+- `${{game_dir}}`: Target folder inside the collection, for example `games/bomb-party`.
+- `${{branch}}`: Branch to push, normally `main`.
+- `${{remote}}`: Git remote name, normally `origin`.
+- `${{source_test_command}}`: Test command to run in the standalone source, normally `npm.cmd test`.
+- `${{destination_test_command}}`: Test command to run in the collection target, normally `npm.cmd test`.
+- `${{commit_message}}`: Focused commit message for this sync.
+- `${{ssh_key}}`: SSH private key for GitHub, normally `C:\GitHub\.ssh\kejilion_codex_ed25519`.
+
+## Verification
+
+- Source tests pass.
+- Collection-target tests pass.
+- The commit contains only the intended `${{game_dir}}` files.
+- `git rev-parse HEAD` equals `git rev-parse ${{remote}}/${{branch}}`.
+- `git rev-list --left-right --count ${{remote}}/${{branch}}...${{branch}}` returns `0 0`.
+
+## Notes
+
+- Treat `robocopy` exit codes 0 through 7 as success; 8 or above indicates a copy failure.
+- If there are unrelated local changes, keep them visible but unstaged.
+- If the remote is ahead of local, fetch and inspect before committing or pushing. Never use `--force` for this routine sync.
+- Use `npm.cmd` instead of `npm.ps1` on Windows to avoid PowerShell execution policy issues.
