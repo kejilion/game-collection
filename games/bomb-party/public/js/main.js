@@ -18,6 +18,7 @@
     joinScreen: $('join-screen'),
     nameInput: $('name-input'),
     joinBtn: $('join-btn'),
+    joinStatus: $('join-status'),
     joinLb: $('join-leaderboard'),
     colorPicker: $('color-picker'),
     menuScreen: $('menu-screen'),
@@ -97,18 +98,55 @@
     catalog: {},
     myCos: { owned: [], equip: {} },
     pendingJoin: false,
+    joinSafetyT: 0,
   };
 
   window.__game = state; // 调试用
 
   // ---------- 网络 ----------
 
+  function setJoinStatus(text = '', tone = '') {
+    els.joinStatus.textContent = text;
+    els.joinStatus.className = tone ? `join-status ${tone}` : 'join-status';
+  }
+
+  function setJoinBusy(busy) {
+    els.joinBtn.classList.toggle('loading', busy);
+    els.joinBtn.setAttribute('aria-busy', busy ? 'true' : 'false');
+    els.joinBtn.disabled = busy;
+    els.joinBtn.textContent = busy ? '连接中…' : '进入战场';
+  }
+
+  function clearJoinSafety() {
+    clearTimeout(state.joinSafetyT);
+    state.joinSafetyT = 0;
+  }
+
+  function armJoinSafety() {
+    clearJoinSafety();
+    state.joinSafetyT = setTimeout(() => {
+      if (!state.joined && (state.pendingJoin || els.joinBtn.disabled)) {
+        state.pendingJoin = false;
+        setJoinBusy(false);
+        setJoinStatus('连接超时，请重试', 'error');
+      }
+    }, 8000);
+  }
+
   const net = Net.create({
     onOpen() {
       els.reconnectScreen.classList.add('hidden');
       if (state.pendingJoin || (state.joined && state.myName)) {
         state.pendingJoin = false;
+        if (!state.joined) {
+          setJoinBusy(true);
+          setJoinStatus('已连接，正在进入战场…');
+          armJoinSafety();
+        }
         net.send({ t: 'join', name: state.myName, color: state.myColor });
+      } else if (!state.joined) {
+        setJoinBusy(false);
+        setJoinStatus('');
       }
       updateOverlay();
     },
@@ -116,6 +154,8 @@
       if (state.joined && !state.quit) {
         els.reconnectScreen.classList.remove('hidden');
         updateOverlay();
+      } else if (!state.quit) {
+        setJoinStatus(state.pendingJoin ? '连接断开，正在重连…' : '正在连接服务器…', 'warn');
       }
     },
     onMessage(msg) {
@@ -125,6 +165,10 @@
       else if (msg.t === 'you') {
         state.myId = msg.id;
         state.joined = true;
+        state.pendingJoin = false;
+        clearJoinSafety();
+        setJoinBusy(false);
+        setJoinStatus('');
         state.pred.ok = false;
         if (msg.cos) state.myCos = msg.cos;
         updateOverlay();
@@ -140,6 +184,10 @@
           state.rtt = state.rtt === 0 ? rtt : state.rtt * 0.7 + rtt * 0.3;
         }
       } else if (msg.t === 'full') {
+        state.pendingJoin = false;
+        clearJoinSafety();
+        setJoinBusy(false);
+        setJoinStatus('房间已满，稍后再试', 'error');
         toast('😥 房间已满，稍后再试');
       } else if (msg.t === 'chat') {
         addChatLine(msg.name, msg.text, msg.color);
@@ -644,9 +692,16 @@
     if (!net.connected) {
       // 连接尚未就绪（手机网络常见）：排队，连上后自动补发，不再静默丢弃
       state.pendingJoin = true;
+      setJoinBusy(true);
+      setJoinStatus('正在连接服务器，连上后会自动进入…', 'warn');
+      armJoinSafety();
       toast('🔌 正在连接服务器…');
       return;
     }
+    state.pendingJoin = false;
+    setJoinBusy(true);
+    setJoinStatus('正在进入战场…');
+    armJoinSafety();
     net.send({ t: 'join', name, color: state.myColor });
   }
 
@@ -690,6 +745,10 @@
     state.myId = null;
     state.menuOpen = false;
     state.pred.ok = false;
+    state.pendingJoin = false;
+    clearJoinSafety();
+    setJoinBusy(false);
+    setJoinStatus('');
     updateOverlay();
   });
   els.menuQuit.addEventListener('click', () => {
