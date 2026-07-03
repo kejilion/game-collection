@@ -50,7 +50,16 @@
     chatInput: $('chat-input'),
     chatBtn: $('chat-btn'),
     deathVignette: $('death-vignette'),
+    shopScreen: $('shop-screen'),
+    shopList: $('shop-list'),
+    shopScore: $('shop-score'),
+    shopClose: $('shop-close'),
+    shopHint: $('shop-hint'),
   };
+
+  const MONSTER_NAMES = ['史莱姆', '幽灵', '小恶魔', '金史莱姆', '史莱姆王', '石像巨人'];
+  const BOSS_MAX_HP = { 4: 4, 5: 6 };
+  const SLOT_NAMES = { hat: '👒 帽子', pattern: '🎨 身体纹路', eyes: '👀 眼睛', glow: '✨ 外发光', trail: '💫 拖尾' };
 
   const POWERUP_NAMES = ['💣 炸弹+1', '🔥 火力+1', '⚡ 速度+1', '🛡️ 护盾'];
   // 与 server/config.js 保持一致的移动常量（用于本地预测）
@@ -82,6 +91,12 @@
     pingSeq: 0, pingSent: new Map(), rtt: 0,
     // 聊天气泡：玩家 id -> { text, until }（客户端本地维护，不占快照）
     bubbles: new Map(),
+    // 商店
+    shop: 0,
+    shopOpen: false,
+    catalog: {},
+    myCos: { owned: [], equip: {} },
+    pendingJoin: false,
   };
 
   window.__game = state; // 调试用
@@ -91,7 +106,8 @@
   const net = Net.create({
     onOpen() {
       els.reconnectScreen.classList.add('hidden');
-      if (state.joined && state.myName) {
+      if (state.pendingJoin || (state.joined && state.myName)) {
+        state.pendingJoin = false;
         net.send({ t: 'join', name: state.myName, color: state.myColor });
       }
       updateOverlay();
@@ -110,7 +126,12 @@
         state.myId = msg.id;
         state.joined = true;
         state.pred.ok = false;
+        if (msg.cos) state.myCos = msg.cos;
         updateOverlay();
+      } else if (msg.t === 'shopResult') {
+        toast((msg.ok ? '✅ ' : '❌ ') + msg.msg);
+        if (msg.owned) state.myCos = { owned: msg.owned, equip: msg.equip || {} };
+        if (state.shopOpen) renderShop();
       } else if (msg.t === 'pong') {
         const sent = state.pingSent.get(msg.id);
         if (sent != null) {
@@ -135,6 +156,7 @@
     state.snapMs = (1000 / state.tickRate) * state.snapEvery;
     state.respawnDelay = msg.respawn || 2.5;
     state.grid = msg.grid.map((row) => row.split('').map(Number));
+    state.catalog = msg.catalog || {};
     ensureRenderer();
     renderJoinLeaderboard(msg.lb);
     updateOverlay();
@@ -205,6 +227,10 @@
     for (const key of state.blastAges.keys()) {
       if (!seen.has(key)) state.blastAges.delete(key);
     }
+
+    // 商人状态（0 或 [x,y,剩余秒]）
+    state.shop = s.shop || 0;
+    if (state.shopOpen && !state.shop) toggleShop(false);
 
     for (const ev of s.e) handleEvent(ev);
     updateHUD(s);
@@ -286,12 +312,44 @@
         if (k > 0) GameAudio.sfx.mdie(k);
         if (R && R.inView(ev.x, ev.y)) {
           const gold = ev.mt === 3;
-          R.burst(ev.x, ev.y, gold ? 20 : 12, gold ? ['#ffd24a', '#fff', '#ffb800'] : ['#6fd44e', '#b28dff', '#fff'], 4, 0.6);
-          R.addFloatText(ev.x, ev.y, gold ? '+500' : ['+50', '+100', '+150'][ev.mt] || '+50', gold ? '#ffd24a' : '#6fd44e');
+          const boss = ev.mt >= 4;
+          R.burst(ev.x, ev.y, gold || boss ? 22 : 12,
+            gold ? ['#ffd24a', '#fff', '#ffb800'] : boss ? ['#ff4d5e', '#ffd93d', '#fff'] : ['#6fd44e', '#b28dff', '#fff'], 4, 0.6);
+          R.addFloatText(ev.x, ev.y,
+            ['+50', '+100', '+150', '+500', '+800', '+1200'][ev.mt] || '+50',
+            gold || boss ? '#ffd24a' : '#6fd44e');
         }
         if (ev.mt === 3) toast('✨ 金史莱姆被抓住了！');
         break;
       }
+      case 'boss': {
+        GameAudio.sfx.boss();
+        const bn = MONSTER_NAMES[ev.mt] || 'BOSS';
+        toast(`⚠️ BOSS 出现：${bn}！`, true);
+        addChatLine(null, `⚠️ ${bn} 出现在战场上`);
+        break;
+      }
+      case 'mhit':
+        GameAudio.sfx.hit(volAt(ev.x, ev.y));
+        if (R && R.inView(ev.x, ev.y)) R.burst(ev.x, ev.y, 6, ['#fff', '#ffd93d'], 3, 0.35);
+        break;
+      case 'bossdie': {
+        GameAudio.sfx.streak();
+        const bn = MONSTER_NAMES[ev.mt] || 'BOSS';
+        toast(`🎉 ${bn} 被击败！`, true);
+        addChatLine(null, `🎉 ${bn} 被击败了`);
+        if (R) R.shake(8, 0.4);
+        break;
+      }
+      case 'shop':
+        if (ev.on) {
+          GameAudio.sfx.pick();
+          toast('🛒 流浪商人来了！用积分买装扮～', true);
+          addChatLine(null, '🛒 流浪商人出现了');
+        } else {
+          toast('🛒 商人收摊离开了');
+        }
+        break;
       case 'shield':
         GameAudio.sfx.shield();
         if (ev.id === state.myId) toast('🛡️ 护盾抵挡了一次伤害！');
@@ -347,7 +405,10 @@
       }
       els.canvas.classList.toggle('dead', dead);
       els.deathVignette.classList.toggle('show', dead);
+      // 商人接近提示
+      els.shopHint.classList.toggle('hidden', !(nearShop() && !state.shopOpen && !dead));
     } else {
+      els.shopHint.classList.add('hidden');
       els.respawnBanner.classList.add('hidden');
       els.canvas.classList.remove('dead');
       els.deathVignette.classList.remove('show');
@@ -372,7 +433,7 @@
 
   function renderPlayersPanel() {
     const rows = [...state.roster.values()]
-      .sort((a, b) => b.score - a.score)
+      .sort((a, b) => b.kills - a.kills || b.score - a.score)
       .slice(0, 8)
       .map((p) => {
         const cls = ['player-row'];
@@ -382,7 +443,7 @@
         return `<div class="${cls.join(' ')}">
           <span class="dot" style="background:${color}"></span>
           <span class="pname">${escapeHtml(p.name)}</span>
-          <span class="pscore">${p.score}</span>
+          <span class="pscore">⚔️${p.kills} ${p.score}</span>
         </div>`;
       });
     els.playersPanel.innerHTML = rows.join('');
@@ -400,7 +461,7 @@
       return;
     }
     const rows = lb.map((e, i) =>
-      `<tr><td>${['🥇', '🥈', '🥉', '4.', '5.'][i] || ''}</td><td>${escapeHtml(e.name)}</td><td>${e.best} 分</td><td>${e.kills} 杀</td></tr>`);
+      `<tr><td>${['🥇', '🥈', '🥉', '4.', '5.'][i] || ''}</td><td>${escapeHtml(e.name)}</td><td>${e.kills} 杀</td><td>${e.best} 分</td></tr>`);
     els.joinLb.innerHTML = `<div class="lb-title">📜 历史最佳</div><table>${rows.join('')}</table>`;
   }
 
@@ -456,10 +517,10 @@
 
   function renderBoardLive() {
     const rows = [...state.roster.values()]
-      .sort((a, b) => b.score - a.score)
+      .sort((a, b) => b.kills - a.kills || b.score - a.score)
       .map((p, i) => `<tr class="${p.id === state.myId ? 'me' : ''}">
         <td>${i + 1}.</td><td>${escapeHtml(p.name)}</td>
-        <td>⭐${p.score}</td><td>⚔️${p.kills}</td><td>💀${p.deaths}</td>
+        <td>⚔️${p.kills}</td><td>⭐${p.score}</td><td>💀${p.deaths}</td>
       </tr>`);
     els.boardLive.innerHTML = rows.join('') || '<tr><td>暂无玩家</td></tr>';
   }
@@ -469,28 +530,92 @@
       const res = await fetch('api/leaderboard');
       const lb = await res.json();
       const rows = lb.map((e, i) =>
-        `<tr><td>${i + 1}.</td><td>${escapeHtml(e.name)}</td><td>⭐${e.best}</td><td>⚔️${e.kills}</td></tr>`);
+        `<tr><td>${i + 1}.</td><td>${escapeHtml(e.name)}</td><td>⚔️${e.kills}</td><td>⭐${e.best}</td></tr>`);
       els.boardHistory.innerHTML = rows.join('') || '<tr><td>暂无记录</td></tr>';
     } catch {
       els.boardHistory.innerHTML = '<tr><td>加载失败</td></tr>';
     }
   }
 
+  // ---------- 商店 ----------
+
+  function nearShop() {
+    if (!state.shop || !state.joined || !state.pred.ok) return false;
+    return Math.abs(state.pred.x - state.shop[0]) <= 3 &&
+           Math.abs(state.pred.y - state.shop[1]) <= 3;
+  }
+
+  function toggleShop(force) {
+    const want = force != null ? force : !state.shopOpen;
+    if (want && !nearShop()) {
+      if (state.shop) toast('🛒 走到商人旁边才能交易');
+      return;
+    }
+    state.shopOpen = want;
+    if (want) {
+      state.menuOpen = false;
+      state.boardOpen = false;
+      renderShop();
+    }
+    updateOverlay();
+  }
+
+  function renderShop() {
+    const me = state.latest && state.latest.p.find((r) => r[0] === state.myId);
+    const score = me ? me[11] : 0;
+    els.shopScore.textContent = score;
+    const bySlot = {};
+    for (const [id, item] of Object.entries(state.catalog)) {
+      (bySlot[item.slot] = bySlot[item.slot] || []).push([id, item]);
+    }
+    const html = [];
+    for (const [slot, label] of Object.entries(SLOT_NAMES)) {
+      const items = bySlot[slot];
+      if (!items) continue;
+      items.sort((a, b) => a[1].price - b[1].price);
+      const cells = items.map(([id, item]) => {
+        const owned = state.myCos.owned.includes(id);
+        const equipped = state.myCos.equip[slot] === id;
+        const cls = equipped ? 'shop-item equipped' : owned ? 'shop-item owned'
+          : score >= item.price ? 'shop-item' : 'shop-item poor';
+        const tag = equipped ? '装备中' : owned ? '点击装备'
+          : `<span class="price">💰${item.price}</span>`;
+        return `<button class="${cls}" data-id="${id}" data-owned="${owned ? 1 : 0}">
+          ${item.icon} ${item.name} ${tag}</button>`;
+      });
+      html.push(`<div><div class="shop-slot-title">${label}</div><div class="shop-grid">${cells.join('')}</div></div>`);
+    }
+    els.shopList.innerHTML = html.join('');
+    els.shopList.querySelectorAll('.shop-item').forEach((el) => {
+      el.addEventListener('click', () => {
+        const id = el.dataset.id;
+        if (el.dataset.owned === '1') net.send({ t: 'equip', item: id });
+        else if (!el.classList.contains('poor')) net.send({ t: 'buy', item: id });
+        else toast('❌ 积分不足，去多炸点怪吧！');
+      });
+    });
+  }
+
+  els.shopClose.addEventListener('click', () => toggleShop(false));
+  els.shopHint.addEventListener('click', () => toggleShop(true));
+
   // ---------- 覆盖层 ----------
 
   function updateOverlay() {
     const showJoin = !state.joined && !state.quit;
-    const showMenu = state.joined && state.menuOpen;
-    const showBoard = state.boardOpen;
+    const showShop = state.shopOpen;
+    const showMenu = state.joined && state.menuOpen && !showShop;
+    const showBoard = state.boardOpen && !showShop;
     const showQuit = state.quit;
     const showReconnect = !els.reconnectScreen.classList.contains('hidden');
 
     els.joinScreen.classList.toggle('hidden', !showJoin || showBoard);
     els.menuScreen.classList.toggle('hidden', !showMenu || showBoard);
     els.boardScreen.classList.toggle('hidden', !showBoard);
+    els.shopScreen.classList.toggle('hidden', !showShop);
     els.quitScreen.classList.toggle('hidden', !showQuit);
 
-    const any = showJoin || showMenu || showBoard || showQuit || showReconnect;
+    const any = showJoin || showMenu || showBoard || showShop || showQuit || showReconnect;
     els.overlay.classList.toggle('hidden', !any);
   }
 
@@ -516,6 +641,12 @@
     localStorage.setItem('bp-name', name);
     GameAudio.unlock();
     GameAudio.startMusic();
+    if (!net.connected) {
+      // 连接尚未就绪（手机网络常见）：排队，连上后自动补发，不再静默丢弃
+      state.pendingJoin = true;
+      toast('🔌 正在连接服务器…');
+      return;
+    }
     net.send({ t: 'join', name, color: state.myColor });
   }
 
@@ -581,11 +712,13 @@
       net.send({ t: 'bomb' });
     },
     onMenu() {
-      if (state.boardOpen) toggleBoard(false);
+      if (state.shopOpen) toggleShop(false);
+      else if (state.boardOpen) toggleBoard(false);
       else toggleMenu();
     },
     onBoard() { toggleBoard(); },
     onChat() { openChat(); },
+    onShop() { toggleShop(); },
     onAnyKey() { GameAudio.unlock(); },
   });
 
@@ -740,6 +873,7 @@
         shield: row[6] === 1, inv: row[7] === 1,
         color: roster.color || 0,
         name: roster.name || '?',
+        cos: roster.cos || null,
         bubble,
       });
     }
@@ -753,7 +887,10 @@
       } else if (rb) {
         ix = rb[2]; iy = rb[3];
       }
-      monsters.push({ id, type: row[1], ix, iy, dir: row[4] });
+      monsters.push({
+        id, type: row[1], ix, iy, dir: row[4],
+        hp: row[5] || 1, maxHp: BOSS_MAX_HP[row[1]] || 1,
+      });
     }
     return { players, monsters };
   }
@@ -800,6 +937,7 @@
         myId: state.myId,
         topId: state.latest.top,
         follow,
+        shop: state.shop ? { x: state.shop[0], y: state.shop[1] } : null,
         bombs: state.latest.b.map((r) => ({ id: r[0], x: r[1], y: r[2], fuse: r[3] })),
         blasts: state.latest.f.map((r) => {
           const key = r[0] + ',' + r[1];
@@ -809,10 +947,16 @@
         powerups: state.latest.u.map((r) => ({ id: r[0], x: r[1], y: r[2], kind: r[3], ttl: r[4] })),
       });
     }
-    requestAnimationFrame(frame);
   }
 
-  requestAnimationFrame(frame);
+  // 唯一的 rAF 链：frame() 本身不再注册 rAF。
+  // （若 frame 内注册，后台时看门狗每次调用都会多排一个 rAF 回调，
+  //   回到前台后积压的几百条链一起跑，每帧重复渲染导致永久卡顿）
+  function rafLoop() {
+    frame();
+    requestAnimationFrame(rafLoop);
+  }
+  requestAnimationFrame(rafLoop);
   // 后台标签页 / 无头环境下 rAF 停摆时的兜底渲染
   setInterval(() => {
     if (performance.now() - lastFrameT > 250) frame();

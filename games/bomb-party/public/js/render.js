@@ -365,10 +365,207 @@ window.Renderer = (function () {
     function drawMonster(m, tNow) {
       const cx = px(m.ix), cy = px(m.iy);
       const wob = Math.sin(tNow * 6 + m.id);
+      if (m.type === 4) { // 史莱姆王：放大的深色史莱姆 + 王冠 + 血条
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.scale(1.8, 1.8);
+        ctx.translate(-cx, -cy);
+        drawSlime(cx, cy, tNow, m, '#2fbf9b', '#1a8a6e', wob, false);
+        ctx.restore();
+        drawCrownShape(cx, cy - TS * 0.72 + wob * 2, 12, '#ffd24a', '#d9a412');
+        drawBossHp(cx, cy, m);
+        return;
+      }
+      if (m.type === 5) { drawGolem(cx, cy, tNow, m); return; }
       if (m.type === 1) drawGhostMonster(cx, cy, tNow, m);
       else if (m.type === 3) drawSlime(cx, cy, tNow, m, '#ffd24a', '#d9a412', wob, true);
       else if (m.type === 2) drawSlime(cx, cy, tNow, m, '#ff5a5a', '#c93a3a', wob, false);
       else drawSlime(cx, cy, tNow, m, '#6fd44e', '#4aa930', wob, false);
+    }
+
+    // 石像巨人：岩石方块身躯 + 裂纹 + 红眼
+    function drawGolem(cx, cy, tNow, m) {
+      const s = TS * 0.62;
+      const sway = Math.sin(tNow * 2.5 + m.id) * 2;
+      drawShadow(cx, cy + TS * 0.1, s);
+      const g = ctx.createRadialGradient(cx - s * 0.3, cy - s * 0.4, 4, cx, cy, s * 1.4);
+      g.addColorStop(0, '#9aa7b8');
+      g.addColorStop(1, '#5d6b7d');
+      ctx.fillStyle = g;
+      rr(cx - s, cy - s + sway, s * 2, s * 2 - sway, 14);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(30,38,50,.5)';
+      ctx.lineWidth = 2.5;
+      ctx.stroke();
+      // 裂纹
+      ctx.beginPath();
+      ctx.moveTo(cx - s * 0.5, cy - s * 0.6);
+      ctx.lineTo(cx - s * 0.25, cy - s * 0.2);
+      ctx.lineTo(cx - s * 0.5, cy + s * 0.15);
+      ctx.moveTo(cx + s * 0.55, cy + s * 0.1);
+      ctx.lineTo(cx + s * 0.3, cy + s * 0.4);
+      ctx.stroke();
+      // 发光红眼
+      const glow = 0.6 + 0.4 * Math.sin(tNow * 5);
+      for (const side of [-1, 1]) {
+        ctx.fillStyle = `rgba(255,60,50,${glow})`;
+        ctx.beginPath();
+        ctx.arc(cx + side * s * 0.4, cy - s * 0.25, 5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      // 咧嘴
+      ctx.strokeStyle = 'rgba(30,38,50,.7)';
+      ctx.beginPath();
+      ctx.moveTo(cx - s * 0.35, cy + s * 0.35);
+      ctx.lineTo(cx - s * 0.15, cy + s * 0.45);
+      ctx.lineTo(cx + s * 0.05, cy + s * 0.35);
+      ctx.lineTo(cx + s * 0.25, cy + s * 0.45);
+      ctx.stroke();
+      drawBossHp(cx, cy, m);
+    }
+
+    function drawCrownShape(cx, cy, size, fill, stroke) {
+      ctx.fillStyle = fill;
+      ctx.strokeStyle = stroke;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(cx - size, cy + size * 0.7);
+      ctx.lineTo(cx - size, cy);
+      ctx.lineTo(cx - size * 0.5, cy + size * 0.4);
+      ctx.lineTo(cx, cy - size * 0.35);
+      ctx.lineTo(cx + size * 0.5, cy + size * 0.4);
+      ctx.lineTo(cx + size, cy);
+      ctx.lineTo(cx + size, cy + size * 0.7);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    }
+
+    // BOSS 血条（一排小血点）
+    function drawBossHp(cx, cy, m) {
+      if (!m.maxHp || m.maxHp <= 1) return;
+      const gap = 13;
+      const x0 = cx - ((m.maxHp - 1) * gap) / 2;
+      const y = cy - TS * 1.05;
+      for (let i = 0; i < m.maxHp; i++) {
+        ctx.fillStyle = i < m.hp ? '#ff4d5e' : 'rgba(0,0,0,.35)';
+        ctx.strokeStyle = 'rgba(255,255,255,.8)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(x0 + i * gap, y, 5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      }
+    }
+
+    // 流浪商人：斗篷小贩 + 招牌
+    function drawMerchant(shop, tNow) {
+      const cx = px(shop.x), cy = px(shop.y);
+      const bob = Math.sin(tNow * 2.2) * 2.5;
+      drawShadow(cx, cy, TS * 0.34);
+      // 斗篷
+      const g = ctx.createRadialGradient(cx - 6, cy - 12, 3, cx, cy, TS * 0.5);
+      g.addColorStop(0, '#a9743f');
+      g.addColorStop(1, '#6e4523');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.moveTo(cx - TS * 0.32, cy + TS * 0.3);
+      ctx.quadraticCurveTo(cx - TS * 0.36, cy - TS * 0.28 + bob, cx, cy - TS * 0.42 + bob);
+      ctx.quadraticCurveTo(cx + TS * 0.36, cy - TS * 0.28 + bob, cx + TS * 0.32, cy + TS * 0.3);
+      ctx.closePath();
+      ctx.fill();
+      // 兜帽阴影里的脸
+      ctx.fillStyle = '#3a2c1e';
+      ctx.beginPath();
+      ctx.ellipse(cx, cy - TS * 0.18 + bob, TS * 0.17, TS * 0.14, 0, 0, Math.PI * 2);
+      ctx.fill();
+      for (const side of [-1, 1]) {
+        ctx.fillStyle = '#ffd93d';
+        ctx.beginPath();
+        ctx.arc(cx + side * 5, cy - TS * 0.18 + bob, 2.2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      // 招牌
+      ctx.font = `${Math.round(TS * 0.42)}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('🛒', cx, cy - TS * 0.85 + bob);
+      // 金色小星星
+      ctx.fillStyle = `rgba(255,220,100,${0.5 + 0.4 * Math.sin(tNow * 6)})`;
+      for (let i = 0; i < 3; i++) {
+        const a = tNow * 2 + (i * Math.PI * 2) / 3;
+        ctx.beginPath();
+        ctx.arc(cx + Math.cos(a) * TS * 0.45, cy - TS * 0.2 + Math.sin(a) * TS * 0.3, 1.8, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    // 帽子（戴在头顶，替代天线球）
+    function drawHat(cx, cy, r, hat) {
+      const hy = cy - r * 0.86;
+      if (hat === 'hat_straw') {
+        ctx.fillStyle = '#e8c04a';
+        ctx.beginPath();
+        ctx.ellipse(cx, hy, r * 0.85, r * 0.28, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(cx, hy - 2, r * 0.45, Math.PI, 0);
+        ctx.fill();
+        ctx.fillStyle = '#c73048';
+        ctx.fillRect(cx - r * 0.45, hy - r * 0.18, r * 0.9, r * 0.14);
+      } else if (hat === 'hat_top') {
+        ctx.fillStyle = '#2f3542';
+        ctx.beginPath();
+        ctx.ellipse(cx, hy, r * 0.72, r * 0.2, 0, 0, Math.PI * 2);
+        ctx.fill();
+        rr(cx - r * 0.42, hy - r * 0.95, r * 0.84, r * 0.95, 4);
+        ctx.fill();
+        ctx.fillStyle = '#8a97a8';
+        ctx.fillRect(cx - r * 0.42, hy - r * 0.3, r * 0.84, r * 0.16);
+      } else if (hat === 'hat_wiz') {
+        ctx.fillStyle = '#7a4fd0';
+        ctx.beginPath();
+        ctx.ellipse(cx, hy, r * 0.75, r * 0.22, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.moveTo(cx - r * 0.45, hy);
+        ctx.quadraticCurveTo(cx, hy - r * 0.4, cx + r * 0.18, hy - r * 1.25);
+        ctx.quadraticCurveTo(cx + r * 0.3, hy - r * 0.3, cx + r * 0.45, hy);
+        ctx.closePath();
+        ctx.fill();
+        drawStar(cx + r * 0.02, hy - r * 0.55, 4.5, '#ffd93d');
+      } else if (hat === 'hat_bow') {
+        const bx = cx + r * 0.42, by = hy - r * 0.15;
+        ctx.fillStyle = '#ff6b9d';
+        ctx.beginPath();
+        ctx.moveTo(bx, by);
+        ctx.lineTo(bx - 12, by - 8);
+        ctx.lineTo(bx - 12, by + 8);
+        ctx.closePath();
+        ctx.moveTo(bx, by);
+        ctx.lineTo(bx + 12, by - 8);
+        ctx.lineTo(bx + 12, by + 8);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = '#d13d6e';
+        ctx.beginPath();
+        ctx.arc(bx, by, 4, 0, Math.PI * 2);
+        ctx.fill();
+      } else if (hat === 'hat_gold') {
+        drawCrownShape(cx, hy - r * 0.25, r * 0.55, '#ffd24a', '#c98f00');
+      }
+    }
+
+    function drawStar(x, y, rad, color) {
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      for (let i = 0; i < 10; i++) {
+        const a = -Math.PI / 2 + (i * Math.PI) / 5;
+        const rr2 = i % 2 === 0 ? rad : rad * 0.45;
+        ctx.lineTo(x + Math.cos(a) * rr2, y + Math.sin(a) * rr2);
+      }
+      ctx.closePath();
+      ctx.fill();
     }
 
     function drawSlime(cx, cy, tNow, m, color, dark, wob, golden) {
@@ -458,15 +655,44 @@ window.Renderer = (function () {
 
     function drawPlayer(p, tNow, isMe, isTop) {
       const [color, dark] = PLAYER_COLORS[p.color % 8];
+      const cos = p.cos || {};
       const cx = px(p.ix);
       let cy = px(p.iy);
       const bob = p.moving ? Math.abs(Math.sin(tNow * 11 + p.id)) * 3.2 : Math.sin(tNow * 2.5 + p.id) * 1.2;
       cy -= bob;
       const r = TS * 0.36;
 
+      // 拖尾（移动时在脚下撒粒子）
+      if (cos.trail && p.moving && Math.random() < 0.5) {
+        const tc = cos.trail === 'trail_bub' ? 'rgba(130,205,255,.85)'
+          : cos.trail === 'trail_star' ? '#ffd93d'
+            : `hsl(${(tNow * 140 + p.id * 47) % 360},90%,65%)`;
+        particles.push({
+          x: cx + (Math.random() - 0.5) * 12, y: cy + bob + r * 0.6,
+          vx: (Math.random() - 0.5) * 24, vy: cos.trail === 'trail_bub' ? -26 : 8,
+          life: 0.55, t: 0,
+          size: cos.trail === 'trail_star' ? 5 : 4,
+          color: tc,
+          grav: cos.trail === 'trail_bub' ? -50 : 50,
+        });
+      }
+
       if (p.inv) ctx.globalAlpha = 0.55 + 0.35 * Math.sin(tNow * 18);
 
       drawShadow(cx, cy + bob, r * 0.9);
+
+      // 外发光
+      if (cos.glow) {
+        const gold = cos.glow === 'glow_gold';
+        const gr = r * (1.55 + 0.12 * Math.sin(tNow * 3 + p.id));
+        const gg = ctx.createRadialGradient(cx, cy, r * 0.5, cx, cy, gr);
+        gg.addColorStop(0, gold ? 'rgba(255,210,74,.38)' : 'rgba(255,255,255,.32)');
+        gg.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.fillStyle = gg;
+        ctx.beginPath();
+        ctx.arc(cx, cy, gr, 0, Math.PI * 2);
+        ctx.fill();
+      }
 
       // 自己脚下的常驻金圈，随时能在人群里找到自己
       if (isMe) {
@@ -498,40 +724,71 @@ window.Renderer = (function () {
       ctx.lineWidth = 2;
       ctx.stroke();
 
+      // 身体纹路
+      if (cos.pattern === 'pat_stripe' || cos.pattern === 'pat_dot') {
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(cx, cy, r - 1, 0, Math.PI * 2);
+        ctx.clip();
+        ctx.fillStyle = 'rgba(0,0,0,.18)';
+        if (cos.pattern === 'pat_stripe') {
+          for (let i = 0; i < 3; i++) {
+            ctx.fillRect(cx - r, cy - r + (i + 0.6) * r * 0.55, r * 2, r * 0.18);
+          }
+        } else {
+          for (const [dx2, dy2] of [[-0.5, -0.4], [0.45, -0.5], [-0.1, -0.78], [0.6, 0.1], [-0.65, 0.15]]) {
+            ctx.beginPath();
+            ctx.arc(cx + dx2 * r, cy + dy2 * r, r * 0.14, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
+        ctx.restore();
+      }
+
       // 肚皮
       ctx.fillStyle = 'rgba(255,255,255,.75)';
       ctx.beginPath();
       ctx.ellipse(cx, cy + r * 0.45, r * 0.5, r * 0.38, 0, 0, Math.PI * 2);
       ctx.fill();
+      if (cos.pattern === 'pat_star') drawStar(cx, cy + r * 0.45, r * 0.3, '#ffd93d');
 
-      // 天线球
-      ctx.strokeStyle = dark;
-      ctx.lineWidth = 2.5;
-      ctx.beginPath();
-      ctx.moveTo(cx, cy - r * 0.95);
-      ctx.quadraticCurveTo(cx + 3, cy - r * 1.3, cx + Math.sin(tNow * 5 + p.id) * 3, cy - r * 1.45);
-      ctx.stroke();
-      ctx.fillStyle = '#ffd93d';
-      ctx.beginPath();
-      ctx.arc(cx + Math.sin(tNow * 5 + p.id) * 3, cy - r * 1.5, 4.5, 0, Math.PI * 2);
-      ctx.fill();
+      // 天线球（戴帽子时让位）
+      if (!cos.hat) {
+        ctx.strokeStyle = dark;
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy - r * 0.95);
+        ctx.quadraticCurveTo(cx + 3, cy - r * 1.3, cx + Math.sin(tNow * 5 + p.id) * 3, cy - r * 1.45);
+        ctx.stroke();
+        ctx.fillStyle = '#ffd93d';
+        ctx.beginPath();
+        ctx.arc(cx + Math.sin(tNow * 5 + p.id) * 3, cy - r * 1.5, 4.5, 0, Math.PI * 2);
+        ctx.fill();
+      } else {
+        drawHat(cx, cy, r, cos.hat);
+      }
 
-      // 大眼睛（看向移动方向）
+      // 大眼睛（看向移动方向；大眼萌加大，星星眼换星形瞳孔）
+      const es = cos.eyes === 'eye_big' ? 1.4 : 1;
       const look = [[0, -2.5], [0, 2.5], [-2.5, 0], [2.5, 0]][p.dir] || [0, 2.5];
       for (const side of [-1, 1]) {
         const ex = cx + side * r * 0.34, ey = cy - r * 0.15;
         ctx.fillStyle = '#fff';
         ctx.beginPath();
-        ctx.ellipse(ex, ey, 6.5, 7.5, 0, 0, Math.PI * 2);
+        ctx.ellipse(ex, ey, 6.5 * es, 7.5 * es, 0, 0, Math.PI * 2);
         ctx.fill();
-        ctx.fillStyle = '#2f3542';
-        ctx.beginPath();
-        ctx.arc(ex + look[0] * 0.8, ey + look[1] * 0.8, 3.4, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.fillStyle = '#fff';
-        ctx.beginPath();
-        ctx.arc(ex + look[0] * 0.8 - 1.2, ey + look[1] * 0.8 - 1.2, 1.2, 0, Math.PI * 2);
-        ctx.fill();
+        if (cos.eyes === 'eye_star') {
+          drawStar(ex + look[0] * 0.8, ey + look[1] * 0.8, 4.2, '#ffb800');
+        } else {
+          ctx.fillStyle = '#2f3542';
+          ctx.beginPath();
+          ctx.arc(ex + look[0] * 0.8, ey + look[1] * 0.8, 3.4 * es, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = '#fff';
+          ctx.beginPath();
+          ctx.arc(ex + look[0] * 0.8 - 1.2, ey + look[1] * 0.8 - 1.2, 1.2 * es, 0, Math.PI * 2);
+          ctx.fill();
+        }
       }
       // 腮红 + 嘴巴
       ctx.fillStyle = 'rgba(255,120,140,.5)';
@@ -762,12 +1019,26 @@ window.Renderer = (function () {
       // 道具
       mctx.fillStyle = '#ffe066';
       for (const u of view.powerups) mctx.fillRect(u.x * sx, u.y * sy, sx, sy);
-      // 怪物
+      // 商人（金色方块）
+      if (view.shop) {
+        mctx.fillStyle = '#ffd24a';
+        mctx.strokeStyle = '#fff';
+        mctx.lineWidth = 1;
+        mctx.fillRect(view.shop.x * sx - 1, view.shop.y * sy - 1, sx + 2, sy + 2);
+        mctx.strokeRect(view.shop.x * sx - 1, view.shop.y * sy - 1, sx + 2, sy + 2);
+      }
+      // 怪物（BOSS 是带白圈的大红点）
       for (const m of view.monsters) {
-        mctx.fillStyle = m.type === 3 ? '#ffd24a' : '#ff6b6b';
+        const boss = m.type >= 4;
+        mctx.fillStyle = m.type === 3 ? '#ffd24a' : boss ? '#ff4d5e' : '#ff6b6b';
         mctx.beginPath();
-        mctx.arc((m.ix + 0.5) * sx, (m.iy + 0.5) * sy, 1.8, 0, Math.PI * 2);
+        mctx.arc((m.ix + 0.5) * sx, (m.iy + 0.5) * sy, boss ? 3.6 : 1.8, 0, Math.PI * 2);
         mctx.fill();
+        if (boss) {
+          mctx.strokeStyle = '#fff';
+          mctx.lineWidth = 1.2;
+          mctx.stroke();
+        }
       }
       // 玩家
       for (const p of view.players) {
@@ -840,6 +1111,7 @@ window.Renderer = (function () {
       }
 
       const vis = (e) => e.x >= x0 - 1 && e.x <= x1 + 1 && e.y >= y0 - 1 && e.y <= y1 + 1;
+      if (view.shop && vis(view.shop)) drawMerchant(view.shop, tNow);
       for (const u of view.powerups) if (vis(u)) drawPowerup(u, tNow);
       for (const b of view.bombs) if (vis(b)) drawBomb(b, tNow);
       for (const f of view.blasts) if (vis(f)) drawBlast(f, tNow);

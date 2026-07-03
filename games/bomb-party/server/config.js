@@ -52,10 +52,22 @@ module.exports = {
   MONSTER_RESPAWN_INTERVAL: 3, // 低于目标数量时每 N 秒补一只
   MONSTER_PLAYER_DIST: 6,      // 怪物出生离玩家的最小距离
   MONSTER_TOUCH: 0.6,          // 触碰判定距离
-  MONSTER_SPEED: { slime: 1.5, ghost: 1.9, imp: 2.5, gold: 2.9 },
+  MONSTER_SPEED: { slime: 1.5, ghost: 1.9, imp: 2.5, gold: 2.9, king: 1.15, golem: 0.95 },
   MONSTER_WEIGHTS: { slime: 45, ghost: 30, imp: 25 }, // 金史莱姆单独按概率出
-  MONSTER_SCORE: { slime: 50, ghost: 100, imp: 150, gold: 500 },
+  MONSTER_SCORE: { slime: 50, ghost: 100, imp: 150, gold: 500, king: 800, golem: 1200 },
   GOLD_CHANCE: 0.06, // 每次补怪时出金史莱姆的概率（场上最多一只）
+
+  // BOSS（场上最多一只，定时刷新）
+  BOSS_INTERVAL: 90,       // 无 BOSS 时每 N 秒刷一只
+  BOSS_HIT_COOLDOWN: 0.8,  // 受击无敌帧，防止一团火多段掉血
+  BOSS_HP: { king: 4, golem: 6 },
+  BOSS_DROPS: 2,           // BOSS 死亡必掉道具数
+  KING_SPLIT: 3,           // 史莱姆王死亡分裂出的小史莱姆数
+
+  // 流浪商人
+  MERCHANT_INTERVAL: 110, // 每 N 秒来一次
+  MERCHANT_STAY: 45,      // 停留时长
+  MERCHANT_RANGE: 3,      // 可交易距离
 
   // 计分
   SCORE: {

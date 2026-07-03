@@ -239,6 +239,95 @@ test('世界常驻运行：长时间推进无异常', () => {
   assert.ok(w.players.has(p.id));
 });
 
+test('BOSS 定时刷新，多血量+受击冷却，死后必掉道具', () => {
+  const w = makeWorld({ BOSS_INTERVAL: 0.5 });
+  World.addPlayer(w, { name: 'A' });
+  stepSeconds(w, 1);
+  const boss = w.monsters.find((m) => m.boss);
+  assert.ok(boss, 'BOSS 应已刷新');
+  assert.ok(boss.hp > 1, 'BOSS 应是多血量');
+  // 持续火焰只掉一滴血（受击冷却）
+  w.blasts.push({ x: Math.round(boss.x), y: Math.round(boss.y), part: 0, dir: 0, until: w.time + 0.5, owner: null });
+  const hp0 = boss.hp;
+  stepSeconds(w, 0.4);
+  assert.strictEqual(boss.hp, hp0 - 1, '一团火只应掉一滴血');
+  // 打死：绕过冷却逐滴打
+  while (w.monsters.includes(boss)) {
+    boss.hurtUntil = 0;
+    w.blasts.push({ x: Math.round(boss.x), y: Math.round(boss.y), part: 0, dir: 0, until: w.time + 0.2, owner: null });
+    World.step(w, DT);
+  }
+  assert.ok(w.pendingPowerups.length >= 1, 'BOSS 死亡应必掉道具');
+});
+
+test('史莱姆王死后分裂出小史莱姆', () => {
+  const w = makeWorld({ BOSS_INTERVAL: 0.5 });
+  World.addPlayer(w, { name: 'A' });
+  // 反复刷 BOSS 直到出史莱姆王（随机 50%）
+  let king = null;
+  for (let tries = 0; tries < 20 && !king; tries++) {
+    stepSeconds(w, 0.6);
+    const boss = w.monsters.find((m) => m.boss);
+    if (!boss) continue;
+    if (boss.type === 'king') { king = boss; break; }
+    w.monsters = w.monsters.filter((m) => m !== boss); // 不是王就清掉重刷
+  }
+  assert.ok(king, '应能刷出史莱姆王');
+  const before = w.monsters.filter((m) => m.type === 'slime').length;
+  king.hp = 1;
+  w.blasts.push({ x: Math.round(king.x), y: Math.round(king.y), part: 0, dir: 0, until: w.time + 0.2, owner: null });
+  World.step(w, DT);
+  const after = w.monsters.filter((m) => m.type === 'slime').length;
+  assert.ok(after > before, `死后应分裂出小史莱姆（${before} -> ${after}）`);
+});
+
+test('石像巨人碾碎走过的砖块', () => {
+  const w = makeWorld();
+  World.addPlayer(w, { name: 'A' });
+  w.grid[9][9] = World.TILE.EMPTY;
+  w.grid[9][10] = World.TILE.BRICK;
+  w.monsters.push({
+    id: 9999, type: 'golem', typeIdx: 5, x: 9, y: 9, dir: 3,
+    speed: 6, target: { x: 10, y: 9 },
+    boss: true, golem: true, hp: 6, maxHp: 6, hurtUntil: 0,
+  });
+  stepSeconds(w, 0.5);
+  assert.strictEqual(w.grid[9][10], World.TILE.EMPTY, '巨人走到的砖块应被碾碎');
+});
+
+test('流浪商人定时出现并离开', () => {
+  const w = makeWorld({ MERCHANT_INTERVAL: 1, MERCHANT_STAY: 0.4 });
+  World.addPlayer(w, { name: 'A' });
+  stepSeconds(w, 1.2);
+  assert.ok(w.shop, '商人应已出现');
+  assert.strictEqual(w.grid[w.shop.y][w.shop.x], World.TILE.EMPTY, '商人应站在空地上');
+  stepSeconds(w, 0.5); // 停留期结束、下一位还没来
+  assert.strictEqual(w.shop, null, '商人应已离开');
+});
+
+test('外观商店：购买/装备/持久化', () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const { createCosmetics, CATALOG } = require('../server/cosmetics');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bp-cos-'));
+
+  const store = createCosmetics(dir);
+  assert.ok(CATALOG.hat_top && CATALOG.trail_rain, '目录应有商品');
+  assert.strictEqual(store.owns('小红', 'hat_top'), false);
+  assert.strictEqual(store.buy('小红', 'hat_top'), true);
+  assert.strictEqual(store.buy('小红', 'hat_top'), false, '不能重复购买');
+  assert.strictEqual(store.state('小红').equip.hat, 'hat_top', '购买后自动装备');
+  assert.strictEqual(store.toggle('小红', 'hat_top'), true);
+  assert.strictEqual(store.state('小红').equip.hat, undefined, '再次切换应卸下');
+  assert.strictEqual(store.toggle('小红', 'trail_rain'), false, '未拥有不能装备');
+  store.flush();
+
+  const store2 = createCosmetics(dir);
+  assert.ok(store2.owns('小红', 'hat_top'), '重启后已购记录应保留');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test('移动与碰撞：玩家不能穿墙', () => {
   const w = makeWorld();
   const p = World.addPlayer(w, { name: 'A' });

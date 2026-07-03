@@ -349,6 +349,52 @@ html, body {
 @keyframes toastIn { from { transform: translateY(-16px); opacity: 0; } }
 @keyframes toastOut { to { transform: translateY(-10px); opacity: 0; } }
 
+/* ---------- 商店 ---------- */
+
+#shop-hint {
+  position: absolute;
+  left: 50%;
+  bottom: 84px;
+  transform: translateX(-50%);
+  border: none;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #ffd93d, #ffb800);
+  box-shadow: 0 4px 0 #c98f00, 0 6px 18px rgba(0, 0, 0, .35);
+  color: #5a4300;
+  font-weight: 800;
+  font-size: 14px;
+  font-family: inherit;
+  padding: 9px 20px;
+  cursor: pointer;
+  z-index: 26;
+  animation: hintBob 1s infinite alternate ease-in-out;
+}
+@keyframes hintBob { from { transform: translateX(-50%) translateY(0); } to { transform: translateX(-50%) translateY(-5px); } }
+
+#shop-screen { max-width: min(94vw, 620px); }
+.shop-sub { color: #8a80a5; font-size: 13px; margin-bottom: 12px; }
+.shop-sub b { color: #d9a412; }
+#shop-list { display: flex; flex-direction: column; gap: 12px; margin-bottom: 14px; text-align: left; }
+.shop-slot-title { font-weight: 800; font-size: 13px; color: var(--accent); margin-bottom: 4px; }
+.shop-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+.shop-item {
+  border: 2px solid #eee6f8;
+  border-radius: 12px;
+  background: #faf7ff;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  color: var(--ink);
+  transition: transform .1s, border-color .15s;
+}
+.shop-item:hover { transform: translateY(-2px); }
+.shop-item .price { color: #d9a412; font-weight: 800; margin-left: 4px; }
+.shop-item.owned { border-color: #b7e3c0; background: #f2fbf4; }
+.shop-item.equipped { border-color: var(--green); background: #e8f9e4; box-shadow: 0 0 0 2px rgba(111, 212, 78, .35); }
+.shop-item.poor { opacity: .45; cursor: not-allowed; }
+
 /* ---------- 聊天 ---------- */
 
 #chat-panel {
@@ -400,6 +446,14 @@ body.chat-open #chat-panel { z-index: 60; } /* 手机输入时压过触屏层 */
 #chat-input:focus {
   background: rgba(0, 0, 0, .65);
   box-shadow: 0 0 0 2px var(--accent);
+}
+
+/* 触屏端：输入框平时藏起来（用 💬 按钮唤起），日志更紧凑省屏 */
+body.touch #chat-input { display: none; }
+body.touch.chat-open #chat-input { display: block; }
+@media (max-width: 700px) {
+  #chat-panel { width: min(240px, 58vw); }
+  #chat-log { max-height: 96px; font-size: 11px; }
 }
 
 /* ---------- 触屏控制 ---------- */

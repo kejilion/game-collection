@@ -45,9 +45,10 @@ function createLeaderboard(dataDir) {
       save();
     },
     top(n = 10) {
+      // 击杀优先，击杀相同再比最高分
       return Object.entries(data.players)
         .map(([name, e]) => ({ name, best: e.best || 0, kills: e.kills || 0 }))
-        .sort((a, b) => b.best - a.best || b.kills - a.kills)
+        .sort((a, b) => b.kills - a.kills || b.best - a.best)
         .slice(0, n);
     },
     flush() {

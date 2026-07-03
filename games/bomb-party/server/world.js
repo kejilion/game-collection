@@ -15,7 +15,7 @@ const DIR_VEC = [
   { x: 1, y: 0 },
 ];
 const POWERUP_KINDS = ['bomb', 'fire', 'speed', 'shield'];
-const MONSTER_TYPES = ['slime', 'ghost', 'imp', 'gold'];
+const MONSTER_TYPES = ['slime', 'ghost', 'imp', 'gold', 'king', 'golem'];
 const MONSTER_RADIUS = 0.38;
 
 function mulberry32(seed) {
@@ -46,6 +46,9 @@ function create(opts = {}) {
     nextId: 1,
     time: 0,
     monsterTimer: 0,
+    bossTimer: 0,
+    shop: null, // 流浪商人 { x, y, until }
+    shopTimer: 0,
   };
   generateMap(w);
   return w;
@@ -236,41 +239,92 @@ function maintainMonsters(w, dt) {
   while (w.monsterTimer >= C.MONSTER_RESPAWN_INTERVAL) {
     w.monsterTimer -= C.MONSTER_RESPAWN_INTERVAL;
     if (w.players.size === 0) continue;
-    if (w.monsters.length >= targetMonsterCount(w)) continue;
+    // BOSS 不占普通怪物配额
+    if (w.monsters.filter((m) => !m.boss).length >= targetMonsterCount(w)) continue;
     spawnMonster(w);
   }
 }
 
-function spawnMonster(w) {
+function findMonsterSpot(w) {
   const { C } = w;
-  let spot = null;
   for (const minDist of [C.MONSTER_PLAYER_DIST, 4]) {
-    for (let i = 0; i < 60 && !spot; i++) {
+    for (let i = 0; i < 60; i++) {
       const x = 1 + Math.floor(w.rng() * (C.COLS - 2));
       const y = 1 + Math.floor(w.rng() * (C.ROWS - 2));
       if (w.grid[y][x] !== TILE.EMPTY) continue;
       if (!hasOpenNeighbor(w, x, y)) continue;
       if ([...w.players.values()].some((p) => p.alive && Math.abs(p.x - x) + Math.abs(p.y - y) < minDist)) continue;
-      spot = { x, y };
+      return { x, y };
     }
-    if (spot) break;
   }
+  return null;
+}
+
+function makeMonster(w, type, x, y) {
+  const { C } = w;
+  const boss = type === 'king' || type === 'golem';
+  const m = {
+    id: w.nextId++,
+    type,
+    typeIdx: MONSTER_TYPES.indexOf(type),
+    x, y,
+    dir: 1,
+    speed: C.MONSTER_SPEED[type],
+    target: null,
+    boss,
+    golem: type === 'golem',
+    hp: boss ? C.BOSS_HP[type] : 1,
+    maxHp: boss ? C.BOSS_HP[type] : 1,
+    hurtUntil: 0,
+  };
+  w.monsters.push(m);
+  return m;
+}
+
+function spawnMonster(w) {
+  const { C } = w;
+  const spot = findMonsterSpot(w);
   if (!spot) return null;
   const hasGold = w.monsters.some((m) => m.type === 'gold');
   const type = !hasGold && w.rng() < C.GOLD_CHANCE
     ? 'gold'
     : weightedPick(w.rng, C.MONSTER_WEIGHTS);
-  const m = {
-    id: w.nextId++,
-    type,
-    typeIdx: MONSTER_TYPES.indexOf(type),
-    x: spot.x, y: spot.y,
-    dir: 1,
-    speed: C.MONSTER_SPEED[type],
-    target: null,
-  };
-  w.monsters.push(m);
-  return m;
+  return makeMonster(w, type, spot.x, spot.y);
+}
+
+// BOSS：场上没有时定时刷一只，全场播报
+function updateBossSpawn(w, dt) {
+  const { C } = w;
+  if (w.monsters.some((m) => m.boss)) {
+    w.bossTimer = 0;
+    return;
+  }
+  w.bossTimer += dt;
+  if (w.bossTimer < C.BOSS_INTERVAL || w.players.size === 0) return;
+  const spot = findMonsterSpot(w);
+  if (!spot) return;
+  w.bossTimer = 0;
+  const type = w.rng() < 0.5 ? 'king' : 'golem';
+  const m = makeMonster(w, type, spot.x, spot.y);
+  w.events.push({ e: 'boss', mt: m.typeIdx, x: spot.x, y: spot.y });
+}
+
+// 流浪商人：定时出现在随机空地，停留一段时间
+function updateMerchant(w, dt) {
+  const { C } = w;
+  if (w.shop) {
+    if (w.time >= w.shop.until) {
+      w.shop = null;
+      w.events.push({ e: 'shop', on: 0 });
+    }
+    return;
+  }
+  w.shopTimer += dt;
+  if (w.shopTimer < C.MERCHANT_INTERVAL || w.players.size === 0) return;
+  w.shopTimer = 0;
+  const s = randomSpawn(w);
+  w.shop = { x: s.x, y: s.y, until: w.time + C.MERCHANT_STAY };
+  w.events.push({ e: 'shop', on: 1, x: s.x, y: s.y });
 }
 
 function updateMonsters(w, dt) {
@@ -290,6 +344,10 @@ function updateMonsters(w, dt) {
     if (dist <= step) {
       m.x = m.target.x; m.y = m.target.y;
       m.target = null;
+      // 石像巨人走到砖块上就把它碾碎
+      if (m.golem && w.grid[m.y][m.x] === TILE.BRICK) {
+        destroyBrick(w, m.x, m.y, null);
+      }
     } else {
       if (Math.abs(dx) > Math.abs(dy)) {
         m.x += Math.sign(dx) * step;
@@ -322,7 +380,7 @@ function chooseMonsterTarget(w, m) {
   if (open.length === 0) return;
   let dir;
   const reverse = m.dir === 0 ? 1 : m.dir === 1 ? 0 : m.dir === 2 ? 3 : 2;
-  if (m.type === 'ghost' && w.rng() < 0.75) {
+  if ((m.type === 'ghost' || m.type === 'king') && w.rng() < (m.type === 'king' ? 0.65 : 0.75)) {
     // 幽灵：贪心追最近的存活玩家
     const target = nearestAlivePlayer(w, m.x, m.y);
     if (target) {
@@ -360,7 +418,8 @@ function chooseMonsterTarget(w, m) {
 function tileSolidFor(w, tx, ty, ent) {
   if (tx < 0 || ty < 0 || tx >= w.C.COLS || ty >= w.C.ROWS) return true;
   const v = w.grid[ty][tx];
-  if (v === TILE.WALL || v === TILE.BRICK) return true;
+  if (v === TILE.WALL) return true;
+  if (v === TILE.BRICK) return !ent.golem; // 石像巨人可以碾进砖块
   for (const b of w.bombs) {
     if (b.x === tx && b.y === ty && !b.passers.has(ent.id)) return true;
   }
@@ -589,7 +648,16 @@ function applyBlastDamage(w) {
       if (p.alive && hit(p.x, p.y, f.x, f.y, 0.55)) hitPlayer(w, p, f.owner);
     }
     for (const m of [...w.monsters]) {
-      if (hit(m.x, m.y, f.x, f.y, 0.6)) killMonster(w, m, f.owner);
+      if (!hit(m.x, m.y, f.x, f.y, m.boss ? 0.85 : 0.6)) continue;
+      if (m.boss) {
+        // BOSS 多血量 + 受击无敌帧
+        if (w.time < m.hurtUntil) continue;
+        m.hurtUntil = w.time + C.BOSS_HIT_COOLDOWN;
+        m.hp--;
+        w.events.push({ e: 'mhit', id: m.id, x: m.x, y: m.y, hp: m.hp });
+        if (m.hp > 0) continue;
+      }
+      killMonster(w, m, f.owner);
     }
     w.powerups = w.powerups.filter((u) => {
       if (u.x === f.x && u.y === f.y) {
@@ -640,8 +708,31 @@ function killMonster(w, m, byId) {
   w.events.push({ e: 'mdie', id: m.id, x: m.x, y: m.y, mt: m.typeIdx });
   const killer = byId != null ? w.players.get(byId) : null;
   if (killer) killer.score += C.MONSTER_SCORE[m.type] || 50;
-  const dropChance = m.type === 'gold' ? 1 : C.MONSTER_DROP_CHANCE;
   const tx = Math.round(m.x), ty = Math.round(m.y);
+
+  if (m.boss) {
+    w.events.push({ e: 'bossdie', mt: m.typeIdx, x: m.x, y: m.y });
+    // BOSS 必掉多个道具，撒在尸体周围
+    const spots = [[tx, ty], [tx + 1, ty], [tx - 1, ty], [tx, ty + 1], [tx, ty - 1]]
+      .filter(([x, y]) =>
+        x > 0 && y > 0 && x < C.COLS - 1 && y < C.ROWS - 1 && w.grid[y][x] === TILE.EMPTY);
+    for (let i = 0; i < Math.min(C.BOSS_DROPS, spots.length); i++) {
+      const kind = weightedPick(w.rng, C.POWERUP_WEIGHTS);
+      w.pendingPowerups.push({ x: spots[i][0], y: spots[i][1], kind, at: w.time + C.BLAST_TIME + 0.1 });
+    }
+    // 史莱姆王死后分裂成小史莱姆
+    if (m.type === 'king') {
+      const around = [[tx + 1, ty], [tx - 1, ty], [tx, ty + 1], [tx, ty - 1], [tx, ty]]
+        .filter(([x, y]) =>
+          x > 0 && y > 0 && x < C.COLS - 1 && y < C.ROWS - 1 && w.grid[y][x] === TILE.EMPTY);
+      for (let i = 0; i < Math.min(C.KING_SPLIT, around.length); i++) {
+        makeMonster(w, 'slime', around[i][0], around[i][1]);
+      }
+    }
+    return;
+  }
+
+  const dropChance = m.type === 'gold' ? 1 : C.MONSTER_DROP_CHANCE;
   if (
     w.rng() < dropChance &&
     w.grid[ty][tx] === TILE.EMPTY &&
@@ -678,9 +769,10 @@ function applyMonsterTouch(w) {
   const { C } = w;
   for (const m of w.monsters) {
     if (m.type === 'gold') continue; // 金史莱姆无害，只会逃
+    const touch = m.boss ? 0.85 : C.MONSTER_TOUCH;
     for (const p of w.players.values()) {
       if (!p.alive) continue;
-      if (Math.abs(p.x - m.x) < C.MONSTER_TOUCH && Math.abs(p.y - m.y) < C.MONSTER_TOUCH) {
+      if (Math.abs(p.x - m.x) < touch && Math.abs(p.y - m.y) < touch) {
         hitPlayer(w, p, null);
       }
     }
@@ -713,6 +805,8 @@ function step(w, dt) {
 
   updateMonsters(w, dt);
   maintainMonsters(w, dt);
+  updateBossSpawn(w, dt);
+  updateMerchant(w, dt);
   updateBombs(w, dt);
   updateBlasts(w);
   applyBlastDamage(w);

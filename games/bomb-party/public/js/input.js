@@ -13,7 +13,7 @@ window.GameInput = (function () {
     ArrowRight: 3, KeyD: 3,
   };
 
-  function create({ onDir, onBomb, onMenu, onBoard, onChat, onAnyKey }) {
+  function create({ onDir, onBomb, onMenu, onBoard, onChat, onShop, onAnyKey }) {
     const stack = []; // 当前按住的方向，后按的在末尾
     let lastSent = -1;
 
@@ -51,6 +51,8 @@ window.GameInput = (function () {
           ev.preventDefault();
           onChat();
         }
+      } else if (ev.code === 'KeyB') {
+        if (!ev.repeat && onShop) onShop();
       }
     });
 
@@ -79,6 +81,7 @@ window.GameInput = (function () {
 
     window.addEventListener('touchstart', function once() {
       touchUI.classList.remove('hidden');
+      document.body.classList.add('touch'); // 供 CSS 区分触屏布局
       window.removeEventListener('touchstart', once);
     }, { passive: true });
 

@@ -13,6 +13,7 @@ const { WebSocketServer } = require('ws');
 const C = require('./config');
 const World = require('./world');
 const { createLeaderboard } = require('./leaderboard');
+const { createCosmetics } = require('./cosmetics');
 
 const PORT = Number(process.env.PORT) || 3000;
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
@@ -22,6 +23,7 @@ app.use(express.static(path.join(__dirname, '..', 'public')));
 
 const world = World.create();
 const leaderboard = createLeaderboard(DATA_DIR);
+const cosmetics = createCosmetics(DATA_DIR);
 const clients = new Map(); // ws -> { playerId }
 const startedAt = Date.now();
 
@@ -73,6 +75,7 @@ function rosterMsg() {
       kills: p.kills,
       deaths: p.deaths,
       alive: p.alive,
+      cos: p.cos || {},
     })),
   };
 }
@@ -107,6 +110,7 @@ wss.on('connection', (ws) => {
     snapEvery: C.SNAP_EVERY,
     respawn: C.RESPAWN_DELAY,
     lb: leaderboard.top(5),
+    catalog: cosmetics.CATALOG,
   });
   send(ws, rosterMsg());
 
@@ -128,7 +132,8 @@ wss.on('connection', (ws) => {
       }
       const p = World.addPlayer(world, { name: msg.name, color: msg.color });
       meta.playerId = p.id;
-      send(ws, { t: 'you', id: p.id });
+      p.cos = cosmetics.state(p.name).equip; // 外观跟随昵称
+      send(ws, { t: 'you', id: p.id, cos: cosmetics.state(p.name) });
       broadcast(rosterMsg());
       console.log(`[join] ${p.name} (#${p.id}) 玩家数=${world.players.size}`);
       return;
@@ -152,6 +157,39 @@ wss.on('connection', (ws) => {
       if (!text) return;
       meta.chatReadyAt = nowMs + 700;
       broadcast({ t: 'chat', id: p.id, name: p.name, color: p.color, text });
+    } else if (msg.t === 'buy') {
+      // 在商人处用积分购买外观
+      const p = world.players.get(meta.playerId);
+      if (!p) return;
+      const item = cosmetics.CATALOG[msg.item];
+      const near = world.shop &&
+        Math.abs(p.x - world.shop.x) <= C.MERCHANT_RANGE &&
+        Math.abs(p.y - world.shop.y) <= C.MERCHANT_RANGE;
+      let r;
+      if (!item) r = { ok: false, msg: '没有这个商品' };
+      else if (!near) r = { ok: false, msg: '要走到商人旁边才能交易' };
+      else if (cosmetics.owns(p.name, msg.item)) r = { ok: false, msg: '已经拥有了' };
+      else if (p.score < item.price) r = { ok: false, msg: `积分不足（需要 ${item.price}）` };
+      else {
+        p.score -= item.price;
+        cosmetics.buy(p.name, msg.item);
+        p.cos = cosmetics.state(p.name).equip;
+        r = { ok: true, msg: `已购买并装备 ${item.name}！` };
+        broadcast(rosterMsg());
+      }
+      send(ws, Object.assign({ t: 'shopResult' }, r, cosmetics.state(p.name)));
+    } else if (msg.t === 'equip') {
+      // 切换已拥有外观的装备状态（不需要在商人处）
+      const p = world.players.get(meta.playerId);
+      if (!p) return;
+      const ok = cosmetics.toggle(p.name, msg.item);
+      if (ok) {
+        p.cos = cosmetics.state(p.name).equip;
+        broadcast(rosterMsg());
+      }
+      send(ws, Object.assign(
+        { t: 'shopResult', ok, msg: ok ? '已更新装扮' : '还没有拥有它' },
+        cosmetics.state(p.name)));
     } else if (msg.t === 'leave') {
       // 回到选角：卸下玩家但保留连接
       detachPlayer(meta);
@@ -202,10 +240,14 @@ function tick() {
     }
   }
 
-  // 当前领跑者（画皇冠用）
-  let top = 0, topScore = -1;
+  // 当前领跑者（画皇冠用）：击杀优先，击杀相同看积分
+  let top = 0, topKills = -1, topScore = -1;
   for (const p of world.players.values()) {
-    if (p.score > topScore) { topScore = p.score; top = p.id; }
+    if (p.kills > topKills || (p.kills === topKills && p.score > topScore)) {
+      topKills = p.kills;
+      topScore = p.score;
+      top = p.id;
+    }
   }
 
   const r2 = (n) => Math.round(n * 100) / 100;
@@ -222,7 +264,10 @@ function tick() {
       p.score, p.kills,
       p.alive ? 0 : r2(Math.max(0, p.deadUntil - world.time)),
     ]),
-    m: world.monsters.map((m) => [m.id, m.typeIdx, r2(m.x), r2(m.y), m.dir]),
+    m: world.monsters.map((m) => [m.id, m.typeIdx, r2(m.x), r2(m.y), m.dir, m.hp]),
+    shop: world.shop
+      ? [world.shop.x, world.shop.y, Math.ceil(world.shop.until - world.time)]
+      : 0,
     b: world.bombs.map((b) => [b.id, b.x, b.y, r2(b.fuse), b.range]),
     f: world.blasts.map((f) => [f.x, f.y, f.part, f.dir]),
     u: world.powerups.map((u) => [u.id, u.x, u.y, u.kindIdx, r2(u.until - world.time)]),
@@ -256,11 +301,13 @@ setInterval(() => {
 process.on('SIGTERM', () => {
   for (const p of world.players.values()) recordPlayer(p);
   leaderboard.flush();
+  cosmetics.flush();
   process.exit(0);
 });
 process.on('SIGINT', () => {
   for (const p of world.players.values()) recordPlayer(p);
   leaderboard.flush();
+  cosmetics.flush();
   process.exit(0);
 });
 

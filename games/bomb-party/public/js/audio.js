@@ -90,6 +90,11 @@ window.GameAudio = (function () {
         tone({ type: 'square', freq: f, dur: 0.18, vol: 0.25, when: i * 0.13 }));
     },
     respawn() { tone({ type: 'square', freq: 440, to: 880, dur: 0.25, vol: 0.22 }); },
+    boss() {
+      [0, 0.4].forEach((when) =>
+        tone({ type: 'sawtooth', freq: 220, to: 440, dur: 0.35, vol: 0.3, when }));
+    },
+    hit(k = 1) { tone({ type: 'square', freq: 180, to: 90, dur: 0.12, vol: 0.3 * k }); },
   };
 
   // ---------- BGM：轻快的 8 小节循环 ----------

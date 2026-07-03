@@ -44,6 +44,9 @@
 
     <div id="toast-area"></div>
 
+    <!-- 商人接近提示 -->
+    <button id="shop-hint" class="hidden">🛒 商人在此！点击或按 B 打开商店</button>
+
     <!-- 左下角聊天（参照 arena-brawl） -->
     <div id="chat-panel">
       <div id="chat-log"></div>
@@ -97,6 +100,14 @@
           </div>
         </div>
         <button class="big-btn" id="board-close">关闭</button>
+      </div>
+
+      <!-- 商店 -->
+      <div id="shop-screen" class="panel hidden">
+        <h2 class="panel-title">🛒 流浪商人</h2>
+        <p class="shop-sub">用积分购买外观，跟随昵称永久保存 · 当前积分 <b id="shop-score">0</b></p>
+        <div id="shop-list"></div>
+        <button class="big-btn" id="shop-close">关闭</button>
       </div>
 
       <!-- 已退出 -->
