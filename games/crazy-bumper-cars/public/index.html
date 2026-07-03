@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>疯狂碰碰车 🚗💥</title>
+<link rel="stylesheet" href="css/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🚗</text></svg>">
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<!-- 加入菜单 -->
+<div id="menu" class="overlay">
+  <div class="menu-card">
+    <h1 class="title">疯狂<span class="title-boom">碰碰车</span></h1>
+    <p class="subtitle">💥 把他们统统撞飞！ 💥</p>
+    <input id="name-input" type="text" maxlength="12" placeholder="输入你的车手大名" autocomplete="off">
+    <div class="color-row" id="color-row"></div>
+    <button id="play-btn" class="big-btn">🏁 出 发 ！</button>
+    <div id="menu-status" class="menu-status"></div>
+    <div class="help">
+      <b>WASD / 方向键</b> 朝该方向行驶（可斜向） · <b>空格</b> 追加冲刺<br>
+      <b>H</b> 按喇叭 · <b>回车</b> 聊天 · <b>Tab</b> 查看历史榜<br>
+      高速撞击 = 掉血 + 击飞 · 撞爆对手得分 · 干掉 👑 双倍分！
+    </div>
+    <div class="menu-board" id="menu-board"></div>
+  </div>
+</div>
+
+<!-- 游戏 HUD -->
+<div id="hud" class="hidden">
+  <div id="status-bars">
+    <div class="bar-wrap"><span class="bar-ico">❤️</span><div class="bar"><div id="hp-bar" class="bar-fill hp"></div></div></div>
+    <div class="bar-wrap"><span class="bar-ico">⚡</span><div class="bar"><div id="nitro-bar" class="bar-fill nitro"></div></div></div>
+    <div id="score-line">得分 <b id="my-score">0</b> · 击杀 <b id="my-kills">0</b> · <span id="ping">--ms</span></div>
+  </div>
+
+  <div id="killfeed"></div>
+
+  <div id="board-panel">
+    <div class="board-title" id="board-title">🏆 实时排行 <span class="board-hint">(Tab 看历史)</span></div>
+    <ol id="board-list"></ol>
+  </div>
+
+  <canvas id="minimap" width="180" height="124"></canvas>
+
+  <div id="chat-panel">
+    <div id="chat-log"></div>
+    <input id="chat-input" type="text" maxlength="80" placeholder="按回车聊天…" autocomplete="off">
+  </div>
+
+  <div id="death-screen" class="hidden">
+    <div class="death-card">
+      <div class="death-boom">💥 KO! 💥</div>
+      <div id="death-text"></div>
+      <div id="death-count"></div>
+    </div>
+  </div>
+
+  <!-- 移动端控制 -->
+  <div id="touch-ui" class="hidden">
+    <div id="joystick"><div id="joystick-knob"></div></div>
+    <div id="btn-boost" class="touch-btn">⚡</div>
+    <div id="btn-horn" class="touch-btn">📢</div>
+  </div>
+</div>
+
+<div id="disconnect-tip" class="hidden">🔌 连接断开，正在重连…</div>
+
+<script src="js/audio.js"></script>
+<script src="js/net.js"></script>
+<script src="js/input.js"></script>
+<script src="js/hud.js"></script>
+<script src="js/render.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>

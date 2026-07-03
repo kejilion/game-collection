@@ -1,0 +1,12 @@
+services:
+  bumper-cars:
+    build: .
+    container_name: crazy-bumper-cars
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - DATA_DIR=/app/data
+    volumes:
+      - ./data:/app/data   # 历史排行榜持久化

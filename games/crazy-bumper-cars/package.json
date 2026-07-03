@@ -1,0 +1,18 @@
+{
+  "name": "crazy-bumper-cars",
+  "version": "1.0.0",
+  "description": "疯狂碰碰车 —— 卡通暴力美学多人在线碰碰车大乱斗",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node server/index.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "ws": "^8.18.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

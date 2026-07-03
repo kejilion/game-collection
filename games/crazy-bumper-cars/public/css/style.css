@@ -1,0 +1,236 @@
+/* 疯狂碰碰车 —— 卡通 UI */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --ink: #2b2233;
+  --paper: #fff8ec;
+  --accent: #ff5252;
+  --accent2: #ffca28;
+}
+
+html, body {
+  width: 100%; height: 100%;
+  overflow: hidden;
+  font-family: "Baloo 2", "ZCOOL KuaiLe", "Comic Sans MS", "Microsoft YaHei", "PingFang SC", sans-serif;
+  background: #3ba55d;
+  touch-action: none;
+  -webkit-user-select: none; user-select: none;
+}
+
+#game { position: fixed; inset: 0; display: block; }
+
+.hidden { display: none !important; }
+
+/* ---------- 菜单 ---------- */
+.overlay {
+  position: fixed; inset: 0; z-index: 50;
+  display: flex; align-items: center; justify-content: center;
+  background: radial-gradient(circle at 50% 30%, rgba(255,255,255,.18), rgba(0,0,0,.45));
+  overflow-y: auto; padding: 20px 0;
+}
+
+.menu-card {
+  background: var(--paper);
+  border: 5px solid var(--ink);
+  border-radius: 28px;
+  box-shadow: 0 12px 0 rgba(0,0,0,.35);
+  padding: 26px 34px;
+  text-align: center;
+  width: min(430px, 92vw);
+}
+
+.title {
+  font-size: 44px; color: var(--ink);
+  letter-spacing: 4px; line-height: 1.1;
+  text-shadow: 3px 3px 0 var(--accent2);
+}
+.title-boom { color: var(--accent); }
+.subtitle { color: #8a7a6a; margin: 6px 0 16px; font-size: 15px; }
+
+#name-input {
+  width: 100%; padding: 12px 16px;
+  border: 4px solid var(--ink); border-radius: 16px;
+  font-size: 18px; font-family: inherit; text-align: center;
+  background: #fff; color: var(--ink); outline: none;
+}
+#name-input:focus { border-color: var(--accent); }
+
+.color-row { display: flex; justify-content: center; gap: 10px; margin: 14px 0; flex-wrap: wrap; }
+.color-dot {
+  width: 34px; height: 34px; border-radius: 50%;
+  border: 3px solid var(--ink); cursor: pointer;
+  transition: transform .1s;
+}
+.color-dot:hover { transform: scale(1.15); }
+.color-dot.sel { transform: scale(1.25); box-shadow: 0 0 0 4px #fff, 0 0 0 7px var(--ink); }
+
+.big-btn {
+  width: 100%; padding: 14px;
+  font-size: 24px; font-weight: 800; font-family: inherit;
+  color: #fff; letter-spacing: 6px;
+  background: linear-gradient(#ff7043, var(--accent));
+  border: 4px solid var(--ink); border-radius: 18px;
+  box-shadow: 0 6px 0 #a33; cursor: pointer;
+  transition: transform .06s, box-shadow .06s;
+}
+.big-btn:active { transform: translateY(5px); box-shadow: 0 1px 0 #a33; }
+
+.menu-status { min-height: 20px; color: var(--accent); font-size: 14px; margin-top: 8px; }
+
+.help {
+  margin-top: 14px; font-size: 13px; line-height: 1.9;
+  color: #6d5f52;
+  background: #fff0d4; border: 2px dashed #d9b98c; border-radius: 12px; padding: 10px;
+}
+.help b { color: var(--ink); }
+
+.menu-board { margin-top: 12px; font-size: 13px; color: #6d5f52; text-align: left; }
+.menu-board .mb-title { font-weight: 800; color: var(--ink); text-align: center; margin-bottom: 4px; }
+.menu-board .mb-row { display: flex; justify-content: space-between; padding: 1px 8px; }
+
+/* ---------- HUD 通用 ---------- */
+#hud > * { position: fixed; z-index: 20; }
+
+#status-bars { left: 16px; top: 14px; width: 240px; }
+.bar-wrap { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.bar-ico { font-size: 16px; filter: drop-shadow(1px 1px 0 rgba(0,0,0,.4)); }
+.bar {
+  flex: 1; height: 18px;
+  background: rgba(0,0,0,.45);
+  border: 3px solid var(--ink); border-radius: 12px;
+  overflow: hidden;
+}
+.bar-fill { height: 100%; width: 100%; border-radius: 8px; transition: width .15s; }
+.bar-fill.hp { background: linear-gradient(#8bf58b, #2ecc40); }
+.bar-fill.hp.low { background: linear-gradient(#ff9d9d, #ff4136); }
+.bar-fill.nitro { background: linear-gradient(#9be7ff, #26c6da); }
+#score-line {
+  color: #fff; font-size: 14px;
+  text-shadow: 2px 2px 0 rgba(0,0,0,.5);
+}
+#score-line b { color: var(--accent2); font-size: 17px; }
+
+/* 击杀播报 */
+#killfeed {
+  top: 14px; left: 50%; transform: translateX(-50%);
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  pointer-events: none; max-width: 90vw;
+}
+.feed-item {
+  background: rgba(30,20,40,.78); color: #fff;
+  border: 2px solid rgba(255,255,255,.25);
+  padding: 4px 14px; border-radius: 999px;
+  font-size: 14px; white-space: nowrap;
+  animation: feedIn .25s;
+}
+@keyframes feedIn { from { transform: scale(.6); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+
+/* 排行榜 */
+#board-panel {
+  right: 14px; top: 14px; width: 218px;
+  background: rgba(30,20,40,.72);
+  border: 3px solid rgba(255,255,255,.3); border-radius: 14px;
+  padding: 8px 10px; color: #fff;
+}
+.board-title { font-size: 14px; font-weight: 800; margin-bottom: 4px; }
+.board-hint { font-weight: 400; font-size: 11px; opacity: .6; }
+#board-list { list-style: none; font-size: 13px; }
+#board-list li {
+  display: flex; justify-content: space-between; gap: 6px;
+  padding: 1px 2px; border-radius: 6px;
+}
+#board-list li.me { background: rgba(255,202,40,.25); }
+#board-list .b-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 120px; }
+#board-list .b-score { color: var(--accent2); font-weight: 700; }
+
+/* 小地图 */
+#minimap {
+  right: 14px; top: 268px;
+  border: 3px solid rgba(255,255,255,.35); border-radius: 10px;
+  background: rgba(20,60,30,.8);
+}
+
+/* 聊天 */
+#chat-panel {
+  left: 14px; bottom: 14px; width: min(340px, 70vw);
+  display: flex; flex-direction: column; gap: 6px;
+}
+#chat-log {
+  max-height: 168px; overflow-y: auto;
+  display: flex; flex-direction: column; justify-content: flex-end; gap: 2px;
+  font-size: 13px;
+  mask-image: linear-gradient(transparent, #000 18%);
+  -webkit-mask-image: linear-gradient(transparent, #000 18%);
+}
+.chat-line {
+  color: #fff; text-shadow: 1px 1px 0 rgba(0,0,0,.7);
+  background: rgba(0,0,0,.32); border-radius: 8px;
+  padding: 2px 8px; width: fit-content; max-width: 100%;
+  word-break: break-all;
+}
+.chat-line .cname { font-weight: 800; }
+.chat-line.sys { color: #ffe082; font-style: italic; background: rgba(0,0,0,.22); }
+#chat-input {
+  width: 100%; padding: 8px 12px;
+  border: 3px solid var(--ink); border-radius: 12px;
+  font-size: 14px; font-family: inherit; outline: none;
+  background: rgba(255,255,255,.92); color: var(--ink);
+  opacity: .55; transition: opacity .15s;
+}
+#chat-input:focus { opacity: 1; border-color: var(--accent); }
+
+/* 死亡界面 */
+#death-screen {
+  inset: 0; display: flex; align-items: center; justify-content: center;
+  background: rgba(120,20,20,.28); pointer-events: none;
+}
+.death-card { text-align: center; animation: feedIn .3s; }
+.death-boom {
+  font-size: 64px; font-weight: 900; color: var(--accent2);
+  text-shadow: 4px 4px 0 var(--ink), -2px -2px 0 var(--accent);
+  animation: boomPulse .6s infinite alternate;
+}
+@keyframes boomPulse { from { transform: scale(1) rotate(-3deg); } to { transform: scale(1.12) rotate(3deg); } }
+#death-text { color: #fff; font-size: 22px; text-shadow: 2px 2px 0 rgba(0,0,0,.6); margin: 10px 0; }
+#death-count { color: #ffe082; font-size: 40px; font-weight: 900; text-shadow: 3px 3px 0 rgba(0,0,0,.5); }
+
+/* 断线提示 */
+#disconnect-tip {
+  position: fixed; top: 60px; left: 50%; transform: translateX(-50%);
+  z-index: 60; background: #b71c1c; color: #fff;
+  padding: 8px 22px; border-radius: 999px; border: 3px solid #fff;
+  font-size: 15px; font-family: inherit;
+  animation: boomPulse .8s infinite alternate;
+}
+
+/* ---------- 移动端 ---------- */
+#touch-ui > * { position: fixed; z-index: 30; }
+#joystick {
+  left: 26px; bottom: 90px;
+  width: 130px; height: 130px; border-radius: 50%;
+  background: rgba(255,255,255,.14);
+  border: 3px solid rgba(255,255,255,.4);
+}
+#joystick-knob {
+  position: absolute; left: 50%; top: 50%;
+  width: 56px; height: 56px; border-radius: 50%;
+  background: rgba(255,255,255,.55); border: 3px solid var(--ink);
+  transform: translate(-50%, -50%);
+}
+.touch-btn {
+  width: 76px; height: 76px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 32px;
+  background: rgba(255,202,40,.75); border: 4px solid var(--ink);
+  box-shadow: 0 4px 0 rgba(0,0,0,.35);
+}
+#btn-boost { right: 30px; bottom: 110px; }
+#btn-horn { right: 130px; bottom: 46px; width: 58px; height: 58px; font-size: 24px; }
+
+@media (max-width: 760px) {
+  #chat-log { max-height: 96px; font-size: 12px; }
+  #chat-panel { width: min(240px, 60vw); bottom: auto; top: 96px; }
+  #board-panel { width: 160px; font-size: 12px; }
+  #minimap { display: none; }
+  .title { font-size: 34px; }
+}
