@@ -64,9 +64,16 @@ function broadcast(msg) {
   }
 }
 
+function specCount() {
+  let n = 0;
+  for (const m of clients.values()) if (m.spectating) n++;
+  return n;
+}
+
 function rosterMsg() {
   return {
     t: 'roster',
+    specs: specCount(),
     list: [...world.players.values()].map((p) => ({
       id: p.id,
       name: p.name,
@@ -132,6 +139,7 @@ wss.on('connection', (ws) => {
       }
       const p = World.addPlayer(world, { name: msg.name, color: msg.color });
       meta.playerId = p.id;
+      meta.spectating = false; // 从观战切入对战
       p.cos = cosmetics.state(p.name).equip; // 外观跟随昵称
       send(ws, { t: 'you', id: p.id, cos: cosmetics.state(p.name) });
       broadcast(rosterMsg());
@@ -140,6 +148,21 @@ wss.on('connection', (ws) => {
     }
     if (msg.t === 'ping') {
       send(ws, { t: 'pong', id: msg.id });
+      return;
+    }
+    // 观战：非玩家即可开始/结束观战（快照本就广播给所有连接，无需额外订阅）
+    if (msg.t === 'spectate') {
+      if (meta.playerId == null && !meta.spectating) {
+        meta.spectating = true;
+        broadcast(rosterMsg());
+      }
+      return;
+    }
+    if (msg.t === 'spectateLeave') {
+      if (meta.spectating) {
+        meta.spectating = false;
+        broadcast(rosterMsg());
+      }
       return;
     }
     if (meta.playerId == null) return;
@@ -199,10 +222,13 @@ wss.on('connection', (ws) => {
 
   ws.on('close', () => {
     const meta = clients.get(ws);
+    const wasSpec = meta && meta.spectating;
     clients.delete(ws);
     if (meta && meta.playerId != null) {
       detachPlayer(meta);
       broadcast(rosterMsg());
+    } else if (wasSpec) {
+      broadcast(rosterMsg()); // 更新观战人数
     }
   });
 

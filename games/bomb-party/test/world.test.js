@@ -314,6 +314,10 @@ test('外观商店：购买/装备/持久化', () => {
 
   const store = createCosmetics(dir);
   assert.ok(CATALOG.hat_top && CATALOG.trail_rain, '目录应有商品');
+  // 翅膀外观齐全，且归入 wings 槽位
+  for (const id of ['wing_angel', 'wing_fairy', 'wing_devil', 'wing_phoenix']) {
+    assert.ok(CATALOG[id] && CATALOG[id].slot === 'wings', `${id} 应是翅膀商品`);
+  }
   assert.strictEqual(store.owns('小红', 'hat_top'), false);
   assert.strictEqual(store.buy('小红', 'hat_top'), true);
   assert.strictEqual(store.buy('小红', 'hat_top'), false, '不能重复购买');
@@ -321,6 +325,9 @@ test('外观商店：购买/装备/持久化', () => {
   assert.strictEqual(store.toggle('小红', 'hat_top'), true);
   assert.strictEqual(store.state('小红').equip.hat, undefined, '再次切换应卸下');
   assert.strictEqual(store.toggle('小红', 'trail_rain'), false, '未拥有不能装备');
+  // 翅膀购买与帽子互不冲突（不同槽位可同时装备）
+  assert.strictEqual(store.buy('小红', 'wing_phoenix'), true);
+  assert.strictEqual(store.state('小红').equip.wings, 'wing_phoenix', '翅膀应装备到 wings 槽');
   store.flush();
 
   const store2 = createCosmetics(dir);

@@ -406,6 +406,68 @@ html, body {
 .shop-item.equipped { border-color: var(--green); background: #e8f9e4; box-shadow: 0 0 0 2px rgba(111, 212, 78, .35); }
 .shop-item.poor { opacity: .45; cursor: not-allowed; }
 
+/* ---------- 观战 ---------- */
+
+.ghost-btn {
+  margin-top: 12px;
+  border: 2px solid #d8cef0;
+  background: transparent;
+  color: #6a6085;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  padding: 8px 20px;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: background .15s, color .15s, transform .08s;
+}
+.ghost-btn:hover { background: #f1ecfa; color: var(--accent); }
+.ghost-btn:active { transform: translateY(2px); }
+
+#spectate-bar {
+  position: absolute;
+  left: 50%;
+  bottom: max(16px, env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  background: rgba(20, 24, 48, .82);
+  backdrop-filter: blur(6px);
+  border-radius: 16px;
+  padding: 10px 16px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .4);
+  z-index: 35;
+  max-width: calc(100vw - 24px);
+}
+#spec-label { color: #ffd93d; font-weight: 800; font-size: 14px; }
+.spec-controls { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+.spec-controls button {
+  border: none;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .14);
+  color: #fff;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  padding: 8px 14px;
+  cursor: pointer;
+  transition: transform .08s, background .15s;
+}
+.spec-controls button:hover { background: rgba(255, 255, 255, .26); }
+.spec-controls button:active { transform: scale(.93); }
+.spec-controls button.accent { background: linear-gradient(180deg, #ff8ab5, #ff5a8f); }
+.spec-controls button.accent:hover { background: linear-gradient(180deg, #ff9cc0, #ff6b9d); }
+
+/* 观战时隐藏本机玩家的 HUD 数值与炸弹键 */
+body.spectating #hud .hud-group:first-child,
+body.spectating #stat-score,
+body.spectating #bomb-btn,
+body.spectating #chat-panel { display: none !important; }
+body.spectating #players-panel .player-row { cursor: pointer; pointer-events: auto; }
+#players-panel .player-row.spec-follow { outline: 2px solid #ffd93d; background: rgba(255, 217, 61, .18); }
+
 /* ---------- 聊天 ---------- */
 
 #chat-panel {

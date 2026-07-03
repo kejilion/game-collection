@@ -56,11 +56,19 @@
     shopScore: $('shop-score'),
     shopClose: $('shop-close'),
     shopHint: $('shop-hint'),
+    spectateBtn: $('spectate-btn'),
+    specBar: $('spectate-bar'),
+    specLabel: $('spec-label'),
+    specPrev: $('spec-prev'),
+    specNext: $('spec-next'),
+    specMode: $('spec-mode'),
+    specJoin: $('spec-join'),
+    specExit: $('spec-exit'),
   };
 
   const MONSTER_NAMES = ['史莱姆', '幽灵', '小恶魔', '金史莱姆', '史莱姆王', '石像巨人'];
   const BOSS_MAX_HP = { 4: 4, 5: 6 };
-  const SLOT_NAMES = { hat: '👒 帽子', pattern: '🎨 身体纹路', eyes: '👀 眼睛', glow: '✨ 外发光', trail: '💫 拖尾' };
+  const SLOT_NAMES = { wings: '🪽 翅膀', hat: '👒 帽子', pattern: '🎨 身体纹路', eyes: '👀 眼睛', glow: '✨ 外发光', trail: '💫 拖尾' };
 
   const POWERUP_NAMES = ['💣 炸弹+1', '🔥 火力+1', '⚡ 速度+1', '🛡️ 护盾'];
   // 与 server/config.js 保持一致的移动常量（用于本地预测）
@@ -99,6 +107,12 @@
     myCos: { owned: [], equip: {} },
     pendingJoin: false,
     joinSafetyT: 0,
+    // 观战
+    spectating: false,
+    specFree: true,            // true=自由镜头, false=跟随某玩家
+    specTarget: null,          // 跟随的玩家 id
+    specCam: { x: 20, y: 16 }, // 自由镜头位置（格）
+    specCount: 0,
   };
 
   window.__game = state; // 调试用
@@ -144,6 +158,8 @@
           armJoinSafety();
         }
         net.send({ t: 'join', name: state.myName, color: state.myColor });
+      } else if (state.spectating) {
+        net.send({ t: 'spectate' }); // 重连后恢复观战计数
       } else if (!state.joined) {
         setJoinBusy(false);
         setJoinStatus('');
@@ -160,7 +176,7 @@
     },
     onMessage(msg) {
       if (msg.t === 's') onSnapshot(msg);
-      else if (msg.t === 'roster') onRoster(msg.list);
+      else if (msg.t === 'roster') onRoster(msg);
       else if (msg.t === 'hello') onHello(msg);
       else if (msg.t === 'you') {
         state.myId = msg.id;
@@ -170,6 +186,7 @@
         setJoinBusy(false);
         setJoinStatus('');
         state.pred.ok = false;
+        if (state.spectating) exitSpectateUI(); // 从观战切入对战
         if (msg.cos) state.myCos = msg.cos;
         updateOverlay();
       } else if (msg.t === 'shopResult') {
@@ -221,9 +238,11 @@
     resize();
   }
 
-  function onRoster(list) {
-    state.roster = new Map(list.map((p) => [p.id, p]));
+  function onRoster(msg) {
+    state.roster = new Map(msg.list.map((p) => [p.id, p]));
+    if (typeof msg.specs === 'number') state.specCount = msg.specs;
     renderPlayersPanel();
+    if (state.spectating) updateSpecUI();
   }
 
   function onSnapshot(s) {
@@ -488,7 +507,8 @@
         if (!p.alive) cls.push('dead');
         if (p.id === state.myId) cls.push('me');
         const color = Renderer.PLAYER_COLORS[p.color % 8][0];
-        return `<div class="${cls.join(' ')}">
+        const sel = state.spectating && !state.specFree && p.id === state.specTarget ? ' spec-follow' : '';
+        return `<div class="${cls.join(' ')}${sel}" data-pid="${p.id}">
           <span class="dot" style="background:${color}"></span>
           <span class="pname">${escapeHtml(p.name)}</span>
           <span class="pscore">⚔️${p.kills} ${p.score}</span>
@@ -650,7 +670,7 @@
   // ---------- 覆盖层 ----------
 
   function updateOverlay() {
-    const showJoin = !state.joined && !state.quit;
+    const showJoin = !state.joined && !state.quit && !state.spectating;
     const showShop = state.shopOpen;
     const showMenu = state.joined && state.menuOpen && !showShop;
     const showBoard = state.boardOpen && !showShop;
@@ -711,6 +731,121 @@
     if (ev.key === 'Enter') join();
   });
 
+  // ---------- 观战 ----------
+
+  function enterSpectate() {
+    state.spectating = true;
+    state.specFree = true;
+    state.specTarget = null;
+    state.specCam = { x: (state.cols - 1) / 2, y: (state.rows - 1) / 2 };
+    document.body.classList.add('spectating');
+    els.specBar.classList.remove('hidden');
+    input.reset();
+    updateOverlay();
+    updateSpecUI();
+  }
+
+  function exitSpectateUI() {
+    state.spectating = false;
+    document.body.classList.remove('spectating');
+    els.specBar.classList.add('hidden');
+  }
+
+  function spectate() {
+    GameAudio.unlock();
+    enterSpectate();
+    if (net.connected) net.send({ t: 'spectate' });
+    else toast('🔌 连接中，稍候即可观战…');
+  }
+
+  function specExit() {
+    if (net.connected) net.send({ t: 'spectateLeave' });
+    exitSpectateUI();
+    updateOverlay();
+  }
+
+  // 所有玩家 id，按分数降序（切换跟随时顺序稳定）
+  function specPlayerIds() {
+    return [...state.roster.values()].sort((a, b) => b.score - a.score).map((p) => p.id);
+  }
+
+  // 开始跟随时：镜头直切到目标 + 聚光灯锁定（类似出生聚焦），一眼定位
+  function focusFollowTarget() {
+    if (!state.renderer || state.specTarget == null) return;
+    const row = state.latest && state.latest.p.find((r) => r[0] === state.specTarget);
+    if (row) {
+      state.renderer.snapCamera(row[1], row[2]);
+      state.specCam.x = row[1];
+      state.specCam.y = row[2];
+    }
+    state.renderer.focusPlayer(state.specTarget);
+  }
+
+  function specSwitch(delta) {
+    const ids = specPlayerIds();
+    if (ids.length === 0) { toast('暂无玩家可跟随'); return; }
+    let idx = state.specTarget != null ? ids.indexOf(state.specTarget) : -1;
+    idx = (idx + delta + ids.length) % ids.length;
+    state.specTarget = ids[idx];
+    state.specFree = false;
+    focusFollowTarget();
+    updateSpecUI();
+  }
+
+  function specFollow(id) {
+    if (!state.spectating) return;
+    state.specTarget = id;
+    state.specFree = false;
+    focusFollowTarget();
+    updateSpecUI();
+  }
+
+  function specToggleMode() {
+    if (state.specFree) {
+      const ids = specPlayerIds();
+      if (ids.length === 0) { toast('暂无玩家可跟随'); return; }
+      if (state.specTarget == null || !ids.includes(state.specTarget)) state.specTarget = ids[0];
+      state.specFree = false;
+      focusFollowTarget();
+    } else {
+      state.specFree = true;
+    }
+    updateSpecUI();
+  }
+
+  function updateSpecUI() {
+    if (!state.spectating) return;
+    const n = state.roster.size;
+    if (state.specFree) {
+      els.specMode.textContent = '🎥 自由';
+      const watchers = state.specCount > 1 ? ` · 👁${state.specCount}` : '';
+      els.specLabel.textContent = `观战中 · ${n}人对战${watchers}`;
+    } else {
+      const p = state.roster.get(state.specTarget);
+      els.specMode.textContent = '🎯 跟随';
+      els.specLabel.textContent = p ? `跟随 ${p.name}（${p.score}分）` : '观战中';
+    }
+  }
+
+  els.spectateBtn.addEventListener('click', spectate);
+  els.specPrev.addEventListener('click', () => specSwitch(-1));
+  els.specNext.addEventListener('click', () => specSwitch(1));
+  els.specMode.addEventListener('click', specToggleMode);
+  els.specJoin.addEventListener('click', () => join());
+  els.specExit.addEventListener('click', specExit);
+  // 观战时点右侧名单跟随该玩家
+  els.playersPanel.addEventListener('click', (ev) => {
+    if (!state.spectating) return;
+    const row = ev.target.closest('[data-pid]');
+    if (row) specFollow(Number(row.dataset.pid));
+  });
+  // 观战快捷键：Q/E 切换目标（[ ] 亦可）
+  window.addEventListener('keydown', (ev) => {
+    if (!state.spectating || (ev.target && ev.target.tagName === 'INPUT')) return;
+    if (ev.code === 'KeyQ' || ev.code === 'BracketLeft') { ev.preventDefault(); specSwitch(-1); }
+    else if (ev.code === 'KeyE' || ev.code === 'BracketRight') { ev.preventDefault(); specSwitch(1); }
+  });
+
   // ---------- 菜单 ----------
 
   function toggleMenu(force) {
@@ -765,12 +900,14 @@
   // ---------- 输入 ----------
 
   const input = GameInput.create({
-    onDir(d) { net.send({ t: 'in', d }); },
+    onDir(d) { if (state.spectating) return; net.send({ t: 'in', d }); },
     onBomb() {
+      if (state.spectating) { specToggleMode(); return; } // 观战：空格切换自由/跟随
       if (state.menuOpen || state.boardOpen) return;
       net.send({ t: 'bomb' });
     },
     onMenu() {
+      if (state.spectating) { specExit(); return; } // 观战：Esc 退出观战
       if (state.shopOpen) toggleShop(false);
       else if (state.boardOpen) toggleBoard(false);
       else toggleMenu();
@@ -983,12 +1120,41 @@
       }
     }
 
+    // 观战自由镜头：方向键/摇杆平移（跟随模式下推方向即切回自由）
+    if (state.spectating) {
+      const d = input.currentDir();
+      if (d >= 0) {
+        if (!state.specFree) { state.specFree = true; updateSpecUI(); }
+        const V = [[0, -1], [0, 1], [-1, 0], [1, 0]][d];
+        const sp = 13; // 格/秒
+        state.specCam.x += V[0] * sp * dt;
+        state.specCam.y += V[1] * sp * dt;
+        // 夹进镜头可居中范围：坐标不进边缘死区，反向推立即响应
+        if (state.renderer) {
+          const cl = state.renderer.clampFollowPoint(state.specCam.x, state.specCam.y);
+          state.specCam.x = cl.x;
+          state.specCam.y = cl.y;
+        }
+      }
+    }
+
     if (state.renderer && state.grid && state.latest) {
       const { players, monsters } = interpolated();
       const me = players.find((p) => p.id === state.myId);
-      const follow = me
-        ? { x: me.ix, y: me.iy }
-        : { x: (state.cols - 1) / 2, y: (state.rows - 1) / 2 };
+      let follow;
+      if (state.spectating) {
+        if (!state.specFree && state.specTarget != null) {
+          const tp = players.find((p) => p.id === state.specTarget);
+          if (tp) { follow = { x: tp.ix, y: tp.iy }; state.specCam.x = tp.ix; state.specCam.y = tp.iy; }
+          else { state.specFree = true; updateSpecUI(); follow = { x: state.specCam.x, y: state.specCam.y }; }
+        } else {
+          follow = { x: state.specCam.x, y: state.specCam.y };
+        }
+      } else {
+        follow = me
+          ? { x: me.ix, y: me.iy }
+          : { x: (state.cols - 1) / 2, y: (state.rows - 1) / 2 };
+      }
       state.renderer.render({
         grid: state.grid,
         players,

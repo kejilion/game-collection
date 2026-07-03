@@ -47,6 +47,18 @@
     <!-- 商人接近提示 -->
     <button id="shop-hint" class="hidden">🛒 商人在此！点击或按 B 打开商店</button>
 
+    <!-- 观战控制栏 -->
+    <div id="spectate-bar" class="hidden">
+      <span id="spec-label">👁 观战中</span>
+      <div class="spec-controls">
+        <button id="spec-prev" title="上一位 (Q)">◀</button>
+        <button id="spec-mode" title="自由视角 / 跟随 (空格)">🎥 自由</button>
+        <button id="spec-next" title="下一位 (E)">▶</button>
+        <button id="spec-join" class="accent">➕ 加入战斗</button>
+        <button id="spec-exit">✖ 退出</button>
+      </div>
+    </div>
+
     <!-- 左下角聊天（参照 arena-brawl） -->
     <div id="chat-panel">
       <div id="chat-log"></div>
@@ -67,6 +79,7 @@
           <button id="join-btn" class="big-btn">进入战场</button>
         </div>
         <div id="join-status" class="join-status" role="status" aria-live="polite"></div>
+        <button id="spectate-btn" class="ghost-btn">👁 先观战看看</button>
         <div class="tips">
           <span>🎮 方向键 / WASD 移动 · 空格 / J 放炸弹</span>
           <span>⚙️ Esc 菜单 · Tab 排行榜</span>

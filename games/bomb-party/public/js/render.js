@@ -32,7 +32,9 @@ window.Renderer = (function () {
     const growBlocks = [];
     const ghosts = [];
     const spawnFx = [];
-    let spotlightUntil = 0; // 出生聚光灯结束时刻（墙钟秒，低帧率下也不拖长）
+    let spotlightUntil = 0; // 聚光灯结束时刻（墙钟秒，低帧率下也不拖长）
+    let spotlightTarget = null; // null = 自己（出生）；观战聚焦时为目标玩家 id
+    let spotDur = 2.4; // 本次聚光灯总时长（出生 2.4s / 观战聚焦 1.8s）
     const SPOT_DUR = 2.4;
     // 全屏闪光（死亡红闪等），墙钟计时
     let flashUntil = 0, flashDur = 0.5, flashColor = '255,60,60';
@@ -77,6 +79,19 @@ window.Renderer = (function () {
       clampCam();
     }
 
+    // 把一个格坐标夹进「镜头可居中范围」（离地图边缘半个视口）。
+    // 观战自由镜头用它：越过这个范围镜头已被钳住不再动，坐标却还在
+    // 死区里累积，往回推要先走完死区——就是边缘“顿一下”的来源。
+    function clampFollowPoint(fx, fy) {
+      const worldW = cols * TS, worldH = rows * TS;
+      const hw = Math.min(viewW / 2, worldW / 2);
+      const hh = Math.min(viewH / 2, worldH / 2);
+      return {
+        x: Math.max(hw / TS - 0.5, Math.min((worldW - hw) / TS - 0.5, fx)),
+        y: Math.max(hh / TS - 0.5, Math.min((worldH - hh) / TS - 0.5, fy)),
+      };
+    }
+
     // ---------- 特效接口 ----------
 
     function burst(wx, wy, n, colors, speed = 3, life = 0.6, grav = 6) {
@@ -105,17 +120,27 @@ window.Renderer = (function () {
     // 出生特效：全场压暗聚光灯 + 光柱 + 扩散光环 + 弹跳箭头“你在这里”
     function addSpawnFx(wx, wy) {
       spawnFx.push({ x: wx, y: wy, t: 0 });
-      spotlightUntil = performance.now() / 1000 + SPOT_DUR;
+      spotlightTarget = null;
+      spotDur = SPOT_DUR;
+      spotlightUntil = performance.now() / 1000 + spotDur;
       burst(wx, wy, 14, ['#ffd93d', '#fff', '#a5dd72'], 3, 0.6);
     }
 
-    // 聚光灯：压暗全场，亮圈从大到小收缩聚焦到自己身上
+    // 观战切换跟随：聚光灯锁定目标玩家（较短，无出生附件），方便定位
+    function focusPlayer(id) {
+      spotlightTarget = id;
+      spotDur = 1.8;
+      spotlightUntil = performance.now() / 1000 + spotDur;
+    }
+
+    // 聚光灯：压暗全场，亮圈从大到小收缩聚焦到目标身上（默认自己）
     function drawSpotlight(view, tNow) {
       const remain = spotlightUntil - tNow;
       if (remain <= 0) return;
-      const me = view.players.find((p) => p.id === view.myId && p.alive);
+      const targetId = spotlightTarget != null ? spotlightTarget : view.myId;
+      const me = view.players.find((p) => p.id === targetId && p.alive);
       if (!me) return;
-      const t = SPOT_DUR - remain;
+      const t = spotDur - remain;
       const cx = px(me.ix), cy = px(me.iy);
       // 亮圈半径：0.8 秒内从 8 格收缩到 2.4 格（缓出）
       const ease = 1 - Math.pow(1 - Math.min(1, t / 0.8), 3);
@@ -651,6 +676,102 @@ window.Renderer = (function () {
       }
     }
 
+    // ---------- 翅膀外观 ----------
+
+    // 一侧翅膀的轮廓路径（从后背向外张开）；scallop=true 为羽状/膜状扇形下缘
+    function wingPath(cx, wy, r, side, spread, scallop) {
+      const tip = side * r * 1.9 * spread;
+      ctx.beginPath();
+      ctx.moveTo(cx + side * r * 0.12, wy - r * 0.18);
+      ctx.quadraticCurveTo(cx + tip * 0.55, wy - r * 1.0, cx + tip, wy - r * 0.12);
+      if (scallop) {
+        ctx.quadraticCurveTo(cx + tip * 0.92, wy + r * 0.22, cx + tip * 0.74, wy + r * 0.12);
+        ctx.quadraticCurveTo(cx + tip * 0.7, wy + r * 0.5, cx + tip * 0.52, wy + r * 0.34);
+        ctx.quadraticCurveTo(cx + tip * 0.46, wy + r * 0.62, cx + tip * 0.3, wy + r * 0.42);
+        ctx.quadraticCurveTo(cx + tip * 0.24, wy + r * 0.58, cx + side * r * 0.12, wy + r * 0.2);
+      } else {
+        ctx.quadraticCurveTo(cx + tip * 0.82, wy + r * 0.55, cx + tip * 0.32, wy + r * 0.5);
+        ctx.quadraticCurveTo(cx + tip * 0.14, wy + r * 0.34, cx + side * r * 0.12, wy + r * 0.2);
+      }
+      ctx.closePath();
+    }
+
+    function drawWings(cx, cy, r, id, tNow, pid, moving) {
+      const flap = Math.sin(tNow * (moving ? 13 : 4.5) + pid);
+      const spread = 1 + 0.13 * flap;
+      const wy = cy - r * 0.12;
+
+      if (id === 'wing_fairy') {
+        // 蝴蝶精灵翼：上大下小双叶，半透明彩色
+        for (const side of [-1, 1]) {
+          const tip = side * r * 1.7 * spread;
+          const grad = ctx.createLinearGradient(cx, cy - r, cx + tip, cy + r);
+          grad.addColorStop(0, 'rgba(255,150,220,.72)');
+          grad.addColorStop(1, 'rgba(150,180,255,.6)');
+          ctx.fillStyle = grad;
+          ctx.strokeStyle = 'rgba(255,255,255,.7)';
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.ellipse(cx + tip * 0.55, wy - r * 0.3, r * 0.78 * spread, r * 0.6, side * 0.5, 0, Math.PI * 2);
+          ctx.fill(); ctx.stroke();
+          ctx.beginPath();
+          ctx.ellipse(cx + tip * 0.42, wy + r * 0.45, r * 0.5 * spread, r * 0.42, side * -0.3, 0, Math.PI * 2);
+          ctx.fill(); ctx.stroke();
+          ctx.fillStyle = 'rgba(255,255,255,.5)';
+          ctx.beginPath();
+          ctx.arc(cx + tip * 0.6, wy - r * 0.35, r * 0.16, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        return;
+      }
+
+      const style = {
+        wing_angel: { fill: 'rgba(255,255,255,.94)', edge: 'rgba(175,190,215,.85)', scallop: true, ribs: '#e8eef8' },
+        wing_devil: { fill: null, edge: 'rgba(120,20,40,.9)', scallop: true, ribs: 'rgba(20,10,20,.8)' },
+        wing_phoenix: { fill: null, edge: 'rgba(200,60,10,.9)', scallop: true, ribs: '#ffe08a' },
+      }[id] || { fill: 'rgba(255,255,255,.9)', edge: 'rgba(160,170,190,.8)', scallop: true, ribs: '#eee' };
+
+      for (const side of [-1, 1]) {
+        let fill = style.fill;
+        if (id === 'wing_devil') {
+          const g = ctx.createLinearGradient(cx, cy - r, cx + side * r * 1.9, cy + r);
+          g.addColorStop(0, '#5a3a6e'); g.addColorStop(1, '#2a1830');
+          fill = g;
+        } else if (id === 'wing_phoenix') {
+          const g = ctx.createLinearGradient(cx, cy - r, cx + side * r * 1.9, cy + r * 0.6);
+          g.addColorStop(0, '#ffe23a'); g.addColorStop(0.5, '#ff8c1a'); g.addColorStop(1, '#e5342a');
+          fill = g;
+        }
+        wingPath(cx, wy, r, side, spread, style.scallop);
+        ctx.fillStyle = fill;
+        ctx.fill();
+        ctx.strokeStyle = style.edge;
+        ctx.lineWidth = 1.6;
+        ctx.stroke();
+        // 翼骨/羽脉
+        ctx.strokeStyle = style.ribs;
+        ctx.lineWidth = 1.2;
+        const tip = side * r * 1.9 * spread;
+        for (let k = 1; k <= 3; k++) {
+          ctx.beginPath();
+          ctx.moveTo(cx + side * r * 0.14, wy - r * 0.05);
+          ctx.quadraticCurveTo(cx + tip * 0.5, wy - r * (0.55 - k * 0.12), cx + tip * (0.85 - k * 0.18), wy + r * (k * 0.12 - 0.1));
+          ctx.stroke();
+        }
+      }
+
+      // 火凤翼：偶尔飘出火星
+      if (id === 'wing_phoenix' && moving && Math.random() < 0.25) {
+        particles.push({
+          x: cx + (Math.random() - 0.5) * r * 3, y: wy - r * 0.4,
+          vx: (Math.random() - 0.5) * 20, vy: -20 - Math.random() * 20,
+          life: 0.5, t: 0, size: 3 + Math.random() * 3,
+          color: ['#ffe23a', '#ff8c1a', '#e5342a'][(Math.random() * 3) | 0],
+          grav: -30,
+        });
+      }
+    }
+
     // ---------- Q 版小人 ----------
 
     function drawPlayer(p, tNow, isMe, isTop) {
@@ -693,6 +814,9 @@ window.Renderer = (function () {
         ctx.arc(cx, cy, gr, 0, Math.PI * 2);
         ctx.fill();
       }
+
+      // 翅膀（画在身体后方）
+      if (cos.wings) drawWings(cx, cy, r, cos.wings, tNow, p.id, p.moving);
 
       // 自己脚下的常驻金圈，随时能在人群里找到自己
       if (isMe) {
@@ -1147,7 +1271,7 @@ window.Renderer = (function () {
 
     return {
       render, resize, burst, addFloatText, addGrowBlock, addDeathGhost, addSpawnFx,
-      snapCamera, shake, flash, inView,
+      focusPlayer, snapCamera, clampFollowPoint, shake, flash, inView,
       cam, TS,
     };
   }

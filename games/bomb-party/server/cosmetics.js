@@ -24,6 +24,10 @@ const CATALOG = {
   trail_bub: { slot: 'trail', name: '泡泡拖尾', icon: '🫧', price: 2200 },
   trail_star: { slot: 'trail', name: '星尘拖尾', icon: '💫', price: 3200 },
   trail_rain: { slot: 'trail', name: '彩虹拖尾', icon: '🌈', price: 4500 },
+  wing_angel: { slot: 'wings', name: '天使之翼', icon: '🕊️', price: 3600 },
+  wing_fairy: { slot: 'wings', name: '蝴蝶精灵翼', icon: '🦋', price: 3200 },
+  wing_devil: { slot: 'wings', name: '恶魔之翼', icon: '🦇', price: 4200 },
+  wing_phoenix: { slot: 'wings', name: '火凤之翼', icon: '🔥', price: 6000 },
 };
 
 function createCosmetics(dataDir) {
