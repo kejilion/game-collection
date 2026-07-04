@@ -58,9 +58,10 @@ function circlePushBoxes(pos, r, boxes) {
 }
 
 class World {
-  constructor(broadcast, sendTo) {
+  constructor(broadcast, sendTo, ac) {
     this.broadcast = broadcast;
     this.sendTo = sendTo;
+    this.ac = ac;                 // 反作弊引擎（见 server/anticheat/）
     this.players = new Map();
     this.nextId = 1;
     this.pickups = MAP.pickups.map(def => ({ def, item: pick(PICKUP_POOLS[def.cat]), avail: true, respawnAt: 0 }));
@@ -91,7 +92,7 @@ class World {
   }
 
   // ---------- 玩家生命周期 ----------
-  addPlayer(rawName) {
+  addPlayer(rawName, ip) {
     let name = String(rawName || '').replace(/[<>&"']/g, '').trim().slice(0, 12) || ('玩家' + Math.floor(rand(100, 999)));
     for (const p of this.players.values()) if (p.name === name) { name = name.slice(0, 9) + Math.floor(rand(10, 99)); break; }
     const prof = board.get(name);
@@ -109,6 +110,8 @@ class World {
       lastChatAt: 0, lastSpawnIdx: -1,
     };
     this.placeAtSpawn(p);
+    p.mon = this.ac.attach(p.id, { name, ip });
+    p.mon.resetPos(p.pos);
     this.players.set(p.id, p);
     this.broadcast({ type: 'sys', style: 'join', text: `${name} 加入了竞技场` });
     return p;
@@ -118,6 +121,7 @@ class World {
     const p = this.players.get(id);
     if (!p) return;
     this.saveProfile(p);
+    this.ac.detach(id);
     this.players.delete(id);
     this.broadcast({ type: 'sys', style: 'leave', text: `${p.name} 离开了竞技场` });
   }
@@ -150,17 +154,55 @@ class World {
     p.ammo = 0; p.reloadUntil = 0; p.buffs = {}; p.boots = 0; p.anim = 0;
     p.protectUntil = now() + RULES.protectMs;
     this.placeAtSpawn(p);
+    p.mon.resetPos(p.pos);   // 合法传送：重置移动校验基线
     this.broadcast({ type: 'fx', k: 'respawn', id: p.id, pos: [r2(p.pos.x), 0, r2(p.pos.z)] });
+  }
+
+  // ---------- 反作弊：几何/速度查询（引擎回调注入点） ----------
+  maxSpeedOf(p) {
+    return RULES.baseSpeed * (1 + 0.1 * p.boots)
+      * (this.buffOn(p, 'speed') ? 1.6 : 1)
+      * (this.buffOn(p, 'zombie') ? 1.35 : 1);
+  }
+  floorAtSrv(pos) {   // 支撑面高度（含微阶坡道片与存活油桶）
+    let f = 0;
+    const pad = 0.35;
+    for (const b of this.collideBoxes()) {
+      if (pos.x > b.minx - pad && pos.x < b.maxx + pad && pos.z > b.minz - pad && pos.z < b.maxz + pad) {
+        if (b.maxy <= pos.y + 0.5 && b.maxy > f) f = b.maxy;
+      }
+    }
+    return f;
+  }
+  inSolidSrv(pos) {   // 脚部明显埋入静态几何（0.35m 深度容忍坡道片阶差）
+    const s = 0.12;
+    for (const b of OBS) {
+      if (pos.x > b.minx + s && pos.x < b.maxx - s && pos.z > b.minz + s && pos.z < b.maxz - s
+        && pos.y + 0.35 < b.maxy && pos.y + 1.3 > b.miny) return true;
+    }
+    return false;
+  }
+  viewVec(p) {        // 最近上报视角的方向向量（YXZ 欧拉）
+    const cp = Math.cos(p.pitch);
+    return [-cp * Math.sin(p.yaw), Math.sin(p.pitch), -cp * Math.cos(p.yaw)];
   }
 
   // ---------- 输入处理 ----------
   handleMove(p, m) {
     if (!p.alive || !Array.isArray(m.p)) return;
+    const nx = +m.p[0], ny = +m.p[1], nz = +m.p[2];
+    if (!isFinite(nx) || !isFinite(ny) || !isFinite(nz)) { p.mon.flag('badvec', 4, 'move 非法坐标'); return; }
     const lim = MAP.half - 0.4;
-    p.pos.x = clamp(+m.p[0] || 0, -lim, lim);
-    p.pos.y = clamp(+m.p[1] || 0, 0, 12);
-    p.pos.z = clamp(+m.p[2] || 0, -lim, lim);
-    p.yaw = +m.ya || 0; p.pitch = clamp(+m.pi || 0, -1.55, 1.55);
+    const cand = { x: clamp(nx, -lim, lim), y: clamp(ny, 0, 12), z: clamp(nz, -lim, lim) };
+    const res = p.mon.movement(cand, {
+      maxSpeed: this.maxSpeedOf(p),
+      floorY: this.floorAtSrv(cand),
+      inSolid: q => this.inSolidSrv(q),
+    });
+    p.pos = res.pos;   // 违规时已回拉到最后合法位置，快照广播的永远是合法坐标
+    const ya = +m.ya, pi = +m.pi;
+    if (isFinite(ya)) p.yaw = ya;
+    if (isFinite(pi)) p.pitch = clamp(pi, -1.55, 1.55);
     p.anim = m.an ? 1 : 0;
   }
 
@@ -169,9 +211,8 @@ class World {
 
   handleMelee(p, m) {
     if (!p.alive) return;
-    const w = p.melee, def = WEAPONS[w], t = now();
-    if (t - (p.lastFire.melee || 0) < this.meleeCd(p, w) * 0.85) return;
-    p.lastFire.melee = t;
+    const w = p.melee, def = WEAPONS[w];
+    if (!p.mon.cooldown('melee', this.meleeCd(p, w) * 0.85)) return;
     let dx = +((m.d || [])[0]) || 0, dz = +((m.d || [])[2]) || 0;
     const L = Math.hypot(dx, dz) || 1; dx /= L; dz /= L;
     this.broadcast({ type: 'fx', k: 'melee', id: p.id, wp: w });
@@ -210,8 +251,7 @@ class World {
     const def = WEAPONS[p.gun], t = now();
     if (t < p.reloadUntil) return;
     if (p.ammo <= 0) { p.reloadUntil = t + def.reload * 1000; return; }
-    if (t - (p.lastFire[p.gun] || 0) < def.cd * 1000 * 0.8) return;
-    p.lastFire[p.gun] = t;
+    if (!p.mon.cooldown('fire_' + p.gun, def.cd * 1000 * 0.8)) return;
     p.ammo--;
     if (p.ammo <= 0) p.reloadUntil = t + def.reload * 1000;
     const eye = { x: p.pos.x, y: p.pos.y + RULES.eyeH, z: p.pos.z };
@@ -219,8 +259,9 @@ class World {
     if (Array.isArray(co) && Math.hypot(co[0] - eye.x, co[1] - eye.y, co[2] - eye.z) < 2.5) {
       eye.x = +co[0]; eye.y = +co[1]; eye.z = +co[2];
     }
-    let d = { x: +((m.d || [])[0]) || 0, y: +((m.d || [])[1]) || 0, z: +((m.d || [])[2]) || -1 };
-    const L = Math.hypot(d.x, d.y, d.z) || 1; d = { x: d.x / L, y: d.y / L, z: d.z / L };
+    const dv = p.mon.vec3(m.d, { unit: true });   // 方向必须为有限单位向量
+    if (!dv) return;
+    const d = { x: dv[0], y: dv[1], z: dv[2] };
 
     let bestT = def.range, target = null, headshot = false, hitBoss = false, hitBarrel = null;
     for (const o of this.players.values()) {
@@ -247,6 +288,8 @@ class World {
     let endT = bestT;
     if (tObs < bestT) { target = null; hitBoss = false; hitBarrel = null; endT = tObs; }
     const end = [r2(eye.x + d.x * endT), r2(eye.y + d.y * endT), r2(eye.z + d.z * endT)];
+    // 瞄准统计：开火方向 vs 最近上报视线，命中/爆头计数（窗口满自动评估）
+    p.mon.aimShot({ dir: dv, view: this.viewVec(p), hit: !!(target || hitBoss || hitBarrel), headshot: !!(target && headshot) });
     this.broadcast({ type: 'fx', k: 'shot', id: p.id, wp: p.gun, o: [r2(eye.x), r2(eye.y), r2(eye.z)], e: end, tg: target ? target.id : (hitBoss ? -1 : 0) });
     if (target) this.applyDamage(target, def.dmg, p, { wp: p.gun, hs: headshot });
     else if (hitBoss) this.damageBoss(this.dmgMul(p, def.dmg, false).dmg, p);
@@ -257,15 +300,16 @@ class World {
     if (!p.alive || !p.hasNade) return;
     if (this.buffOn(p, 'zombie')) return;
     const t = now(), def = WEAPONS.nade;
-    if (t - p.lastNade < def.cd * 1000 * 0.85) return;
+    if (!p.mon.cooldown('nade', def.cd * 1000 * 0.85)) return;
     p.lastNade = t;
-    let d = { x: +((m.d || [])[0]) || 0, y: +((m.d || [])[1]) || 0.3, z: +((m.d || [])[2]) || -1 };
-    const L = Math.hypot(d.x, d.y, d.z) || 1;
+    const dv = p.mon.vec3(m.d, { unit: true });
+    if (!dv) return;
+    const d = { x: dv[0], y: dv[1], z: dv[2] };
     const eye = { x: p.pos.x, y: p.pos.y + RULES.eyeH, z: p.pos.z };
     this.grenades.push({
       id: this.entId++, owner: p.id,
-      pos: { x: eye.x + d.x / L * 0.6, y: eye.y, z: eye.z + d.z / L * 0.6 },
-      vel: { x: d.x / L * 16, y: d.y / L * 16 + 3.5, z: d.z / L * 16 },
+      pos: { x: eye.x + d.x * 0.6, y: eye.y, z: eye.z + d.z * 0.6 },
+      vel: { x: d.x * 16, y: d.y * 16 + 3.5, z: d.z * 16 },
       explodeAt: t + def.fuse * 1000,
     });
     this.broadcast({ type: 'fx', k: 'throw', id: p.id });
@@ -291,7 +335,11 @@ class World {
     if (!p.alive) return;
     const pk = this.pickups[m.id | 0];
     if (!pk || !pk.avail) return;
-    if (Math.hypot(pk.def.x - p.pos.x, pk.def.z - p.pos.z) > RULES.pickupDist) return;
+    const dist = Math.hypot(pk.def.x - p.pos.x, pk.def.z - p.pos.z);
+    if (dist > RULES.pickupDist) {
+      if (dist > RULES.pickupDist * 3) p.mon.flag('range', undefined, `远距拾取探测 ${dist.toFixed(1)}m`);
+      return;
+    }
     if (Math.abs(p.pos.y - (pk.def.y || 0)) > 2) return;
     const item = pk.item;
     pk.avail = false;

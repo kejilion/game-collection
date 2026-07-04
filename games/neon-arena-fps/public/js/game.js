@@ -49,6 +49,7 @@
   let mySnap = null;
   let lastKillerText = '';
   let rejoinWanted = false;
+  let kickedText = null;        // 被反作弊踢出/封禁的原因（断线重连提示优先展示）
   let pingMs = 0, lastPingAt = 0;
   let dayBase = 0, dayAt = 0, dayMs = 600000;
 
@@ -90,7 +91,13 @@
     };
     ws.onclose = () => {
       wsOk = false;
-      if (mode !== 'menu' || rejoinWanted) {
+      if (kickedText) {
+        rejoinWanted = false;
+        backToMenu();
+        $('lost').classList.remove('hidden');
+        $('lostText').textContent = kickedText;
+        setTimeout(() => { $('lost').classList.add('hidden'); kickedText = null; }, 6000);
+      } else if (mode !== 'menu' || rejoinWanted) {
         rejoinWanted = mode === 'play' || rejoinWanted;
         $('lost').classList.remove('hidden');
         $('lostText').textContent = '连接已断开，正在重连…';
@@ -123,6 +130,11 @@
       case 'board': renderBoard(m); break;
       case 'shopmsg': shopMsg(m.text, m.ok); if (m.ok) G.audio.buy(); else G.audio.deny(); break;
       case 'err': $('menuErr').textContent = m.text; break;
+      case 'kicked': kickedText = m.text || '你已被移出对局'; rejoinWanted = false; break;
+      case 'acwarn':
+        bigNotice(m.text);
+        addChat(`<span class="sys-text">${esc(m.text)}</span>`, 'sys streak');
+        break;
       case 'pong': pingMs = now() - m.t; break;
     }
   }

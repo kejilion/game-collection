@@ -1,4 +1,5 @@
 // 霓虹竞技场 — 服务端入口：一个 URL 同时提供静态客户端与 WebSocket 联机（单房间）
+// 反作弊：AC_MODE=off 可关闭惩罚（冷却/数值等功能校验仍生效），详见 server/anticheat/README.md
 'use strict';
 const http = require('http');
 const path = require('path');
@@ -7,12 +8,18 @@ const { WebSocketServer } = require('ws');
 const World = require('./world');
 const board = require('./leaderboard');
 const cfg = require('./config');
+const { AntiCheat, fpsPreset, createJsonStore, TokenBucket, RATE_PRESETS } = require('./anticheat');
 
 const PORT = process.env.PORT || 3000;
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
 const app = express();
 app.use(express.static(path.join(__dirname, '..', 'public')));
 app.get('/health', (req, res) => {
-  res.json({ ok: true, players: world.players.size, spectators: countSpectators(), uptime: Math.round(process.uptime()) });
+  res.json({
+    ok: true, players: world.players.size, spectators: countSpectators(),
+    uptime: Math.round(process.uptime()),
+    anticheat: ac.status(),
+  });
 });
 
 const server = http.createServer(app);
@@ -39,7 +46,33 @@ function sendTo(id, obj) {
 }
 
 const sockets = new Map(); // playerId -> ws
-const world = new World(broadcast, sendTo);
+
+// ---------- 反作弊引擎 ----------
+const acStore = createJsonStore(path.join(DATA_DIR, 'anticheat.json'));
+const ac = new AntiCheat(fpsPreset({
+  enabled: process.env.AC_MODE !== 'off',
+  store: acStore,
+  onAction(key, action, reason) {
+    const ws = sockets.get(key);
+    const p = world.players.get(key);
+    if (action === 'warn') {
+      sendTo(key, { type: 'acwarn', text: '⚠️ 检测到异常操作，请规范游戏行为' });
+      return;
+    }
+    const label = action === 'ban'
+      ? `你已被临时封禁：${reason}`
+      : `你已被移出对局：${reason}`;
+    if (p) broadcast({ type: 'sys', style: 'streak', text: `🚫 ${p.name} 因异常行为被系统${action === 'ban' ? '封禁' : '移出'}` });
+    if (ws) {
+      rawSend(ws, JSON.stringify({ type: 'kicked', text: label }));
+      setTimeout(() => { try { ws.close(4001, 'anticheat'); } catch (_) { /* 忽略 */ } }, 60);
+    }
+  },
+  log: e => console.warn(`[anticheat] ${e.name || e.key} ${e.rule} ${e.detail} → score=${e.score}`),
+}));
+setInterval(() => ac.tick(1), 1000);
+
+const world = new World(broadcast, sendTo, ac);
 
 // 下发给新连接的静态定义（地图/武器/道具/商店），两端共用一份数据
 const DEFS = {
@@ -58,10 +91,13 @@ const DEFS = {
     [k, { name: b.name, radius: b.radius, yc: b.yc, color: b.color }])),
 };
 
-wss.on('connection', (ws) => {
+wss.on('connection', (ws, req) => {
   ws.isAlive = true;
   ws.spectator = false;
   ws.playerId = 0;
+  ws.ip = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim()
+    || req.socket.remoteAddress || 'unknown';
+  ws.preBucket = new TokenBucket(6, 12);   // 加入前的连接级限速
   ws.on('pong', () => { ws.isAlive = true; });
   rawSend(ws, JSON.stringify(DEFS));
   rawSend(ws, JSON.stringify(world.boardMsg()));
@@ -72,12 +108,25 @@ wss.on('connection', (ws) => {
     try { m = JSON.parse(data); } catch (_) { return; }
     if (!m || typeof m.type !== 'string') return;
     const p = ws.playerId ? world.players.get(ws.playerId) : null;
+    // 反作弊：分类型限速（未加入的连接走前置小桶）
+    if (p && p.mon) {
+      if (!p.mon.rate(m.type, ...(RATE_PRESETS[m.type] || RATE_PRESETS.default))) return;
+    } else if (m.type !== 'ping' && !ws.preBucket.take()) return;
+
     switch (m.type) {
       case 'join': {
         if (p) return;
         if (world.players.size >= cfg.RULES.maxPlayers) { rawSend(ws, JSON.stringify({ type: 'err', text: '房间已满，稍后再试' })); return; }
+        // 封禁门：IP 与昵称任一命中即拒绝
+        const cleanName = String(m.name || '').replace(/[<>&"']/g, '').trim().slice(0, 12);
+        const ban = ac.isBanned(['ip:' + ws.ip, 'name:' + cleanName]);
+        if (ban) {
+          const mins = Math.max(1, Math.ceil((ban.until - Date.now()) / 60000));
+          rawSend(ws, JSON.stringify({ type: 'err', text: `你已被临时封禁（${ban.reason}），剩余约 ${mins} 分钟` }));
+          return;
+        }
         ws.spectator = false;
-        const np = world.addPlayer(m.name);
+        const np = world.addPlayer(m.name, ws.ip);
         ws.playerId = np.id;
         sockets.set(np.id, ws);
         rawSend(ws, JSON.stringify({ type: 'joined', id: np.id, you: { coins: np.coins, owned: np.owned, eq: np.eq }, name: np.name }));
@@ -146,9 +195,9 @@ setInterval(() => {
 }, 2000);
 
 server.listen(PORT, () => {
-  console.log(`[霓虹竞技场] 服务已启动: http://0.0.0.0:${PORT}  (单房间, 最多 ${cfg.RULES.maxPlayers} 人)`);
+  console.log(`[霓虹竞技场] 服务已启动: http://0.0.0.0:${PORT}  (单房间, 最多 ${cfg.RULES.maxPlayers} 人, 反作弊${ac.status().enabled ? '开启' : '关闭'})`);
 });
 
 for (const sig of ['SIGINT', 'SIGTERM']) {
-  process.on(sig, () => { board.saveNow(); process.exit(0); });
+  process.on(sig, () => { board.saveNow(); acStore.save(); process.exit(0); });
 }

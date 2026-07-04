@@ -82,12 +82,27 @@ location / {
 
 页面走 HTTPS 时客户端会自动使用 `wss://`，无需额外配置。
 
+## 反作弊
+
+服务端权威 + 通用反作弊引擎，默认开启。所有伤害、位移、拾取、购买均由服务器裁决，客户端消息只作"请求"。
+
+- **移动校验**：瞬移当场回拉、加速/飞天/穿墙漏桶判定（容忍网络抖动，其他玩家永远看到合法位置）
+- **射速校验**：冷却时序收口，连点宏/射速外挂无效
+- **限速**：分消息类型令牌桶，抵御洪泛
+- **瞄准统计**：爆头率/命中率/甩枪特征滚动窗口分析（阈值保守，只抓离谱者）
+- **阶梯处置**：纠正 → 警告 → 踢出 → 封禁（IP+昵称，24h 内多次被踢自动升级封禁，持久化落盘）
+
+`GET /health` 暴露 `anticheat` 实时指标（flags/kicks/bans）。设 `AC_MODE=off` 可关闭惩罚（用于压测/调试，冷却与数值等功能校验仍生效）。封禁记录在 `data/anticheat.json`，删除对应键即手动解封。
+
+引擎已抽象为**零依赖、可移植的通用库**（`server/anticheat/`），可直接复制到任何 Node 多人对战服务器复用，接入方法、API 与调参 checklist 见 [server/anticheat/README.md](server/anticheat/README.md)。
+
 ## 配置
 
 | 环境变量 | 默认 | 说明 |
 | --- | --- | --- |
 | `PORT` | 3000 | 监听端口 |
-| `DATA_DIR` | `./data` | 排行榜/档案存储目录 |
+| `DATA_DIR` | `./data` | 排行榜/档案/封禁记录存储目录 |
+| `AC_MODE` | `on` | 设 `off` 关闭反作弊惩罚 |
 
 游戏数值（武器伤害、BUFF 时长、BOSS 属性、商店价格、地图布局等）集中在 [server/config.js](server/config.js)，服务端加入时会把配置下发给客户端，改一处两端同步生效。
 
@@ -95,10 +110,11 @@ location / {
 
 ```
 server/          权威游戏服务器
-  index.js       HTTP + WebSocket 入口、循环调度
-  world.js       战斗判定 / BOSS AI / 手雷物理 / 拾取 / 商店
+  index.js       HTTP + WebSocket 入口、循环调度、反作弊接线
+  world.js       战斗判定 / BOSS AI / 手雷物理 / 拾取 / 商店 / 移动校验回调
   config.js      地图与全部数值配置（两端共用）
   leaderboard.js 历史榜与玩家档案持久化
+  anticheat/     通用反作弊库（零依赖，可移植；含独立 README）
 public/          Three.js 客户端（index.html + js/ + css/ + lib/）
-data/            运行期生成：profiles.json
+data/            运行期生成：profiles.json、anticheat.json
 ```
