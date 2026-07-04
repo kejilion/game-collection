@@ -152,18 +152,18 @@ const BOSSES = {
 
 // ---------- 神秘商人（外观装饰，金币购买，按名字持久保存） ----------
 const SHOP = [
-  { id: 'hat_cowboy',  slot: 'head', name: '牛仔帽',   price: 120 },
-  { id: 'hat_beret',   slot: 'head', name: '贝雷帽',   price: 150 },
-  { id: 'hat_horns',   slot: 'head', name: '恶魔之角', price: 300 },
-  { id: 'hat_crown',   slot: 'head', name: '黄金皇冠', price: 500 },
-  { id: 'face_shades', slot: 'face', name: '黑超墨镜', price: 100 },
-  { id: 'face_visor',  slot: 'face', name: '赛博面罩', price: 260 },
-  { id: 'back_cape',   slot: 'back', name: '猩红披风', price: 220 },
-  { id: 'back_jet',    slot: 'back', name: '火箭背包', price: 400 },
-  { id: 'back_wings',  slot: 'back', name: '天使之翼', price: 550 },
-  { id: 'fx_ice',      slot: 'fx',   name: '寒冰武器光效', price: 200 },
-  { id: 'fx_gold',     slot: 'fx',   name: '黄金武器光效', price: 350 },
-  { id: 'fx_rainbow',  slot: 'fx',   name: '彩虹武器光效', price: 600 },
+  { id: 'hat_cowboy',  slot: 'head', name: '牛仔帽',   price: 600 },
+  { id: 'hat_beret',   slot: 'head', name: '贝雷帽',   price: 750 },
+  { id: 'hat_horns',   slot: 'head', name: '恶魔之角', price: 1500 },
+  { id: 'hat_crown',   slot: 'head', name: '黄金皇冠', price: 2500 },
+  { id: 'face_shades', slot: 'face', name: '黑超墨镜', price: 500 },
+  { id: 'face_visor',  slot: 'face', name: '赛博面罩', price: 1300 },
+  { id: 'back_cape',   slot: 'back', name: '猩红披风', price: 1100 },
+  { id: 'back_jet',    slot: 'back', name: '火箭背包', price: 2000 },
+  { id: 'back_wings',  slot: 'back', name: '天使之翼', price: 2750 },
+  { id: 'fx_ice',      slot: 'fx',   name: '寒冰武器光效', price: 1000 },
+  { id: 'fx_gold',     slot: 'fx',   name: '黄金武器光效', price: 1750 },
+  { id: 'fx_rainbow',  slot: 'fx',   name: '彩虹武器光效', price: 3000 },
 ];
 const SHOP_SLOTS = { head: '头部', face: '面部', back: '背部', fx: '武器光效' };
 
