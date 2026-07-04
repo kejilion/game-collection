@@ -137,22 +137,40 @@ G.fx = (function () {
 
   function explosion(pos, r, opts) {
     const p = V(pos[0], Math.max(0.3, pos[1]), pos[2]);
-    const fire = opts && opts.fire, boss = opts && opts.boss;
-    // 火球闪光
+    const fire = opts && opts.fire, boss = opts && opts.boss, vp = opts && opts.vp;  // vp = 虚空紫
     const ball = new T.Mesh(new T.SphereGeometry(1, 14, 10),
-      new T.MeshBasicMaterial({ color: fire ? 0xff7a30 : 0xffc860, transparent: true, opacity: 0.95, blending: T.AdditiveBlending, depthWrite: false }));
+      new T.MeshBasicMaterial({ color: vp ? 0xa66bff : fire ? 0xff7a30 : 0xffc860, transparent: true, opacity: 0.95, blending: T.AdditiveBlending, depthWrite: false }));
     ball.position.copy(p); ball.scale.setScalar(r * 0.25);
     spawnBlob(ball, 0.35, r * 0.85, true);
-    // 地面冲击环
     const ring = new T.Mesh(new T.TorusGeometry(1, 0.06, 6, 28),
-      new T.MeshBasicMaterial({ color: boss ? 0xff5a3a : 0xffd080, transparent: true, opacity: 0.85, blending: T.AdditiveBlending, depthWrite: false }));
+      new T.MeshBasicMaterial({ color: vp ? 0x8f5bff : boss ? 0xff5a3a : 0xffd080, transparent: true, opacity: 0.85, blending: T.AdditiveBlending, depthWrite: false }));
     ring.rotation.x = Math.PI / 2; ring.position.set(p.x, 0.15, p.z); ring.scale.setScalar(r * 0.2);
     spawnBlob(ring, 0.5, r * 1.3, true);
-    burst(p, boss ? 26 : 16, fire ? '#ff8a40' : '#ffc060', r * 1.6, 0.35, 0.7);
+    burst(p, boss ? 26 : 16, vp ? '#b48aff' : fire ? '#ff8a40' : '#ffc060', r * 1.6, 0.35, 0.7);
     burst(p, 10, '#888', r * 0.7, 0.8, 1.4, { smoke: true, grav: -1.5, grow: 1.2 });
     boomLight.position.set(p.x, p.y + 1, p.z);
+    boomLight.color.set(vp ? 0x9a6bff : 0xffa040);
     boomLight.intensity = boss ? 8 : 5;
     shakeAmt = Math.min(1.2, shakeAmt + (boss ? 0.9 : r > 4 ? 0.55 : 0.3));
+  }
+
+  // 巫妖虚空爆破预警圈：ms 毫秒后落地
+  function telegraph(pos, r, ms) {
+    const life = (ms || 1200) / 1000;
+    const ring = new T.Mesh(new T.TorusGeometry(1, 0.09, 6, 32),
+      new T.MeshBasicMaterial({ color: 0x9a5bff, transparent: true, opacity: 0.9, blending: T.AdditiveBlending, depthWrite: false }));
+    ring.rotation.x = Math.PI / 2; ring.position.set(pos[0], pos[1] + 0.08, pos[2]); ring.scale.setScalar(r * 0.3);
+    spawnBlob(ring, life, r, false);
+    const disc = new T.Mesh(new T.RingGeometry(0.2, 1, 24),
+      new T.MeshBasicMaterial({ color: 0x6b3bd0, transparent: true, opacity: 0.35, blending: T.AdditiveBlending, depthWrite: false, side: T.DoubleSide }));
+    disc.rotation.x = -Math.PI / 2; disc.position.set(pos[0], pos[1] + 0.06, pos[2]); disc.scale.setScalar(r * 0.3);
+    spawnBlob(disc, life, r, false);
+  }
+
+  // 尘土/烟雾小团（脚步、落地、枪口青烟）
+  function dustPuff(pos, size, color) {
+    burst(V(pos[0], pos[1], pos[2]), Math.ceil(3 * (size || 1)), color || '#8a8f9a',
+      0.8 * (size || 1), 0.18 * (size || 1), 0.5, { smoke: true, grav: -0.8, grow: 1.5 });
   }
 
   function slam(pos, r) {
@@ -234,5 +252,5 @@ G.fx = (function () {
     return { x: (Math.random() - 0.5) * a, y: (Math.random() - 0.5) * a, z: (Math.random() - 0.5) * a * 0.5 };
   }
 
-  return { init, update, tracer, muzzle, impact, blood, explosion, slam, die, respawnBeam, sparkle, roarWave, damageText, getShake, shake: a => { shakeAmt = Math.min(1.2, shakeAmt + a); } };
+  return { init, update, tracer, muzzle, impact, blood, explosion, telegraph, dustPuff, slam, die, respawnBeam, sparkle, roarWave, damageText, getShake, shake: a => { shakeAmt = Math.min(1.2, shakeAmt + a); } };
 })();

@@ -351,48 +351,204 @@ G.models = (function () {
     return g;
   }
 
-  // ---------- BOSS ----------
-  function makeBoss(name) {
-    const g = new T.Group();
-    const rock = std('#3a3f4a', { roughness: 0.9 });
-    const lava = std('#331005', { emissive: '#ff5a1a', emissiveIntensity: 1.6 });
-    const legL = box(0.7, 1.3, 0.8, rock); legL.geometry.translate(0, -0.65, 0); legL.position.set(-0.55, 1.5, 0);
-    const legR = legL.clone(); legR.position.x = 0.55;
-    const torso = box(2.1, 1.7, 1.3, rock); torso.position.y = 2.4;
-    const crack1 = box(1.5, 0.12, 1.34, lava); crack1.position.y = 2.5;
-    const crack2 = box(2.14, 0.1, 0.9, lava); crack2.position.y = 2.15;
-    const armGeo = new T.BoxGeometry(0.55, 1.6, 0.6); armGeo.translate(0, -0.7, 0);
-    const armL = new T.Mesh(armGeo, rock); armL.castShadow = true; armL.position.set(-1.35, 3.1, 0);
-    const armR = new T.Mesh(armGeo.clone(), rock); armR.castShadow = true; armR.position.set(1.35, 3.1, 0);
-    const fistL = sph(0.42, rock); fistL.position.y = -1.5; armL.add(fistL);
-    const fistR = fistL.clone(); armR.add(fistR);
-    const head = box(0.8, 0.7, 0.75, rock); head.position.y = 3.6;
-    const eyeM = new T.MeshStandardMaterial({ color: '#000', emissive: '#ffb01a', emissiveIntensity: 2.5 });
-    const eyeL = sph(0.09, eyeM, 8); eyeL.position.set(-0.2, 3.65, -0.39);
-    const eyeR = eyeL.clone(); eyeR.position.x = 0.2;
-    const hornM = std('#20242c');
-    const hornL = cone(0.14, 0.55, hornM); hornL.position.set(-0.35, 4.1, 0); hornL.rotation.z = 0.4;
-    const hornR = hornL.clone(); hornR.position.x = 0.35; hornR.rotation.z = -0.4;
-    g.add(legL, legR, torso, crack1, crack2, armL, armR, head, eyeL, eyeR, hornL, hornR);
-    const plate = makeNameplate('👹 ' + name, '#ff9c5c'); plate.position.y = 4.9; plate.scale.set(3.2, 0.8, 1);
+  // ---------- BOSS（四种特色类型） ----------
+  function finishBoss(g, name, color, plateY, light) {
+    const plate = makeNameplate('👹 ' + name, '#ff9c5c');
+    plate.position.y = plateY; plate.scale.set(3.2, 0.8, 1);
     g.add(plate);
-    const light = new T.PointLight('#ff6a1a', 0.9, 9); light.position.y = 2.5; g.add(light);
-    const model = { group: g, legL, legR, armL, armR, plate, walkT: 0, slamT: 9 };
+    const pl = new T.PointLight(color, 0.9, 10); pl.position.y = plateY * 0.5; g.add(pl);
+    const mats = [];
+    g.traverse(o => { if (o.material && o !== plate) mats.push(o.material); });
+    return { plate, mats };
+  }
+  function setBossOpacity(m, a) {
+    for (const mat of m.mats) { mat.transparent = a < 0.99; mat.opacity = a; mat.depthWrite = a >= 0.5; }
+    m.plate.visible = a > 0.5;
+  }
+
+  function makeBoss(type, name, color) {
+    const g = new T.Group();
+    let model;
+    if (type === 'assassin') {
+      // 暗影刺客：修长身形 + 双刃 + 破斗篷
+      const dark = std('#1c1730', { roughness: 0.6 });
+      const glow = new T.MeshStandardMaterial({ color: '#12081f', emissive: color, emissiveIntensity: 1.6 });
+      const legGeo = new T.BoxGeometry(0.18, 0.85, 0.2); legGeo.translate(0, -0.42, 0);
+      const legL = new T.Mesh(legGeo, dark); legL.castShadow = true; legL.position.set(-0.15, 0.85, 0);
+      const legR = new T.Mesh(legGeo.clone(), dark); legR.castShadow = true; legR.position.x = 0.15; legR.position.y = 0.85;
+      const body = box(0.55, 0.85, 0.32, dark); body.position.y = 1.3;
+      const strap = box(0.58, 0.1, 0.35, glow); strap.position.y = 1.45; strap.rotation.z = 0.5;
+      const hood = cone(0.3, 0.55, dark); hood.position.y = 2.0;
+      const face = sph(0.18, std('#0a0714'), 8); face.position.set(0, 1.86, -0.12);
+      const eyeM = new T.MeshStandardMaterial({ color: '#000', emissive: color, emissiveIntensity: 2.5 });
+      const e1 = sph(0.035, eyeM, 6); e1.position.set(-0.07, 1.88, -0.26);
+      const e2 = e1.clone(); e2.position.x = 0.07;
+      const armGeo = new T.BoxGeometry(0.14, 0.7, 0.16); armGeo.translate(0, -0.32, 0);
+      const armL = new T.Mesh(armGeo, dark); armL.castShadow = true; armL.position.set(-0.38, 1.62, 0);
+      const armR = new T.Mesh(armGeo.clone(), dark); armR.castShadow = true; armR.position.set(0.38, 1.62, 0);
+      for (const arm of [armL, armR]) {
+        const blade = box(0.03, 0.5, 0.09, glow); blade.position.set(0, -0.75, -0.05);
+        arm.add(blade);
+      }
+      const cape = new T.Mesh(new T.PlaneGeometry(0.6, 1.1), std('#241b3d', { side: T.DoubleSide }));
+      cape.position.set(0, 1.2, 0.2); cape.rotation.x = 0.15;
+      g.add(legL, legR, body, strap, hood, face, e1, e2, armL, armR, cape);
+      const fin = finishBoss(g, name, color, 2.75);
+      model = Object.assign({ group: g, walkT: 0, slamT: 9 }, fin);
+      model.update = (dt, moving) => {
+        model.walkT += dt * (moving ? 11 : 1.5);
+        model.slamT += dt;
+        const sw = Math.sin(model.walkT) * 0.7;
+        legL.rotation.x = sw; legR.rotation.x = -sw;
+        if (model.slamT < 0.3) {           // 疾斩：前倾突刺
+          const k = Math.sin(model.slamT / 0.3 * Math.PI);
+          armL.rotation.x = -2 * k; armR.rotation.x = -2 * k;
+          g.rotation.x = 0.25 * k;
+        } else {
+          g.rotation.x = 0;
+          armL.rotation.x = -0.5 + Math.sin(model.walkT) * 0.3;
+          armR.rotation.x = -0.5 - Math.sin(model.walkT) * 0.3;
+        }
+      };
+    } else if (type === 'warmachine') {
+      // 钢铁暴君：重装机体 + 双管机炮
+      const metal = std('#4a525e', { metalness: 0.7, roughness: 0.35 });
+      const darkM = std('#2b3038', { metalness: 0.6, roughness: 0.45 });
+      const redGlow = new T.MeshStandardMaterial({ color: '#1a0505', emissive: '#ff2e2e', emissiveIntensity: 2 });
+      const trackL = box(1.0, 0.85, 2.0, darkM); trackL.position.set(-0.75, 0.45, 0);
+      const trackR = trackL.clone(); trackR.position.x = 0.75;
+      const torso = box(2.5, 1.4, 1.6, metal); torso.position.y = 1.9;
+      const visor = box(1.8, 0.2, 0.06, redGlow); visor.position.set(0, 2.2, -0.82);
+      const shoulderL = box(0.7, 0.5, 0.9, darkM); shoulderL.position.set(-1.6, 2.45, 0);
+      const shoulderR = shoulderL.clone(); shoulderR.position.x = 1.6;
+      const gunL = new T.Group(); gunL.position.set(-1.6, 2.1, 0);
+      const gunR = new T.Group(); gunR.position.set(1.6, 2.1, 0);
+      for (const gun of [gunL, gunR]) {
+        const barrel = cyl(0.13, 0.15, 1.5, darkM); barrel.rotation.x = Math.PI / 2; barrel.position.z = -0.9;
+        const muzzle = cyl(0.17, 0.17, 0.16, redGlow); muzzle.rotation.x = Math.PI / 2; muzzle.position.z = -1.62;
+        gun.add(barrel, muzzle);
+      }
+      const antenna = cyl(0.02, 0.02, 0.9, darkM); antenna.position.set(0.8, 3.1, 0.4);
+      const tip = sph(0.06, redGlow, 6); tip.position.set(0.8, 3.55, 0.4);
+      const pipeL = cyl(0.09, 0.09, 0.5, darkM); pipeL.position.set(-0.5, 2.8, 0.75);
+      const pipeR = pipeL.clone(); pipeR.position.x = 0.5;
+      const pipeFm = new T.MeshStandardMaterial({ color: '#331a05', emissive: '#ff7a1a', emissiveIntensity: 1.4 });
+      const pf1 = cyl(0.07, 0.02, 0.12, pipeFm); pf1.position.set(-0.5, 3.08, 0.75);
+      const pf2 = pf1.clone(); pf2.position.x = 0.5;
+      g.add(trackL, trackR, torso, visor, shoulderL, shoulderR, gunL, gunR, antenna, tip, pipeL, pipeR, pf1, pf2);
+      const fin = finishBoss(g, name, color, 4.3);
+      model = Object.assign({ group: g, walkT: 0, slamT: 9 }, fin);
+      model.update = (dt, moving) => {
+        model.walkT += dt * (moving ? 5 : 1);
+        model.slamT += dt;
+        torso.position.y = 1.9 + Math.sin(model.walkT) * 0.03;
+        if (model.slamT < 0.6) {           // 开火后座
+          const k = Math.sin(model.slamT / 0.6 * Math.PI);
+          gunL.position.z = k * 0.18; gunR.position.z = k * 0.18;
+        } else { gunL.position.z = 0; gunR.position.z = 0; }
+      };
+    } else if (type === 'lich') {
+      // 虚空巫妖：悬浮法袍 + 骷髅王冠 + 法杖
+      const robeM = std('#2a1f4a', { roughness: 0.7 });
+      const boneM = std('#d8d2c4', { roughness: 0.5 });
+      const glowM = new T.MeshStandardMaterial({ color: '#12081f', emissive: color, emissiveIntensity: 2 });
+      const body = new T.Group();                       // 悬浮体（整体上下浮动）
+      const robe = cone(0.85, 2.1, robeM); robe.position.y = 1.05; body.add(robe);
+      const trim = cyl(0.87, 0.87, 0.1, glowM); trim.position.y = 0.12; body.add(trim);
+      const skull = box(0.46, 0.42, 0.44, boneM); skull.position.y = 2.35; body.add(skull);
+      const jaw = box(0.34, 0.12, 0.3, boneM); jaw.position.set(0, 2.1, -0.04); body.add(jaw);
+      const eyeM2 = new T.MeshStandardMaterial({ color: '#000', emissive: color, emissiveIntensity: 3 });
+      const e1 = box(0.09, 0.1, 0.04, eyeM2); e1.position.set(-0.1, 2.38, -0.23); body.add(e1);
+      const e2 = e1.clone(); e2.position.x = 0.1; body.add(e2);
+      const crownM = std('#ffd23c', { metalness: 0.85, roughness: 0.3, emissive: '#7a5a00', emissiveIntensity: 0.4 });
+      const crown = cyl(0.26, 0.28, 0.12, crownM); crown.position.y = 2.6; body.add(crown);
+      for (let i = 0; i < 4; i++) {
+        const spike = cone(0.05, 0.16, crownM);
+        const a = i / 4 * Math.PI * 2;
+        spike.position.set(Math.cos(a) * 0.24, 2.72, Math.sin(a) * 0.24);
+        body.add(spike);
+      }
+      const shL = sph(0.22, robeM, 8); shL.position.set(-0.55, 1.95, 0); body.add(shL);
+      const shR = shL.clone(); shR.position.x = 0.55; body.add(shR);
+      const armR = new T.Group(); armR.position.set(0.62, 1.85, 0); body.add(armR);
+      const staff = cyl(0.035, 0.035, 1.7, std('#3a2a1a')); staff.rotation.x = 0.25; staff.position.set(0, -0.2, -0.25); armR.add(staff);
+      const orb = sph(0.15, glowM, 10); orb.position.set(0, 0.68, -0.46); armR.add(orb);
+      g.add(body);
+      const fin = finishBoss(g, name, color, 3.3);
+      model = Object.assign({ group: g, walkT: 0, slamT: 9, body }, fin);
+      model.update = (dt, moving) => {
+        model.walkT += dt * 1.6;
+        model.slamT += dt;
+        body.position.y = 0.42 + Math.sin(model.walkT) * 0.16;   // 悬浮
+        body.rotation.z = Math.sin(model.walkT * 0.7) * 0.05;
+        if (model.slamT < 0.5) {           // 施法：法杖高举
+          const k = Math.sin(model.slamT / 0.5 * Math.PI);
+          armR.rotation.x = -1.6 * k;
+        } else armR.rotation.x = -0.2;
+        orb.rotation.y += dt * 3;
+      };
+    } else {
+      // 熔岩魔像（默认）
+      const rock = std('#3a3f4a', { roughness: 0.9 });
+      const lava = std('#331005', { emissive: '#ff5a1a', emissiveIntensity: 1.6 });
+      const legGeo = new T.BoxGeometry(0.7, 1.3, 0.8); legGeo.translate(0, -0.65, 0);
+      const legL = new T.Mesh(legGeo, rock); legL.castShadow = true; legL.position.set(-0.55, 1.5, 0);
+      const legR = new T.Mesh(legGeo.clone(), rock); legR.castShadow = true; legR.position.set(0.55, 1.5, 0);
+      const torso = box(2.1, 1.7, 1.3, rock); torso.position.y = 2.4;
+      const crack1 = box(1.5, 0.12, 1.34, lava); crack1.position.y = 2.5;
+      const crack2 = box(2.14, 0.1, 0.9, lava); crack2.position.y = 2.15;
+      const armGeo = new T.BoxGeometry(0.55, 1.6, 0.6); armGeo.translate(0, -0.7, 0);
+      const armL = new T.Mesh(armGeo, rock); armL.castShadow = true; armL.position.set(-1.35, 3.1, 0);
+      const armR = new T.Mesh(armGeo.clone(), rock); armR.castShadow = true; armR.position.set(1.35, 3.1, 0);
+      const fistL = sph(0.42, rock); fistL.position.y = -1.5; armL.add(fistL);
+      const fistR = fistL.clone(); armR.add(fistR);
+      const head = box(0.8, 0.7, 0.75, rock); head.position.y = 3.6;
+      const eyeM = new T.MeshStandardMaterial({ color: '#000', emissive: '#ffb01a', emissiveIntensity: 2.5 });
+      const eyeL = sph(0.09, eyeM, 8); eyeL.position.set(-0.2, 3.65, -0.39);
+      const eyeR = eyeL.clone(); eyeR.position.x = 0.2;
+      const hornM = std('#20242c');
+      const hornL = cone(0.14, 0.55, hornM); hornL.position.set(-0.35, 4.1, 0); hornL.rotation.z = 0.4;
+      const hornR = hornL.clone(); hornR.position.x = 0.35; hornR.rotation.z = -0.4;
+      g.add(legL, legR, torso, crack1, crack2, armL, armR, head, eyeL, eyeR, hornL, hornR);
+      const fin = finishBoss(g, name, color || '#ff6a1a', 4.9);
+      model = Object.assign({ group: g, walkT: 0, slamT: 9 }, fin);
+      model.update = (dt, moving) => {
+        model.walkT += dt * (moving ? 4 : 0.6);
+        model.slamT += dt;
+        const sw = Math.sin(model.walkT) * 0.4;
+        legL.rotation.x = sw; legR.rotation.x = -sw;
+        if (model.slamT < 0.5) {
+          const k = model.slamT / 0.5;
+          const a = k < 0.4 ? -2.4 * (k / 0.4) : -2.4 + 2.4 * ((k - 0.4) / 0.6);
+          armL.rotation.x = a; armR.rotation.x = a;
+        } else {
+          armL.rotation.x = Math.sin(model.walkT) * 0.25;
+          armR.rotation.x = -Math.sin(model.walkT) * 0.25;
+        }
+      };
+    }
     return model;
   }
-  function animateBoss(m, dt, moving) {
-    m.walkT += dt * (moving ? 4 : 0.6);
-    m.slamT += dt;
-    const sw = Math.sin(m.walkT) * 0.4;
-    m.legL.rotation.x = sw; m.legR.rotation.x = -sw;
-    if (m.slamT < 0.5) {
-      const k = m.slamT / 0.5;
-      const a = k < 0.4 ? -2.4 * (k / 0.4) : -2.4 + 2.4 * ((k - 0.4) / 0.6);
-      m.armL.rotation.x = a; m.armR.rotation.x = a;
-    } else {
-      m.armL.rotation.x = Math.sin(m.walkT) * 0.25;
-      m.armR.rotation.x = -Math.sin(m.walkT) * 0.25;
-    }
+
+  // ---------- 可摧毁油桶 ----------
+  function makeBarrel(r, h) {
+    const g = new T.Group();
+    const body = cyl(r, r, h, std('#b03a2e', { roughness: 0.55, metalness: 0.3 }), 14);
+    body.position.y = h / 2;
+    const band = cyl(r + 0.02, r + 0.02, 0.12, std('#d8d8d8', { metalness: 0.6 }), 14);
+    band.position.y = h * 0.6;
+    const lid = cyl(r * 0.92, r * 0.92, 0.06, std('#7a2a20', { roughness: 0.5 }), 14);
+    lid.position.y = h + 0.02;
+    // 警示条纹
+    const hc = document.createElement('canvas'); hc.width = 64; hc.height = 16;
+    const hx = hc.getContext('2d');
+    for (let i = 0; i < 10; i++) { hx.fillStyle = i % 2 ? '#111' : '#ffb02e'; hx.beginPath(); hx.moveTo(i * 8 - 4, 16); hx.lineTo(i * 8 + 4, 0); hx.lineTo(i * 8 + 12, 0); hx.lineTo(i * 8 + 4, 16); hx.fill(); }
+    const hTex = new T.CanvasTexture(hc); hTex.wrapS = T.RepeatWrapping; hTex.repeat.set(3, 1);
+    const hazard = new T.Mesh(new T.CylinderGeometry(r + 0.015, r + 0.015, 0.22, 14, 1, true),
+      new T.MeshStandardMaterial({ map: hTex, roughness: 0.6 }));
+    hazard.position.y = h * 0.32;
+    g.add(body, band, lid, hazard);
+    return g;
   }
 
   // ---------- 神秘商人 ----------
@@ -480,7 +636,7 @@ G.models = (function () {
 
   return {
     makePlayer, animatePlayer, setPlayerWeapon, setOpacity, tintZombie,
-    applyCosmetics, applyWeaponFx, buildWeapon, makePickup, makeBoss, animateBoss,
-    makeMerchant, makeViewModel, setViewWeapon, makeNameplate, textSprite, std,
+    applyCosmetics, applyWeaponFx, buildWeapon, makePickup, makeBoss, setBossOpacity,
+    makeBarrel, makeMerchant, makeViewModel, setViewWeapon, makeNameplate, textSprite, std,
   };
 })();

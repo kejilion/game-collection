@@ -51,8 +51,11 @@ const DEFS = {
     jumpVel: cfg.RULES.jumpVel, gravity: cfg.RULES.gravity, eyeH: cfg.RULES.eyeH,
     pickupDist: cfg.RULES.pickupDist, merchantDist: cfg.RULES.merchantDist,
     respawnMs: cfg.RULES.respawnMs, protectMs: cfg.RULES.protectMs, shieldHp: cfg.RULES.shieldHp,
+    dayMs: cfg.RULES.dayMs,
   },
-  boss: { radius: cfg.BOSS.radius },
+  // 各类型 BOSS 的外形参数（客户端建模/命中预测用）
+  bosses: Object.fromEntries(Object.entries(cfg.BOSSES).map(([k, b]) =>
+    [k, { name: b.name, radius: b.radius, yc: b.yc, color: b.color }])),
 };
 
 wss.on('connection', (ws) => {

@@ -2,7 +2,27 @@
 'use strict';
 
 // ---------- 地图 ----------
-// 竞技场 70x70，四周高墙。障碍物为轴对齐盒子/圆柱（少量掩体，相对空旷）
+// 竞技场 70x70，四周高墙。障碍物为轴对齐盒子（少量掩体 + 两处高地，相对空旷）
+// 斜坡实现：碰撞用一串 0.15 级差的微阶片（复用 AABB 跨步逻辑，两端零新代码），
+// 客户端渲染时以整块斜面盖在上面，行走手感与视觉都是平滑坡道
+function rampSlices(x, z, axis, dir, len, w, h) {
+  const slices = [];
+  const n = Math.max(8, Math.round(len / 0.3));
+  for (let i = 0; i < n; i++) {
+    const t = (i + 0.5) / n;
+    const hh = h * (i + 1) / n;
+    const off = (t - 0.5) * len * dir;
+    slices.push(axis === 'x'
+      ? { t: 'box', x: x + off, z, w: len / n + 0.02, d: w, h: hh, kind: 'rampslice' }
+      : { t: 'box', x, z: z + off, w, d: len / n + 0.02, h: hh, kind: 'rampslice' });
+  }
+  return slices;
+}
+const RAMPS = [
+  { x: 12.6,  z: -19,   axis: 'x', dir: 1,  len: 4.8, w: 3, h: 2.2 },  // 高地A 西坡
+  { x: 19,    z: -25.4, axis: 'z', dir: 1,  len: 4.8, w: 3, h: 2.2 },  // 高地A 北坡
+  { x: -14,   z: 13,    axis: 'x', dir: -1, len: 4,   w: 3, h: 1.6 },  // 高地B 东坡
+];
 const MAP = {
   half: 35,            // 场地半宽（墙位于 ±35）
   wallH: 6,
@@ -12,27 +32,35 @@ const MAP = {
     { t: 'box', x: -6,  z: -6,  w: 1.4, d: 9,   h: 3.2, kind: 'wall'  },
     // 木箱
     { t: 'box', x: 14,  z: 11,  w: 2.2, d: 2.2, h: 2.2, kind: 'crate' },
-    { t: 'box', x: -16, z: 9,   w: 2.2, d: 2.2, h: 2.2, kind: 'crate' },
+    { t: 'box', x: -14, z: 7,   w: 2.2, d: 2.2, h: 2.2, kind: 'crate' },
     { t: 'box', x: 10,  z: -18, w: 2.2, d: 2.2, h: 2.2, kind: 'crate' },
     { t: 'box', x: -13, z: -16, w: 2.2, d: 2.2, h: 2.2, kind: 'crate' },
     { t: 'box', x: 22,  z: 19,  w: 3.2, d: 3.2, h: 2.8, kind: 'crate' },
     { t: 'box', x: -21, z: -23, w: 3.2, d: 3.2, h: 2.8, kind: 'crate' },
-    // 低矮路障（可跳上/翻越视线）
+    // 低矮路障（可跳上）
     { t: 'box', x: 7,   z: 17,  w: 4.5, d: 1.1, h: 1.15, kind: 'barrier' },
     { t: 'box', x: -9,  z: -1,  w: 1.1, d: 4.5, h: 1.15, kind: 'barrier' },
     { t: 'box', x: 17,  z: -13, w: 4.5, d: 1.1, h: 1.15, kind: 'barrier' },
     { t: 'box', x: 24,  z: -4,  w: 1.1, d: 4.5, h: 1.15, kind: 'barrier' },
-    // 油桶
-    { t: 'cyl', x: -19, z: 17,  r: 0.85, h: 1.7, kind: 'barrel' },
-    { t: 'cyl', x: 4,   z: -11, r: 0.85, h: 1.7, kind: 'barrel' },
-    { t: 'cyl', x: 26,  z: -21, r: 0.85, h: 1.7, kind: 'barrel' },
+    // 高地 A（东南）：8x8x2.2 平台 + 西/北两条斜坡
+    { t: 'box', x: 19,   z: -19,   w: 8,   d: 8,   h: 2.2,  kind: 'platform' },
+    // 高地 B（西北）：6x6x1.6 平台 + 东侧斜坡
+    { t: 'box', x: -19,  z: 13,    w: 6,   d: 6,   h: 1.6,  kind: 'platform' },
+    ...RAMPS.flatMap(r => rampSlices(r.x, r.z, r.axis, r.dir, r.len, r.w, r.h)),
   ],
+  ramps: RAMPS,   // 客户端渲染整块斜面用
+  // 可摧毁油桶（独立实体，非静态障碍）
+  barrels: [
+    { x: -19, z: 17.5 }, { x: 4, z: -11 }, { x: 26, z: -21 },
+    { x: 12, z: 20 }, { x: -6, z: -24 },
+  ],
+  barrelR: 0.85, barrelH: 1.7,
   // 出生点（随机取，均远离中心）
   spawns: [
     [28, 28], [-28, 28], [28, -28], [-28, -26], [0, 30], [0, -30],
-    [30, 0], [-30, 4], [20, -27], [-24, 14],
+    [30, 0], [-30, 4], [28, -31], [-24, 18],
   ],
-  // 拾取点：cat = wep 武器 / equip 装备 / buff 状态道具
+  // 拾取点：cat = wep 武器 / equip 装备 / buff 状态道具；y 为所在地面高度
   pickups: [
     { id: 0,  x: 0,    z: -3,  cat: 'wep'   },
     { id: 1,  x: 13,   z: 14,  cat: 'wep'   },
@@ -43,16 +71,18 @@ const MAP = {
     { id: 6,  x: 26,   z: 25,  cat: 'equip' },
     { id: 7,  x: -26,  z: -28, cat: 'equip' },
     { id: 8,  x: -25,  z: 21,  cat: 'equip' },
-    { id: 9,  x: 23,   z: -25, cat: 'equip' },
+    { id: 9,  x: 23,   z: -25, cat: 'equip', y: 0 },
     { id: 10, x: 3,    z: 8,   cat: 'buff'  },
     { id: 11, x: -3,   z: 24,  cat: 'buff'  },
     { id: 12, x: 17,   z: 23,  cat: 'buff'  },
     { id: 13, x: -30,  z: -8,  cat: 'buff'  },
     { id: 14, x: 30,   z: -12, cat: 'buff'  },
     { id: 15, x: -17,  z: -6,  cat: 'buff'  },
+    { id: 16, x: 19,   z: -19, cat: 'wep',  y: 2.2 },   // 高地 A 顶
+    { id: 17, x: -19,  z: 13,  cat: 'buff', y: 1.6 },   // 高地 B 顶
   ],
   merchant: { x: -29, z: 29 },       // 神秘商人摊位（西北角）
-  bossSpawns: [[0, -18], [16, 10], [-16, -10], [0, 20]],
+  bossSpawns: [[0, -14], [16, 10], [-16, -10], [0, 20]],
 };
 
 // ---------- 武器 ----------
@@ -93,15 +123,31 @@ const PICKUP_POOLS = {
   buff:  ['speed', 'rage', 'crit', 'invis', 'zombie', 'jump', 'shield'],
 };
 
-// ---------- BOSS ----------
+// ---------- BOSS（多种类型，随机降临，同场仅一只） ----------
 const BOSS = {
-  hp: 900, speed: 3.4, radius: 1.7,
-  meleeDmg: 32, meleeRange: 3.8, meleeCd: 1.7,
-  fireDmg: 26, fireSpeed: 14, fireCd: 3.2, aggro: 48,
-  killScore: 100, killCoins: 200, assistCoins: 60, assistMin: 80,
+  aggro: 48,
+  killScore: 100, assistCoins: 60, assistMin: 80,
   respawnMin: 40, respawnMax: 90,   // 秒
   firstDelay: 25,                   // 开服后首个 BOSS 延迟
-  names: ['熔岩魔像', '暗影领主', '狂暴巨兽', '虚空撕裂者', '钢铁暴君'],
+};
+const BOSSES = {
+  golem: {      // 经典近战 + 火球
+    name: '熔岩魔像', hp: 900, speed: 3.4, radius: 1.7, yc: 2.1, killCoins: 200, color: '#ff6a1a',
+    meleeDmg: 32, meleeRange: 3.8, meleeCd: 1.7, fireDmg: 26, fireSpeed: 14, fireCd: 3.2,
+  },
+  assassin: {   // 高速近战，会闪现到目标身后、周期性隐身
+    name: '暗影刺客', hp: 550, speed: 5.6, radius: 0.95, yc: 1.4, killCoins: 180, color: '#b46bff',
+    meleeDmg: 24, meleeRange: 2.7, meleeCd: 0.8, blinkCd: 6, invisCd: 12, invisDur: 3,
+  },
+  warmachine: { // 重装机炮：连射弹幕 + 三连火箭
+    name: '钢铁暴君', hp: 1400, speed: 2.1, radius: 2.0, yc: 2.2, killCoins: 280, color: '#ff4040',
+    burstCd: 4, burstCount: 6, burstGap: 0.18, burstDmg: 8, bulletSpeed: 24,
+    rocketCd: 9.5, rocketDmg: 22, fireSpeed: 13,
+  },
+  lich: {       // 虚空巫妖：追踪法球 + 延迟落地的虚空爆破
+    name: '虚空巫妖', hp: 700, speed: 2.7, radius: 1.2, yc: 2.0, killCoins: 220, color: '#8f7bff',
+    orbCd: 3.5, orbDmg: 24, orbSpeed: 8.5, blastCd: 8, blastDmg: 38, blastR: 3.4, blastDelay: 1.2,
+  },
 };
 
 // ---------- 神秘商人（外观装饰，金币购买，按名字持久保存） ----------
@@ -134,8 +180,11 @@ const RULES = {
   shieldHp: 100,
   pickupDist: 3.4, merchantDist: 5,
   pickupRespawnMin: 12, pickupRespawnMax: 22, // 秒
+  barrelHp: 30, barrelDmg: 55, barrelRadius: 4.5,
+  barrelRespawnMin: 30, barrelRespawnMax: 45, // 秒
+  dayMs: 600000,                              // 10 分钟一昼夜
   maxPlayers: 24,
-  tickRate: 30, broadcastRate: 15,
+  tickRate: 30, broadcastRate: 20,
 };
 
-module.exports = { MAP, WEAPONS, EQUIPS, BUFFS, PICKUP_POOLS, BOSS, SHOP, SHOP_SLOTS, RULES };
+module.exports = { MAP, WEAPONS, EQUIPS, BUFFS, PICKUP_POOLS, BOSS, BOSSES, SHOP, SHOP_SLOTS, RULES };
