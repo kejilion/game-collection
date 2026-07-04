@@ -19,9 +19,10 @@
   renderer.shadowMap.type = T.PCFSoftShadowMap;
   renderer.outputEncoding = T.sRGBEncoding;
   renderer.toneMapping = T.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 0.88;
+  renderer.toneMappingExposure = 0.78;
   const scene = new T.Scene();
   const BASE_FOV = 75;
+  const VIEW_LAYER = 1;
   const camera = new T.PerspectiveCamera(BASE_FOV, innerWidth / innerHeight, 0.08, 400);
   camera.rotation.order = 'YXZ';
   addEventListener('resize', () => {
@@ -64,8 +65,8 @@
   const ents = new Map();
   let bossEnt = null;
   let pickupMeshes = [];
-  let projMeshes = [];          // {kind, g}
-  let nadeMeshes = [];
+  let projMeshes = [];          // {id, kind, g, target, vel, netAt}
+  let nadeMeshes = [];          // {id, g, target, vel, netAt}
   let merchant = null;
   let vm = null;
   let vmSwingT = 9, vmKick = 0, vmThrowT = 9;
@@ -139,6 +140,7 @@
       scene.add(merchant);
       pickupMeshes = defs.map.pickups.map(pt => ({ pt, item: null, mesh: null, lastTry: 0 }));
       vm = G.models.makeViewModel();
+      vm.group.traverse(o => { o.layers.set(VIEW_LAYER); });
       camera.add(vm.group);
       scene.add(camera);
       buildShopTabs();
@@ -196,10 +198,7 @@
     } else $('bossTimer').classList.add('hidden');
     // 弹道 / 手雷 / 油桶
     syncProjs(m.fb);
-    syncPool(nadeMeshes, m.gd, () => {
-      const g = new T.Mesh(new T.SphereGeometry(0.13, 8, 8), new T.MeshStandardMaterial({ color: '#3c5232' }));
-      g.castShadow = true; return g;
-    });
+    syncNades(m.gd);
     if (m.br) G.world.setBarrels(m.br);
     // 拾取点
     for (let i = 0; i < pickupMeshes.length; i++) {
@@ -213,15 +212,6 @@
           scene.add(pm.mesh);
         }
       }
-    }
-  }
-  function syncPool(pool, arr, make) {
-    while (pool.length < arr.length) { const mm = make(); scene.add(mm); pool.push(mm); }
-    while (pool.length > arr.length) { scene.remove(pool.pop()); }
-    for (let i = 0; i < arr.length; i++) {
-      const p = pool[i], a = arr[i];
-      if (p.position.distanceToSquared(V3(a[0], a[1], a[2])) > 25) p.position.set(a[0], a[1], a[2]);
-      else p.position.lerp(V3(a[0], a[1], a[2]), 0.5);
     }
   }
   function makeProjMesh(kind) {
@@ -242,21 +232,69 @@
     }
     return g;
   }
-  function syncProjs(arr) {
-    while (projMeshes.length > arr.length) scene.remove(projMeshes.pop().g);
+  function makeNadeMesh() {
+    const g = new T.Mesh(new T.SphereGeometry(0.13, 8, 8), new T.MeshStandardMaterial({ color: '#3c5232' }));
+    g.castShadow = true;
+    return g;
+  }
+  function readProj(a, i) {
+    if (a.length >= 8) return { id: 'p' + a[0], pos: V3(a[1], a[2], a[3]), vel: V3(a[4], a[5], a[6]), kind: a[7] || 0 };
+    return { id: 'po' + i, pos: V3(a[0], a[1], a[2]), vel: V3(0, 0, 0), kind: a[3] || 0 };
+  }
+  function readNade(a, i) {
+    if (a.length >= 7) return { id: 'g' + a[0], pos: V3(a[1], a[2], a[3]), vel: V3(a[4], a[5], a[6]), kind: 0 };
+    return { id: 'go' + i, pos: V3(a[0], a[1], a[2]), vel: V3(0, 0, 0), kind: 0 };
+  }
+  function syncMoving(pool, arr, make, read) {
+    const seen = new Set();
     for (let i = 0; i < arr.length; i++) {
-      const a = arr[i], kind = a[3] || 0;
-      let e = projMeshes[i];
-      if (!e || e.kind !== kind) {
-        if (e) scene.remove(e.g);
-        e = projMeshes[i] = { kind, g: makeProjMesh(kind) };
-        e.g.position.set(a[0], a[1], a[2]);
-        scene.add(e.g);
+      const n = read(arr[i], i);
+      seen.add(n.id);
+      let idx = pool.findIndex(e => e.id === n.id);
+      if (idx >= 0 && pool[idx].kind !== n.kind) {
+        scene.remove(pool[idx].g);
+        pool.splice(idx, 1);
+        idx = -1;
       }
-      const tv = V3(a[0], a[1], a[2]);
-      if (e.g.position.distanceToSquared(tv) > 25) e.g.position.copy(tv);
-      else e.g.position.lerp(tv, 0.5);
+      let e = idx >= 0 ? pool[idx] : null;
+      if (!e) {
+        e = { id: n.id, kind: n.kind, g: make(n.kind), target: n.pos.clone(), vel: n.vel.clone(), netAt: perfNow };
+        e.g.position.copy(n.pos);
+        scene.add(e.g);
+        pool.push(e);
+      }
+      e.target.copy(n.pos);
+      e.vel.copy(n.vel);
+      e.netAt = perfNow;
     }
+    for (let i = pool.length - 1; i >= 0; i--) {
+      if (seen.has(pool[i].id)) continue;
+      scene.remove(pool[i].g);
+      pool.splice(i, 1);
+    }
+  }
+  function syncProjs(arr) {
+    syncMoving(projMeshes, arr || [], makeProjMesh, readProj);
+  }
+  function syncNades(arr) {
+    syncMoving(nadeMeshes, arr || [], makeNadeMesh, readNade);
+  }
+  function advanceMoving(pool, dt, ballistic) {
+    const k = 1 - Math.exp(-dt * 20);
+    const grav = defs && defs.rules ? defs.rules.gravity : 22;
+    for (const e of pool) {
+      const lead = Math.min(0.14, Math.max(0, (perfNow - e.netAt) / 1000));
+      const want = e.target.clone().addScaledVector(e.vel, lead);
+      if (ballistic) want.y -= 0.5 * grav * lead * lead;
+      if (e.g.position.distanceToSquared(want) > 64) e.g.position.copy(want);
+      else e.g.position.lerp(want, k);
+      e.g.rotation.x += dt * 7;
+      e.g.rotation.y += dt * 4;
+    }
+  }
+  function renderMovingProjectiles(dt) {
+    advanceMoving(projMeshes, dt, false);
+    advanceMoving(nadeMeshes, dt, true);
   }
 
   function onMySnap(s) {
@@ -631,6 +669,9 @@
   function renderShopPre(dt) {
     if (!shopPre || $('shop').classList.contains('hidden')) return;
     const eq = hoverEq || you.eq || {};
+    const fxPreview = ['knife', 'sword', 'pistol', 'mg', 'sniper', 'hammer'];
+    const previewWeapon = shopTab === 'fx' ? fxPreview[Math.floor(perfNow / 1400) % fxPreview.length] : 'sword';
+    G.models.setPlayerWeapon(shopPre.model, previewWeapon);
     G.models.applyCosmetics(shopPre.model, eq);
     G.models.applyWeaponFx(shopPre.model, eq.fx, perfNow / 1000);
     shopPre.model.group.rotation.y += dt * 0.9;
@@ -1321,6 +1362,7 @@
     const dayT = (dayBase + (perfNow - dayAt) / dayMs) % 1;
     G.world.setDay(dayT, scene);
     G.world.updateAmbient(dt);
+    renderMovingProjectiles(dt);
     renderEnts(dt);
     renderSelf(dt);
     renderViewModel(dt);
@@ -1328,7 +1370,7 @@
     hudFrame();
     updateCamera(dt);
     G.fx.update(dt);
-    renderer.render(scene, camera);
+    renderSceneFrame();
     fpsCnt++;
     if (perfNow - fpsAt > 1000) {
       $('fpsNum').textContent = fpsCnt + ' FPS';
@@ -1340,6 +1382,24 @@
   }
 
   // ---------- 启动 ----------
+  function renderSceneFrame() {
+    const oldMask = camera.layers.mask;
+    camera.layers.set(0);
+    renderer.autoClear = true;
+    renderer.render(scene, camera);
+    if (vm && vm.group.visible) {
+      const bg = scene.background;
+      scene.background = null;
+      renderer.autoClear = false;
+      renderer.clearDepth();
+      camera.layers.set(VIEW_LAYER);
+      renderer.render(scene, camera);
+      scene.background = bg;
+    }
+    renderer.autoClear = true;
+    camera.layers.mask = oldMask;
+  }
+
   window.__na = { renderer, scene, camera, ui: { toggleShop, openPause, toggleView, get shopPre() { return shopPre; } } };   // 调试句柄（截帧/诊断用）
   refreshOpts();
   connect();

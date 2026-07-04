@@ -8,6 +8,17 @@ G.models = (function () {
   }
   function box(w, h, d, mat) { const m = new T.Mesh(new T.BoxGeometry(w, h, d), mat); m.castShadow = true; return m; }
   function cyl(rt, rb, h, mat, seg) { const m = new T.Mesh(new T.CylinderGeometry(rt, rb, h, seg || 12), mat); m.castShadow = true; return m; }
+  function cylZ(rt, rb, h, mat, seg, openEnded) {
+    const m = new T.Mesh(new T.CylinderGeometry(rt, rb, h, seg || 12, 1, !!openEnded), mat);
+    m.rotation.x = Math.PI / 2;
+    m.castShadow = true;
+    return m;
+  }
+  function muzzleRing(r, mat) {
+    const m = new T.Mesh(new T.TorusGeometry(r, r * 0.18, 8, 18), mat);
+    m.castShadow = true;
+    return m;
+  }
   function sph(r, mat, seg) { const m = new T.Mesh(new T.SphereGeometry(r, seg || 12, seg || 10), mat); m.castShadow = true; return m; }
   function cone(r, h, mat, seg) { const m = new T.Mesh(new T.ConeGeometry(r, h, seg || 10), mat); m.castShadow = true; return m; }
 
@@ -225,10 +236,11 @@ G.models = (function () {
     const mesh = model.weaponMesh || (model.viewWeapon || null);
     if (!mesh || !mesh.userData.fxMats) return;
     let col = null;
-    if (fxId === 'fx_rainbow') col = new T.Color().setHSL((time * 0.25) % 1, 1, 0.55);
+    if (fxId === 'fx_rainbow') col = new T.Color().setHSL((time * 0.22) % 1, 0.86, 0.58);
     else if (FX_COLORS[fxId]) col = new T.Color(FX_COLORS[fxId]);
+    const pulse = 0.28 + Math.sin(time * 4) * 0.06;
     for (const mat of mesh.userData.fxMats) {
-      if (col) { mat.emissive.copy(col); mat.emissiveIntensity = 0.9; }
+      if (col) { mat.emissive.copy(col); mat.emissiveIntensity = pulse; }
       else { mat.emissive.set(0x000000); mat.emissiveIntensity = 0; }
     }
   }
@@ -267,40 +279,50 @@ G.models = (function () {
         break;
       }
       case 'hammer': {
-        const handle = cyl(0.035, 0.035, 0.65, wood); handle.rotation.x = Math.PI / 2; handle.position.z = -0.1;
-        const head = box(0.18, 0.18, 0.3, dark); head.position.z = -0.42;
-        g.add(handle, head); fxMats.push(dark);
+        const handle = cylZ(0.035, 0.035, 0.65, wood); handle.position.z = -0.1;
+        const headMat = std('#2e3238', { metalness: 0.6, roughness: 0.4 });
+        const head = box(0.18, 0.18, 0.3, headMat); head.position.z = -0.42;
+        g.add(handle, head); fxMats.push(headMat);
         break;
       }
       case 'pistol': {
-        const body = box(0.05, 0.09, 0.26, dark); body.position.z = -0.1;
+        const body = box(0.07, 0.09, 0.28, dark); body.position.z = -0.12;
         const grip = box(0.05, 0.14, 0.07, dark); grip.position.set(0, -0.1, 0.02); grip.rotation.x = 0.25;
-        const barrel = cyl(0.018, 0.018, 0.1, metal); barrel.rotation.x = Math.PI / 2; barrel.position.set(0, 0.02, -0.27);
-        g.add(body, grip, barrel); fxMats.push(dark);
+        const barrelMat = std('#9aa4b0', { metalness: 0.8, roughness: 0.3 });
+        const barrel = cylZ(0.017, 0.017, 0.2, barrelMat, 14, true); barrel.position.set(0, 0.02, -0.36);
+        const muzzle = muzzleRing(0.018, barrelMat); muzzle.position.set(0, 0.02, -0.46);
+        g.add(body, grip, barrel, muzzle); fxMats.push(barrelMat);
         break;
       }
       case 'mg': {
         const body = box(0.07, 0.11, 0.55, dark); body.position.z = -0.18;
-        const barrel = cyl(0.022, 0.022, 0.3, metal); barrel.rotation.x = Math.PI / 2; barrel.position.set(0, 0.02, -0.58);
+        const barrelMat = std('#9aa4b0', { metalness: 0.8, roughness: 0.3 });
+        const barrel = cylZ(0.022, 0.022, 0.42, barrelMat, 14, true); barrel.position.set(0, 0.02, -0.68);
+        const muzzle = muzzleRing(0.023, barrelMat); muzzle.position.set(0, 0.02, -0.89);
         const mag = box(0.05, 0.2, 0.09, metal); mag.position.set(0, -0.13, -0.12); mag.rotation.x = 0.15;
         const stock = box(0.05, 0.09, 0.18, wood); stock.position.set(0, -0.02, 0.16);
         const grip = box(0.045, 0.11, 0.05, dark); grip.position.set(0, -0.1, 0.03);
-        g.add(body, barrel, mag, stock, grip); fxMats.push(dark);
+        g.add(body, barrel, muzzle, mag, stock, grip); fxMats.push(barrelMat);
         break;
       }
       case 'sniper': {
         const body = box(0.06, 0.09, 0.6, dark); body.position.z = -0.15;
-        const barrel = cyl(0.02, 0.02, 0.55, metal); barrel.rotation.x = Math.PI / 2; barrel.position.set(0, 0.01, -0.7);
-        const scope = cyl(0.035, 0.035, 0.16, metal); scope.rotation.x = Math.PI / 2; scope.position.set(0, 0.09, -0.15);
+        const barrelMat = std('#9aa4b0', { metalness: 0.8, roughness: 0.3 });
+        const scopeMat = std('#9aa4b0', { metalness: 0.8, roughness: 0.3 });
+        const barrel = cylZ(0.02, 0.02, 0.62, barrelMat, 14, true); barrel.position.set(0, 0.01, -0.79);
+        const muzzle = muzzleRing(0.021, barrelMat); muzzle.position.set(0, 0.01, -1.1);
+        const scope = cylZ(0.035, 0.035, 0.24, scopeMat, 14); scope.position.set(0, 0.09, -0.18);
+        const scopeLens = muzzleRing(0.036, scopeMat); scopeLens.position.set(0, 0.09, -0.3);
         const stock = box(0.05, 0.1, 0.22, wood); stock.position.set(0, -0.03, 0.2);
         const grip = box(0.045, 0.1, 0.05, dark); grip.position.set(0, -0.11, 0.05);
-        g.add(body, barrel, scope, stock, grip); fxMats.push(dark);
+        g.add(body, barrel, muzzle, scope, scopeLens, stock, grip); fxMats.push(barrelMat, scopeMat);
         break;
       }
       case 'nade': {
         const b = sph(0.09, std('#3c5232', { roughness: 0.5 }));
-        const top = cyl(0.03, 0.03, 0.05, metal); top.position.y = 0.1;
-        g.add(b, top); fxMats.push(b.material);
+        const topMat = std('#9aa4b0', { metalness: 0.8, roughness: 0.3 });
+        const top = cyl(0.03, 0.03, 0.05, topMat); top.position.y = 0.1;
+        g.add(b, top); fxMats.push(topMat);
         break;
       }
     }
@@ -608,7 +630,7 @@ G.models = (function () {
     armL.position.set(-0.17, -0.16, -0.42);
     const weaponA = new T.Group(); weaponA.position.set(0, 0.035, -0.08); armR.add(weaponA);
     g.add(armR, armL);
-    g.traverse(o => { o.castShadow = false; o.receiveShadow = false; if (o.material) { o.material.depthTest = false; o.renderOrder = 999; } });
+    g.traverse(o => { o.castShadow = false; o.receiveShadow = false; if (o.material) { o.material.depthTest = true; o.material.depthWrite = true; } });
     return { group: g, armR, armL, weaponA, weaponMesh: null, cur: null };
   }
   function setViewWeapon(vm, wp, zombified) {
@@ -629,7 +651,13 @@ G.models = (function () {
       vm.weaponMesh = buildWeapon(wp);
     }
     if (vm.weaponMesh) {
-      vm.weaponMesh.traverse(o => { if (o.material) { o.material.depthTest = false; } o.renderOrder = 1000; });
+      const layerMask = vm.group.layers.mask;
+      vm.weaponMesh.traverse(o => {
+        o.layers.mask = layerMask;
+        o.castShadow = false;
+        o.receiveShadow = false;
+        if (o.material) { o.material.depthTest = true; o.material.depthWrite = true; }
+      });
       vm.weaponA.add(vm.weaponMesh);
     }
   }

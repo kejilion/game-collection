@@ -8,6 +8,7 @@ const rand = (a, b) => a + Math.random() * (b - a);
 const pick = arr => arr[Math.floor(Math.random() * arr.length)];
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
 const r2 = v => Math.round(v * 100) / 100;
+const r5 = v => Math.round(v * 100000) / 100000;
 
 const COLORS = ['#ff6b6b', '#4dabf7', '#69db7c', '#ffd43b', '#da77f2', '#ffa94d', '#63e6e2', '#f783ac', '#a9e34b', '#748ffc', '#ff8787', '#66d9e8'];
 const PROJ_KIND = { fire: 0, bullet: 1, orb: 2 };
@@ -773,7 +774,7 @@ class World {
     }
     return {
       type: 'state', t,
-      day: r2((t % RULES.dayMs) / RULES.dayMs),
+      day: r5((t % RULES.dayMs) / RULES.dayMs),
       pl,
       boss: this.boss ? {
         tp: this.boss.type, nm: this.boss.name,
@@ -781,8 +782,8 @@ class World {
         p: [r2(this.boss.pos.x), 0, r2(this.boss.pos.z)], ya: r2(this.boss.yaw),
         iv: this.boss.invisUntil > t ? 1 : 0,
       } : null,
-      fb: this.projs.map(f => [r2(f.pos.x), r2(f.pos.y), r2(f.pos.z), PROJ_KIND[f.kind] || 0]),
-      gd: this.grenades.map(g => [r2(g.pos.x), r2(g.pos.y), r2(g.pos.z)]),
+      fb: this.projs.map(f => [f.id, r2(f.pos.x), r2(f.pos.y), r2(f.pos.z), r2(f.vel.x), r2(f.vel.y), r2(f.vel.z), PROJ_KIND[f.kind] || 0]),
+      gd: this.grenades.map(g => [g.id, r2(g.pos.x), r2(g.pos.y), r2(g.pos.z), r2(g.vel.x), r2(g.vel.y), r2(g.vel.z)]),
       pk: this.pickups.map(pk => pk.avail ? pk.item : null),
       br: this.barrels.map(b => b.alive ? 1 : 0),
       nb: !this.boss ? Math.max(0, this.nextBossAt - t) : 0,

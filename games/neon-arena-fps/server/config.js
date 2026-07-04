@@ -33,7 +33,7 @@ const MAP = {
     // 木箱
     { t: 'box', x: 14,  z: 11,  w: 2.2, d: 2.2, h: 2.2, kind: 'crate' },
     { t: 'box', x: -14, z: 7,   w: 2.2, d: 2.2, h: 2.2, kind: 'crate' },
-    { t: 'box', x: 10,  z: -18, w: 2.2, d: 2.2, h: 2.2, kind: 'crate' },
+    { t: 'box', x: 7,   z: -22, w: 2.2, d: 2.2, h: 2.2, kind: 'crate' },
     { t: 'box', x: -13, z: -16, w: 2.2, d: 2.2, h: 2.2, kind: 'crate' },
     { t: 'box', x: 22,  z: 19,  w: 3.2, d: 3.2, h: 2.8, kind: 'crate' },
     { t: 'box', x: -21, z: -23, w: 3.2, d: 3.2, h: 2.8, kind: 'crate' },

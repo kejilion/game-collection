@@ -6,6 +6,9 @@ G.world = (function () {
   let barrels = [];          // {x, z, alive, group} 动态油桶
   let barrelR = 0.85, barrelH = 1.7;
   let half = 35;
+  let ramps = [];
+  const RAMP_OVERLAP = 0.18;
+  const RAMP_STEP_UP = 0.5;
   // 昼夜相关引用
   let skyMat = null, stars = null, moonMesh = null, sunMesh = null;
   let hemi = null, sun = null, pylonLights = [], clouds = [], dust = null;
@@ -72,10 +75,89 @@ G.world = (function () {
     return new T.CanvasTexture(c);
   }
 
+  function rampCoord(r, along, y, cross) {
+    return r.axis === 'x'
+      ? [along, y, r.z + cross]
+      : [r.x + cross, y, along];
+  }
+  function rampBounds(r) {
+    const along0 = (r.axis === 'x' ? r.x : r.z) - r.dir * r.len / 2;
+    const along1 = (r.axis === 'x' ? r.x : r.z) + r.dir * (r.len / 2 + RAMP_OVERLAP);
+    const cross0 = (r.axis === 'x' ? r.z : r.x) - r.w / 2;
+    const cross1 = (r.axis === 'x' ? r.z : r.x) + r.w / 2;
+    return {
+      minx: r.axis === 'x' ? Math.min(along0, along1) : Math.min(cross0, cross1),
+      maxx: r.axis === 'x' ? Math.max(along0, along1) : Math.max(cross0, cross1),
+      minz: r.axis === 'z' ? Math.min(along0, along1) : Math.min(cross0, cross1),
+      maxz: r.axis === 'z' ? Math.max(along0, along1) : Math.max(cross0, cross1),
+      miny: 0, maxy: r.h,
+    };
+  }
+  function rampGeometry(r) {
+    const low = (r.axis === 'x' ? r.x : r.z) - r.dir * r.len / 2;
+    const high = (r.axis === 'x' ? r.x : r.z) + r.dir * r.len / 2;
+    const cap = high + r.dir * RAMP_OVERLAP;
+    const w = r.w / 2;
+    const A = rampCoord(r, low, 0, -w);
+    const B = rampCoord(r, low, 0, w);
+    const C = rampCoord(r, high, r.h, w);
+    const D = rampCoord(r, high, r.h, -w);
+    const E = rampCoord(r, cap, 0, -w);
+    const F = rampCoord(r, cap, 0, w);
+    const G = rampCoord(r, cap, r.h, w);
+    const H = rampCoord(r, cap, r.h, -w);
+    const verts = [];
+    const tri = (...pts) => pts.forEach(p => verts.push(p[0], p[1], p[2]));
+    tri(A, B, C, A, C, D);
+    tri(D, C, G, D, G, H);
+    tri(A, E, F, A, F, B);
+    tri(H, G, F, H, F, E);
+    tri(A, D, H, A, H, E);
+    tri(B, F, G, B, G, C);
+    const geo = new T.BufferGeometry();
+    geo.setAttribute('position', new T.Float32BufferAttribute(verts, 3));
+    geo.computeVertexNormals();
+    return geo;
+  }
+  function rampHeightAt(pos, pad) {
+    let best = null;
+    for (const r of ramps) {
+      const along = r.axis === 'x' ? pos.x : pos.z;
+      const cross = r.axis === 'x' ? pos.z : pos.x;
+      const low = (r.axis === 'x' ? r.x : r.z) - r.dir * r.len / 2;
+      const t = (along - low) * r.dir / r.len;
+      const center = r.axis === 'x' ? r.z : r.x;
+      if (t < -0.02 || t > 1 + RAMP_OVERLAP / r.len + 0.03 || Math.abs(cross - center) > r.w / 2 + (pad || 0)) continue;
+      const h = Math.max(0, Math.min(1, t)) * r.h;
+      if (best === null || h > best) best = h;
+    }
+    return best;
+  }
+  function collideRampSides(pos, axis) {
+    for (const r of ramps) {
+      if ((r.axis === 'x' && axis !== 'z') || (r.axis === 'z' && axis !== 'x')) continue;
+      const along = r.axis === 'x' ? pos.x : pos.z;
+      const cross = r.axis === 'x' ? pos.z : pos.x;
+      const low = (r.axis === 'x' ? r.x : r.z) - r.dir * r.len / 2;
+      const t = (along - low) * r.dir / r.len;
+      if (t < -0.02 || t > 1 + RAMP_OVERLAP / r.len + 0.03) continue;
+      const h = Math.max(0, Math.min(1, t)) * r.h;
+      if (pos.y >= h - RAMP_STEP_UP) continue;
+      const center = r.axis === 'x' ? r.z : r.x;
+      for (const side of [-1, 1]) {
+        const edge = center + side * r.w / 2;
+        if (Math.abs(cross - edge) >= R) continue;
+        if (axis === 'x') pos.x = edge + side * R;
+        else pos.z = edge + side * R;
+      }
+    }
+  }
+
   function build(scene, map) {
     half = map.half;
     barrelR = map.barrelR; barrelH = map.barrelH;
     colliders = [];
+    ramps = Array.isArray(map.ramps) ? map.ramps.slice() : [];
 
     scene.fog = new T.Fog(0x0a0e1a, 50, 150);
     scene.background = new T.Color(0x0a0e1a);
@@ -127,8 +209,10 @@ G.world = (function () {
 
     // 光照
     hemi = new T.HemisphereLight(0x6f94c8, 0x100c1c, 0.45);
+    hemi.layers.enable(1);
     scene.add(hemi);
     sun = new T.DirectionalLight(0xaac4ec, 0.8);
+    sun.layers.enable(1);
     sun.position.set(40, 60, -30);
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
@@ -137,6 +221,7 @@ G.world = (function () {
     sun.shadow.camera.far = 220;
     sun.shadow.bias = -0.0004;
     scene.add(sun);
+    sun.target.layers.enable(1);
     scene.add(sun.target);
 
     // 地面
@@ -188,8 +273,16 @@ G.world = (function () {
     const stepMat = new T.MeshStandardMaterial({ color: 0x46505f, roughness: 0.7, metalness: 0.25 });
     const wallObMat = new T.MeshStandardMaterial({ map: wt.clone(), roughness: 0.85 });
     wallObMat.map.repeat.set(3, 1); wallObMat.map.needsUpdate = true;
+    const rampMat = new T.MeshStandardMaterial({ color: 0x586373, roughness: 0.72, metalness: 0.24, side: T.DoubleSide });
+
+    for (const r of ramps) {
+      const mesh = new T.Mesh(rampGeometry(r), rampMat);
+      mesh.castShadow = mesh.receiveShadow = true;
+      scene.add(mesh);
+    }
 
     for (const o of map.obstacles) {
+      if (o.kind === 'rampslice') continue;
       const mat = o.kind === 'crate' ? crateMat
         : o.kind === 'barrier' ? barrierMat
         : o.kind === 'platform' ? plateMat
@@ -235,29 +328,30 @@ G.world = (function () {
   // ---------- 昼夜循环 ----------
   const C = (hex) => new T.Color(hex);
   const NIGHT = { top: C(0x071226), hor: C(0x1c3450), bot: C(0x140b24), fog: C(0x0a0e1a), sunC: C(0xaac4ec), hemiS: C(0x6f94c8), hemiG: C(0x100c1c) };
-  const DAY   = { top: C(0x2a66c0), hor: C(0x9cc6e8), bot: C(0x47759f), fog: C(0x7fa6c8), sunC: C(0xfff0d2), hemiS: C(0xbfd9ff), hemiG: C(0x4a5666) };
-  const DAWN_H = C(0xff9350), DAWN_SUN = C(0xffb070), DAWN_FOG = C(0x6a5a68);
+  const DAY   = { top: C(0x245798), hor: C(0x7fb0d0), bot: C(0x3c617f), fog: C(0x668aa6), sunC: C(0xf1dfbd), hemiS: C(0x9fbfdf), hemiG: C(0x3d4652) };
+  const DAWN_H = C(0xff9450), DAWN_TOP = C(0x345d86), DAWN_SUN = C(0xffb15c), DAWN_FOG = C(0x665a50);
   const tmpA = new T.Color(), tmpB = new T.Color();
 
   function setDay(dayT, scene) {
     if (!skyMat) return;
     const ang = dayT * Math.PI * 2 - Math.PI / 2;   // dayT=0 深夜, 0.5 正午
     const sunH = Math.sin(ang);
-    let s = Math.min(1, Math.max(0, (sunH + 0.12) / 0.4));
+    let s = Math.min(1, Math.max(0, (sunH + 0.16) / 0.52));
     const dayK = s * s * (3 - 2 * s);
-    let dawn = Math.max(0, 1 - Math.abs(sunH) / 0.24); dawn *= dawn;
+    const band = Math.max(0, 1 - Math.abs(sunH) / 0.42);
+    const dawn = band * band * (3 - 2 * band);
 
-    skyMat.uniforms.top.value.copy(tmpA.copy(NIGHT.top).lerp(DAY.top, dayK));
-    skyMat.uniforms.horizon.value.copy(tmpA.copy(NIGHT.hor).lerp(DAY.hor, dayK).lerp(DAWN_H, dawn * 0.75));
-    skyMat.uniforms.bottom.value.copy(tmpA.copy(NIGHT.bot).lerp(DAY.bot, dayK).lerp(DAWN_H, dawn * 0.3));
-    tmpB.copy(NIGHT.fog).lerp(DAY.fog, dayK).lerp(DAWN_FOG, dawn * 0.5);
+    skyMat.uniforms.top.value.copy(tmpA.copy(NIGHT.top).lerp(DAY.top, dayK).lerp(DAWN_TOP, dawn * 0.28));
+    skyMat.uniforms.horizon.value.copy(tmpA.copy(NIGHT.hor).lerp(DAY.hor, dayK).lerp(DAWN_H, dawn * 0.76));
+    skyMat.uniforms.bottom.value.copy(tmpA.copy(NIGHT.bot).lerp(DAY.bot, dayK).lerp(DAWN_H, dawn * 0.26));
+    tmpB.copy(NIGHT.fog).lerp(DAY.fog, dayK).lerp(DAWN_FOG, dawn * 0.48);
     scene.fog.color.copy(tmpB);
     scene.background.copy(tmpB);
 
-    hemi.intensity = 0.45 + dayK * 0.5;
+    hemi.intensity = 0.36 + dayK * 0.38 + dawn * 0.08;
     hemi.color.copy(tmpA.copy(NIGHT.hemiS).lerp(DAY.hemiS, dayK));
     hemi.groundColor.copy(tmpA.copy(NIGHT.hemiG).lerp(DAY.hemiG, dayK));
-    sun.intensity = 0.35 + dayK * 0.75;
+    sun.intensity = 0.24 + dayK * 0.56 + dawn * 0.12;
     sun.color.copy(tmpA.copy(NIGHT.sunC).lerp(DAY.sunC, dayK).lerp(DAWN_SUN, dawn * 0.8));
 
     const sx = Math.cos(ang) * 70, sy = Math.sin(ang) * 80, sz = -35;
@@ -304,16 +398,21 @@ G.world = (function () {
   }
   function collideAxis(pos, axis) {
     eachBox(b => {
-      if (pos.y >= b.maxy - 0.03) return;
+      const rh = rampHeightAt(pos, R * 0.8);
+      const standY = rh === null ? pos.y : Math.max(pos.y, rh);
+      if (standY >= b.maxy - RAMP_STEP_UP) return;
       if (pos.y + 1.7 <= b.miny) return;
       if (pos.x > b.minx - R && pos.x < b.maxx + R && pos.z > b.minz - R && pos.z < b.maxz + R) {
         if (axis === 'x') pos.x = (pos.x - (b.minx + b.maxx) / 2) > 0 ? b.maxx + R : b.minx - R;
         else pos.z = (pos.z - (b.minz + b.maxz) / 2) > 0 ? b.maxz + R : b.minz - R;
       }
     });
+    collideRampSides(pos, axis);
   }
   function floorAt(pos) {
     let f = 0;
+    const rh = rampHeightAt(pos, R * 0.45);
+    if (rh !== null && rh <= pos.y + 0.65) f = rh;
     eachBox(b => {
       if (pos.x > b.minx - R * 0.7 && pos.x < b.maxx + R * 0.7 && pos.z > b.minz - R * 0.7 && pos.z < b.maxz + R * 0.7) {
         if (b.maxy <= pos.y + 0.45 && b.maxy > f) f = b.maxy;
@@ -332,7 +431,7 @@ G.world = (function () {
   // 客户端射线（曳光弹终点预测 / 第三人称相机遮挡）
   function rayObstacles(o, d, maxT) {
     let t = maxT;
-    eachBox(b => {
+    const hitBox = (b) => {
       let tmin = 0, tmax = Infinity, miss = false;
       const P = [['x', b.minx, b.maxx], ['y', b.miny, b.maxy], ['z', b.minz, b.maxz]];
       for (const [ax, mn, mx] of P) {
@@ -345,7 +444,9 @@ G.world = (function () {
         if (tmin > tmax) { miss = true; break; }
       }
       if (!miss && tmin < t && tmin > 0) t = tmin;
-    });
+    };
+    eachBox(hitBox);
+    for (const r of ramps) hitBox(rampBounds(r));
     for (const [ax, sign] of [['x', 1], ['x', -1], ['z', 1], ['z', -1]]) {
       const rd = d[ax], ro = o[ax];
       if (Math.abs(rd) > 1e-9) {
