@@ -64,7 +64,7 @@ const MAP = {
   pickups: [
     { id: 0,  x: 0,    z: -3,  cat: 'wep'   },
     { id: 1,  x: 13,   z: 14,  cat: 'wep'   },
-    { id: 2,  x: -14,  z: 12,  cat: 'wep'   },
+    { id: 2,  x: -10,  z: 12,  cat: 'wep'   },
     { id: 3,  x: 9,    z: -15, cat: 'wep'   },
     { id: 4,  x: -11,  z: -19, cat: 'wep'   },
     { id: 5,  x: 21,   z: 1,   cat: 'wep'   },

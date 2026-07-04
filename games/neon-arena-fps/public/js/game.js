@@ -1131,7 +1131,7 @@
       G.models.setPlayerWeapon(m, heldWeapon);
       G.models.animatePlayer(m, dt, !!s.an, s.ac, 1);
       G.models.applyCosmetics(m, s.eq);
-      if (s.eq.fx && m.weaponMesh) G.models.applyWeaponFx(m, s.eq.fx, perfNow / 1000);
+      G.models.applyWeaponFx(m, s.eq.fx || null, perfNow / 1000);
       const invis = s.bf.some(b => b[0] === 'invis');
       G.models.setOpacity(m, invis ? 0.12 : 1);
       if (s.pr) m.group.rotation.y += Math.sin(perfNow / 90) * 0.02;
@@ -1182,7 +1182,7 @@
     G.models.setPlayerWeapon(myModel, held);
     G.models.animatePlayer(myModel, dt, me.moving, me.active, 1);
     G.models.applyCosmetics(myModel, mySnap.eq);
-    if (mySnap.eq.fx && myModel.weaponMesh) G.models.applyWeaponFx(myModel, mySnap.eq.fx, perfNow / 1000);
+    G.models.applyWeaponFx(myModel, mySnap.eq.fx || null, perfNow / 1000);
     const invis = mySnap.bf.some(b => b[0] === 'invis');
     G.models.setOpacity(myModel, invis ? 0.35 : 1);
     myModel.plate.visible = false;
@@ -1197,9 +1197,7 @@
     const zomb = mySnap.bf.some(b => b[0] === 'zombie');
     const held = me.active === 'gun' ? mySnap.gw : me.active === 'nade' ? 'nade' : mySnap.mw;
     G.models.setViewWeapon(vm, held, zomb && me.active === 'melee');
-    if (mySnap.eq.fx && vm.weaponMesh) {
-      vm.weaponMesh.userData.fxMats && G.models.applyWeaponFx({ weaponMesh: vm.weaponMesh }, mySnap.eq.fx, perfNow / 1000);
-    }
+    G.models.applyWeaponFx({ weaponMesh: vm.weaponMesh }, mySnap.eq.fx || null, perfNow / 1000);
     vmSwingT += dt; vmThrowT += dt;
     vmKick = Math.max(0, vmKick - dt * 6);
     me.swayX *= Math.exp(-dt * 8);

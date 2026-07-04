@@ -11,7 +11,7 @@ G.world = (function () {
   const RAMP_STEP_UP = 0.5;
   // 昼夜相关引用
   let skyMat = null, stars = null, moonMesh = null, sunMesh = null;
-  let hemi = null, sun = null, pylonLights = [], clouds = [], dust = null;
+  let hemi = null, sun = null, moonLight = null, pylonLights = [], clouds = [], dust = null;
   let dayInfoCache = { icon: '🌙', phase: '深夜', k: 0 };
 
   function canvasTex(w, h, draw, repeat) {
@@ -223,6 +223,12 @@ G.world = (function () {
     scene.add(sun);
     sun.target.layers.enable(1);
     scene.add(sun.target);
+    moonLight = new T.DirectionalLight(0xaac4ec, 0.34);
+    moonLight.layers.enable(1);
+    moonLight.position.set(-40, 60, -30);
+    scene.add(moonLight);
+    moonLight.target.layers.enable(1);
+    scene.add(moonLight.target);
 
     // 地面
     const ground = new T.Mesh(new T.PlaneGeometry(half * 2, half * 2),
@@ -348,15 +354,18 @@ G.world = (function () {
     scene.fog.color.copy(tmpB);
     scene.background.copy(tmpB);
 
-    hemi.intensity = 0.36 + dayK * 0.38 + dawn * 0.08;
+    hemi.intensity = 0.48 + dayK * 0.26 + dawn * 0.08;
     hemi.color.copy(tmpA.copy(NIGHT.hemiS).lerp(DAY.hemiS, dayK));
     hemi.groundColor.copy(tmpA.copy(NIGHT.hemiG).lerp(DAY.hemiG, dayK));
-    sun.intensity = 0.24 + dayK * 0.56 + dawn * 0.12;
-    sun.color.copy(tmpA.copy(NIGHT.sunC).lerp(DAY.sunC, dayK).lerp(DAWN_SUN, dawn * 0.8));
+    const dirIntensity = 0.34 + dayK * 0.46 + dawn * 0.12;
+    sun.intensity = dirIntensity * dayK;
+    moonLight.intensity = dirIntensity * (1 - dayK);
+    sun.color.copy(tmpA.copy(DAY.sunC).lerp(DAWN_SUN, dawn * 0.8));
+    moonLight.color.copy(NIGHT.sunC);
 
     const sx = Math.cos(ang) * 70, sy = Math.sin(ang) * 80, sz = -35;
-    if (sunH > 0.02) sun.position.set(sx, Math.max(12, sy), sz);
-    else sun.position.set(-sx, Math.max(12, -sy), sz);
+    sun.position.set(sx, Math.max(12, sy), sz);
+    moonLight.position.set(-sx, Math.max(12, -sy), sz);
     sunMesh.position.set(sx * 2.4, sy * 2.4, sz * 2.4);
     sunMesh.visible = sunH > -0.05;
     moonMesh.position.set(-sx * 2.2, -sy * 2.2, sz * 2.2);
