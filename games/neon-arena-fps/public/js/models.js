@@ -1,0 +1,486 @@
+// 程序化模型工厂：玩家 / BOSS / 商人 / 武器 / 拾取物 / 外观装饰（全部几何体拼装，无外部资源）
+window.G = window.G || {};
+G.models = (function () {
+  const T = THREE;
+
+  function std(color, opt) {
+    return new T.MeshStandardMaterial(Object.assign({ color, roughness: 0.75, metalness: 0.15 }, opt || {}));
+  }
+  function box(w, h, d, mat) { const m = new T.Mesh(new T.BoxGeometry(w, h, d), mat); m.castShadow = true; return m; }
+  function cyl(rt, rb, h, mat, seg) { const m = new T.Mesh(new T.CylinderGeometry(rt, rb, h, seg || 12), mat); m.castShadow = true; return m; }
+  function sph(r, mat, seg) { const m = new T.Mesh(new T.SphereGeometry(r, seg || 12, seg || 10), mat); m.castShadow = true; return m; }
+  function cone(r, h, mat, seg) { const m = new T.Mesh(new T.ConeGeometry(r, h, seg || 10), mat); m.castShadow = true; return m; }
+
+  // ---------- 脸部纹理（共享） ----------
+  let faceTex = null;
+  function getFaceTex() {
+    if (faceTex) return faceTex;
+    const c = document.createElement('canvas'); c.width = c.height = 64;
+    const x = c.getContext('2d');
+    x.fillStyle = '#e8b98a'; x.fillRect(0, 0, 64, 64);
+    x.fillStyle = '#222'; x.fillRect(14, 24, 10, 12); x.fillRect(40, 24, 10, 12);   // 眼睛
+    x.fillStyle = '#fff'; x.fillRect(16, 26, 4, 4); x.fillRect(42, 26, 4, 4);
+    x.fillStyle = '#b3805a'; x.fillRect(24, 44, 16, 4);                              // 嘴
+    faceTex = new T.CanvasTexture(c);
+    return faceTex;
+  }
+
+  // ---------- 文字精灵 ----------
+  function textSprite(w, h, draw) {
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    const ctx = c.getContext('2d');
+    draw(ctx, c);
+    const tex = new T.CanvasTexture(c);
+    const spr = new T.Sprite(new T.SpriteMaterial({ map: tex, depthWrite: false }));
+    spr.userData.canvas = c; spr.userData.ctx = ctx; spr.userData.tex = tex;
+    return spr;
+  }
+  function drawNameplate(ctx, c, name, color, hp, maxHp) {
+    ctx.clearRect(0, 0, c.width, c.height);
+    ctx.font = 'bold 26px "Microsoft YaHei", sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.shadowColor = 'rgba(0,0,0,.9)'; ctx.shadowBlur = 6;
+    ctx.fillStyle = color; ctx.fillText(name, c.width / 2, 20);
+    ctx.shadowBlur = 0;
+    const bw = 150, bx = (c.width - bw) / 2, by = 40;
+    ctx.fillStyle = 'rgba(0,0,0,.6)'; ctx.fillRect(bx - 1, by - 1, bw + 2, 10);
+    const r = Math.max(0, hp / maxHp);
+    ctx.fillStyle = r > 0.4 ? '#4dff88' : '#ff5544';
+    ctx.fillRect(bx, by, bw * r, 8);
+  }
+  function makeNameplate(name, color) {
+    const spr = textSprite(256, 64, (ctx, c) => drawNameplate(ctx, c, name, color, 100, 100));
+    spr.scale.set(2.2, 0.55, 1);
+    spr.userData.set = (hp, maxHp) => {
+      drawNameplate(spr.userData.ctx, spr.userData.canvas, name, color, hp, maxHp);
+      spr.userData.tex.needsUpdate = true;
+    };
+    return spr;
+  }
+
+  // ---------- 玩家 ----------
+  function makePlayer(color, name) {
+    const g = new T.Group();
+    const mats = [];
+    const track = m => { mats.push(m); return m; };
+    const cBody = track(std(color));
+    const cDark = track(std(new T.Color(color).multiplyScalar(0.55).getHex()));
+    const cSkin = track(std('#e8b98a'));
+
+    const legL = box(0.22, 0.7, 0.24, cDark); legL.geometry.translate(0, -0.35, 0); legL.position.set(-0.16, 0.7, 0);
+    const legR = legL.clone(); legR.position.x = 0.16;
+    const body = box(0.68, 0.62, 0.38, cBody); body.position.y = 1.0;
+    const belt = box(0.7, 0.08, 0.4, cDark); belt.position.y = 0.72;
+    const faceMat = track(new T.MeshStandardMaterial({ map: getFaceTex(), roughness: 0.8 }));
+    const headMats = [cSkin, cSkin, cSkin, cSkin, cSkin, faceMat]; // -Z 为脸
+    const head = new T.Mesh(new T.BoxGeometry(0.42, 0.4, 0.42), headMats); head.castShadow = true;
+    head.position.y = 1.53;
+    const armGeo = new T.BoxGeometry(0.17, 0.62, 0.2); armGeo.translate(0, -0.28, 0);
+    const armL = new T.Mesh(armGeo, cSkin); armL.castShadow = true; armL.position.set(-0.43, 1.28, 0);
+    const armR = new T.Mesh(armGeo.clone(), cSkin); armR.castShadow = true; armR.position.set(0.43, 1.28, 0);
+
+    // 外观锚点
+    const hatA = new T.Group(); hatA.position.set(0, 1.75, 0);
+    const faceA = new T.Group(); faceA.position.set(0, 1.56, -0.23);
+    const backA = new T.Group(); backA.position.set(0, 1.15, 0.24);
+    const weaponA = new T.Group(); weaponA.position.set(0, -0.55, -0.1); armR.add(weaponA);
+
+    g.add(legL, legR, body, belt, head, armL, armR, hatA, faceA, backA);
+    const plate = makeNameplate(name, color); plate.position.y = 2.25; g.add(plate);
+
+    const model = {
+      group: g, legL, legR, armL, armR, head, body, plate, hatA, faceA, backA, weaponA,
+      mats, cosMats: [], walkT: 0, attackT: 9, attackDur: 0.3, weaponMesh: null, curWeapon: null,
+      baseColor: color, zombified: false,
+    };
+    g.userData.model = model;
+    return model;
+  }
+
+  function animatePlayer(m, dt, moving, activeSlot, speedMul) {
+    m.walkT += dt * (moving ? 9 * (speedMul || 1) : 0);
+    m.attackT += dt;
+    const sw = moving ? Math.sin(m.walkT) * 0.55 : 0;
+    m.legL.rotation.x = sw; m.legR.rotation.x = -sw;
+    // 手臂姿态：持枪 = 前平举；近战攻击 = 挥砍；丧尸 = 双爪前伸
+    let armBase = moving ? -Math.sin(m.walkT) * 0.3 : 0;
+    if (m.zombified) {
+      m.armL.rotation.x = -1.35 + Math.sin(m.walkT * 0.7) * 0.1;
+      m.armR.rotation.x = -1.35 - Math.sin(m.walkT * 0.7) * 0.1;
+    } else if (activeSlot === 'gun') {
+      m.armR.rotation.x = -1.45;
+      m.armL.rotation.x = -1.1;
+    } else {
+      m.armL.rotation.x = armBase;
+      m.armR.rotation.x = -armBase;
+    }
+    if (m.attackT < m.attackDur) {
+      const k = m.attackT / m.attackDur;
+      m.armR.rotation.x = -2.1 + k * 2.1;   // 快速下劈
+    }
+  }
+
+  function setPlayerWeapon(m, wp) {
+    if (m.curWeapon === wp) return;
+    m.curWeapon = wp;
+    if (m.weaponMesh) { m.weaponA.remove(m.weaponMesh); m.weaponMesh = null; }
+    if (wp && wp !== 'fist') {
+      m.weaponMesh = buildWeapon(wp);
+      m.weaponMesh.rotation.x = Math.PI / 2 * 0.9;
+      m.weaponA.add(m.weaponMesh);
+    }
+  }
+
+  function setOpacity(m, a) {
+    const all = m.mats.concat(m.cosMats);
+    for (const mat of all) {
+      mat.transparent = a < 0.99;
+      mat.opacity = a;
+      mat.depthWrite = a >= 0.5;
+    }
+    m.plate.visible = a > 0.5;
+  }
+
+  function tintZombie(m, on) {
+    if (m.zombified === on) return;
+    m.zombified = on;
+    const c = on ? '#5dbb46' : m.baseColor;
+    m.mats[0].color.set(on ? '#4a8f38' : m.baseColor);
+    m.mats[2].color.set(on ? '#7bd45f' : '#e8b98a');
+  }
+
+  // ---------- 外观装饰 ----------
+  function buildCosmetic(id) {
+    const g = new T.Group();
+    const add = (...ms) => { ms.forEach(x => g.add(x)); return g; };
+    switch (id) {
+      case 'hat_cowboy': {
+        const m = std('#8a5a2b');
+        const brim = cyl(0.36, 0.36, 0.045, m); const top = cyl(0.19, 0.21, 0.24, m); top.position.y = 0.13;
+        return add(brim, top);
+      }
+      case 'hat_beret': {
+        const b = sph(0.26, std('#3f7d3a')); b.scale.y = 0.45; b.position.set(0.04, 0.06, 0);
+        return add(b);
+      }
+      case 'hat_horns': {
+        const m = std('#a03030', { emissive: '#5c0f0f', emissiveIntensity: 0.6 });
+        const h1 = cone(0.07, 0.3, m); h1.position.set(-0.17, 0.12, 0); h1.rotation.z = 0.5;
+        const h2 = h1.clone(); h2.position.x = 0.17; h2.rotation.z = -0.5;
+        return add(h1, h2);
+      }
+      case 'hat_crown': {
+        const m = std('#ffd23c', { metalness: 0.85, roughness: 0.3, emissive: '#8a6a00', emissiveIntensity: 0.35 });
+        const base = cyl(0.24, 0.26, 0.14, m); base.position.y = 0.07;
+        g.add(base);
+        for (let i = 0; i < 5; i++) {
+          const s = cone(0.05, 0.14, m);
+          const a = i / 5 * Math.PI * 2;
+          s.position.set(Math.cos(a) * 0.22, 0.19, Math.sin(a) * 0.22);
+          g.add(s);
+        }
+        return g;
+      }
+      case 'face_shades': {
+        const b = box(0.4, 0.1, 0.05, std('#111', { roughness: 0.2, metalness: 0.6 }));
+        return add(b);
+      }
+      case 'face_visor': {
+        const b = box(0.44, 0.15, 0.06, std('#0b2733', { emissive: '#35e0ff', emissiveIntensity: 1.4, roughness: 0.2 }));
+        return add(b);
+      }
+      case 'back_cape': {
+        const m = std('#b01e3c', { side: T.DoubleSide });
+        const p = new T.Mesh(new T.PlaneGeometry(0.62, 0.95), m); p.castShadow = true;
+        p.position.set(0, -0.35, 0.03); p.rotation.x = 0.12;
+        return add(p);
+      }
+      case 'back_jet': {
+        const m = std('#777c85', { metalness: 0.7, roughness: 0.35 });
+        const fm = std('#331a05', { emissive: '#ff7a1a', emissiveIntensity: 1.6 });
+        const t1 = cyl(0.09, 0.09, 0.42, m); t1.position.set(-0.11, -0.1, 0.06);
+        const t2 = t1.clone(); t2.position.x = 0.11;
+        const f1 = cone(0.06, 0.12, fm); f1.rotation.x = Math.PI; f1.position.set(-0.11, -0.36, 0.06);
+        const f2 = f1.clone(); f2.position.x = 0.11;
+        return add(t1, t2, f1, f2);
+      }
+      case 'back_wings': {
+        const m = std('#f5f7ff', { emissive: '#aac6ff', emissiveIntensity: 0.5, side: T.DoubleSide });
+        for (const s of [-1, 1]) {
+          for (let i = 0; i < 3; i++) {
+            const f = new T.Mesh(new T.PlaneGeometry(0.5 - i * 0.1, 0.16), m);
+            f.position.set(s * (0.25 + i * 0.13), -i * 0.16 + 0.1, 0.05 + i * 0.02);
+            f.rotation.z = s * (0.5 + i * 0.25);
+            g.add(f);
+          }
+        }
+        return g;
+      }
+    }
+    return g;
+  }
+
+  const FX_COLORS = { fx_ice: '#57d4ff', fx_gold: '#ffca3a', fx_rainbow: null };
+  function applyWeaponFx(model, fxId, time) {
+    const mesh = model.weaponMesh || (model.viewWeapon || null);
+    if (!mesh || !mesh.userData.fxMats) return;
+    let col = null;
+    if (fxId === 'fx_rainbow') col = new T.Color().setHSL((time * 0.25) % 1, 1, 0.55);
+    else if (FX_COLORS[fxId]) col = new T.Color(FX_COLORS[fxId]);
+    for (const mat of mesh.userData.fxMats) {
+      if (col) { mat.emissive.copy(col); mat.emissiveIntensity = 0.9; }
+      else { mat.emissive.set(0x000000); mat.emissiveIntensity = 0; }
+    }
+  }
+
+  function applyCosmetics(model, eq) {
+    const key = (eq.head || '') + '|' + (eq.face || '') + '|' + (eq.back || '');
+    if (model._cosKey === key) return;
+    model._cosKey = key;
+    for (const a of [model.hatA, model.faceA, model.backA]) while (a.children.length) a.remove(a.children[0]);
+    model.cosMats = [];
+    const collect = grp => grp.traverse(o => { if (o.material) model.cosMats.push(o.material); });
+    if (eq.head) { const c = buildCosmetic(eq.head); model.hatA.add(c); collect(c); }
+    if (eq.face) { const c = buildCosmetic(eq.face); model.faceA.add(c); collect(c); }
+    if (eq.back) { const c = buildCosmetic(eq.back); model.backA.add(c); collect(c); }
+  }
+
+  // ---------- 武器 ----------
+  function buildWeapon(wp) {
+    const g = new T.Group();
+    const metal = std('#9aa4b0', { metalness: 0.8, roughness: 0.3 });
+    const dark = std('#2e3238', { metalness: 0.6, roughness: 0.4 });
+    const wood = std('#7a4f28');
+    const fxMats = [];
+    switch (wp) {
+      case 'knife': {
+        const blade = box(0.045, 0.02, 0.3, metal); blade.position.z = -0.18;
+        const hilt = box(0.05, 0.05, 0.12, dark); hilt.position.z = 0.03;
+        g.add(blade, hilt); fxMats.push(metal);
+        break;
+      }
+      case 'sword': {
+        const blade = box(0.07, 0.025, 0.8, metal); blade.position.z = -0.45;
+        const guard = box(0.2, 0.03, 0.05, std('#c9a227', { metalness: 0.8 }));
+        const hilt = box(0.05, 0.05, 0.18, dark); hilt.position.z = 0.1;
+        g.add(blade, guard, hilt); fxMats.push(metal);
+        break;
+      }
+      case 'hammer': {
+        const handle = cyl(0.035, 0.035, 0.65, wood); handle.rotation.x = Math.PI / 2; handle.position.z = -0.1;
+        const head = box(0.18, 0.18, 0.3, dark); head.position.z = -0.42;
+        g.add(handle, head); fxMats.push(dark);
+        break;
+      }
+      case 'pistol': {
+        const body = box(0.05, 0.09, 0.26, dark); body.position.z = -0.1;
+        const grip = box(0.05, 0.14, 0.07, dark); grip.position.set(0, -0.1, 0.02); grip.rotation.x = 0.25;
+        const barrel = cyl(0.018, 0.018, 0.1, metal); barrel.rotation.x = Math.PI / 2; barrel.position.set(0, 0.02, -0.27);
+        g.add(body, grip, barrel); fxMats.push(dark);
+        break;
+      }
+      case 'mg': {
+        const body = box(0.07, 0.11, 0.55, dark); body.position.z = -0.18;
+        const barrel = cyl(0.022, 0.022, 0.3, metal); barrel.rotation.x = Math.PI / 2; barrel.position.set(0, 0.02, -0.58);
+        const mag = box(0.05, 0.2, 0.09, metal); mag.position.set(0, -0.13, -0.12); mag.rotation.x = 0.15;
+        const stock = box(0.05, 0.09, 0.18, wood); stock.position.set(0, -0.02, 0.16);
+        const grip = box(0.045, 0.11, 0.05, dark); grip.position.set(0, -0.1, 0.03);
+        g.add(body, barrel, mag, stock, grip); fxMats.push(dark);
+        break;
+      }
+      case 'sniper': {
+        const body = box(0.06, 0.09, 0.6, dark); body.position.z = -0.15;
+        const barrel = cyl(0.02, 0.02, 0.55, metal); barrel.rotation.x = Math.PI / 2; barrel.position.set(0, 0.01, -0.7);
+        const scope = cyl(0.035, 0.035, 0.16, metal); scope.rotation.x = Math.PI / 2; scope.position.set(0, 0.09, -0.15);
+        const stock = box(0.05, 0.1, 0.22, wood); stock.position.set(0, -0.03, 0.2);
+        const grip = box(0.045, 0.1, 0.05, dark); grip.position.set(0, -0.11, 0.05);
+        g.add(body, barrel, scope, stock, grip); fxMats.push(dark);
+        break;
+      }
+      case 'nade': {
+        const b = sph(0.09, std('#3c5232', { roughness: 0.5 }));
+        const top = cyl(0.03, 0.03, 0.05, metal); top.position.y = 0.1;
+        g.add(b, top); fxMats.push(b.material);
+        break;
+      }
+    }
+    g.userData.fxMats = fxMats;
+    return g;
+  }
+
+  // ---------- 拾取物 ----------
+  function makePickup(item, defs) {
+    const g = new T.Group();
+    if (defs.weapons[item]) {
+      const w = buildWeapon(item);
+      w.scale.setScalar(1.5);
+      w.position.y = 0.75;
+      g.add(w);
+      g.userData.glow = '#35e0ff';
+    } else if (defs.equips[item]) {
+      if (item === 'health') {
+        const b = box(0.5, 0.34, 0.5, std('#f2f5f7'));
+        b.position.y = 0.7;
+        const c1 = box(0.3, 0.09, 0.06, std('#e33', { emissive: '#e33', emissiveIntensity: 0.5 })); c1.position.set(0, 0.7, -0.26);
+        const c2 = box(0.09, 0.3, 0.06, c1.material); c2.position.set(0, 0.7, -0.26);
+        g.add(b, c1, c2); g.userData.glow = '#6dff9a';
+      } else if (item === 'armor') {
+        const b = box(0.44, 0.5, 0.2, std('#2f6fb2', { emissive: '#1a4a80', emissiveIntensity: 0.5, metalness: 0.5 }));
+        b.position.y = 0.75;
+        g.add(b); g.userData.glow = '#4d9fff';
+      } else {
+        const m = std('#d9822b', { emissive: '#8a4a10', emissiveIntensity: 0.5 });
+        const b1 = box(0.16, 0.2, 0.34, m); b1.position.set(-0.12, 0.6, 0);
+        const b2 = b1.clone(); b2.position.x = 0.12;
+        g.add(b1, b2); g.userData.glow = '#ffa94d';
+      }
+    } else if (defs.buffs[item]) {
+      const col = defs.buffs[item].color;
+      const orb = sph(0.26, new T.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 1.1, roughness: 0.3 }));
+      orb.position.y = 0.85;
+      const ring = new T.Mesh(new T.TorusGeometry(0.38, 0.03, 8, 24),
+        new T.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 0.8 }));
+      ring.position.y = 0.85; ring.rotation.x = Math.PI / 2;
+      g.add(orb, ring); g.userData.glow = col;
+    }
+    // 底座光环
+    const base = new T.Mesh(new T.RingGeometry(0.45, 0.6, 24),
+      new T.MeshBasicMaterial({ color: g.userData.glow || '#35e0ff', transparent: true, opacity: 0.5, side: T.DoubleSide }));
+    base.rotation.x = -Math.PI / 2; base.position.y = 0.03;
+    g.add(base);
+    return g;
+  }
+
+  // ---------- BOSS ----------
+  function makeBoss(name) {
+    const g = new T.Group();
+    const rock = std('#3a3f4a', { roughness: 0.9 });
+    const lava = std('#331005', { emissive: '#ff5a1a', emissiveIntensity: 1.6 });
+    const legL = box(0.7, 1.3, 0.8, rock); legL.geometry.translate(0, -0.65, 0); legL.position.set(-0.55, 1.5, 0);
+    const legR = legL.clone(); legR.position.x = 0.55;
+    const torso = box(2.1, 1.7, 1.3, rock); torso.position.y = 2.4;
+    const crack1 = box(1.5, 0.12, 1.34, lava); crack1.position.y = 2.5;
+    const crack2 = box(2.14, 0.1, 0.9, lava); crack2.position.y = 2.15;
+    const armGeo = new T.BoxGeometry(0.55, 1.6, 0.6); armGeo.translate(0, -0.7, 0);
+    const armL = new T.Mesh(armGeo, rock); armL.castShadow = true; armL.position.set(-1.35, 3.1, 0);
+    const armR = new T.Mesh(armGeo.clone(), rock); armR.castShadow = true; armR.position.set(1.35, 3.1, 0);
+    const fistL = sph(0.42, rock); fistL.position.y = -1.5; armL.add(fistL);
+    const fistR = fistL.clone(); armR.add(fistR);
+    const head = box(0.8, 0.7, 0.75, rock); head.position.y = 3.6;
+    const eyeM = new T.MeshStandardMaterial({ color: '#000', emissive: '#ffb01a', emissiveIntensity: 2.5 });
+    const eyeL = sph(0.09, eyeM, 8); eyeL.position.set(-0.2, 3.65, -0.39);
+    const eyeR = eyeL.clone(); eyeR.position.x = 0.2;
+    const hornM = std('#20242c');
+    const hornL = cone(0.14, 0.55, hornM); hornL.position.set(-0.35, 4.1, 0); hornL.rotation.z = 0.4;
+    const hornR = hornL.clone(); hornR.position.x = 0.35; hornR.rotation.z = -0.4;
+    g.add(legL, legR, torso, crack1, crack2, armL, armR, head, eyeL, eyeR, hornL, hornR);
+    const plate = makeNameplate('👹 ' + name, '#ff9c5c'); plate.position.y = 4.9; plate.scale.set(3.2, 0.8, 1);
+    g.add(plate);
+    const light = new T.PointLight('#ff6a1a', 0.9, 9); light.position.y = 2.5; g.add(light);
+    const model = { group: g, legL, legR, armL, armR, plate, walkT: 0, slamT: 9 };
+    return model;
+  }
+  function animateBoss(m, dt, moving) {
+    m.walkT += dt * (moving ? 4 : 0.6);
+    m.slamT += dt;
+    const sw = Math.sin(m.walkT) * 0.4;
+    m.legL.rotation.x = sw; m.legR.rotation.x = -sw;
+    if (m.slamT < 0.5) {
+      const k = m.slamT / 0.5;
+      const a = k < 0.4 ? -2.4 * (k / 0.4) : -2.4 + 2.4 * ((k - 0.4) / 0.6);
+      m.armL.rotation.x = a; m.armR.rotation.x = a;
+    } else {
+      m.armL.rotation.x = Math.sin(m.walkT) * 0.25;
+      m.armR.rotation.x = -Math.sin(m.walkT) * 0.25;
+    }
+  }
+
+  // ---------- 神秘商人 ----------
+  function makeMerchant() {
+    const g = new T.Group();
+    // 摊位
+    const woodM = std('#6b4a26', { roughness: 0.85 });
+    const counter = box(3, 1, 1, woodM); counter.position.set(0, 0.5, -1);
+    for (const [px, pz] of [[-1.5, -1.6], [1.5, -1.6], [-1.5, 0.6], [1.5, 0.6]]) {
+      const post = cyl(0.07, 0.07, 2.6, woodM); post.position.set(px, 1.3, pz); g.add(post);
+    }
+    // 条纹雨棚
+    const awnC = document.createElement('canvas'); awnC.width = 128; awnC.height = 32;
+    const ax = awnC.getContext('2d');
+    for (let i = 0; i < 8; i++) { ax.fillStyle = i % 2 ? '#7b2d8b' : '#e8d44d'; ax.fillRect(i * 16, 0, 16, 32); }
+    const awning = new T.Mesh(new T.BoxGeometry(3.6, 0.08, 2.6),
+      new T.MeshStandardMaterial({ map: new T.CanvasTexture(awnC) }));
+    awning.castShadow = true; awning.position.set(0, 2.65, -0.5); awning.rotation.x = -0.12;
+    // 商人（斗篷法师）
+    const robeM = std('#4a2a6b', { roughness: 0.7 });
+    const robe = cone(0.55, 1.5, robeM); robe.position.set(0, 0.75, -1.8);
+    const hood = sph(0.3, robeM); hood.position.set(0, 1.62, -1.8);
+    const eyeM2 = new T.MeshStandardMaterial({ color: '#000', emissive: '#c76bff', emissiveIntensity: 2.2 });
+    const e1 = sph(0.045, eyeM2, 8); e1.position.set(-0.09, 1.64, -1.55);
+    const e2 = e1.clone(); e2.position.x = 0.09;
+    // 台面商品
+    const gem = new T.Mesh(new T.OctahedronGeometry ? new T.OctahedronGeometry(0.16) : new T.SphereGeometry(0.16, 8, 8),
+      new T.MeshStandardMaterial({ color: '#b26bff', emissive: '#7b2dff', emissiveIntensity: 1.2 }));
+    gem.position.set(-0.7, 1.2, -1);
+    const potion = cyl(0.09, 0.12, 0.28, std('#2bbf8a', { emissive: '#128a5a', emissiveIntensity: 0.8 })); potion.position.set(0.6, 1.15, -1);
+    const lamp = new T.PointLight('#d9a9ff', 1.1, 10); lamp.position.set(0, 2.2, -1);
+    g.add(counter, awning, robe, hood, e1, e2, gem, potion, lamp);
+    // 招牌
+    const sign = textSprite(256, 80, (ctx, c) => {
+      ctx.font = 'bold 44px "Microsoft YaHei", sans-serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.shadowColor = '#c76bff'; ctx.shadowBlur = 16;
+      ctx.fillStyle = '#e8ccff'; ctx.fillText('神秘商店', 128, 40);
+    });
+    sign.scale.set(3.4, 1.05, 1); sign.position.set(0, 3.4, -0.5);
+    g.add(sign);
+    g.userData.gem = gem;
+    return g;
+  }
+
+  // ---------- 第一人称视角模型 ----------
+  function makeViewModel() {
+    const g = new T.Group();
+    const skin = std('#e8b98a');
+    const sleeve = std('#3a4a5c');
+    const armR = new T.Group();
+    const ra = box(0.045, 0.045, 0.13, sleeve); ra.position.z = 0.055;
+    const rh = box(0.055, 0.05, 0.06, skin); rh.position.z = -0.04;
+    armR.add(ra, rh);
+    armR.position.set(0.17, -0.16, -0.42);
+    const armL = armR.clone();
+    armL.position.set(-0.17, -0.16, -0.42);
+    const weaponA = new T.Group(); weaponA.position.set(0, 0.035, -0.08); armR.add(weaponA);
+    g.add(armR, armL);
+    g.traverse(o => { o.castShadow = false; o.receiveShadow = false; if (o.material) { o.material.depthTest = false; o.renderOrder = 999; } });
+    return { group: g, armR, armL, weaponA, weaponMesh: null, cur: null };
+  }
+  function setViewWeapon(vm, wp, zombified) {
+    const key = (wp || 'fist') + (zombified ? '_z' : '');
+    if (vm.cur === key) return;
+    vm.cur = key;
+    if (vm.weaponMesh) { vm.weaponA.remove(vm.weaponMesh); vm.weaponMesh = null; }
+    vm.armL.visible = (wp === 'fist' || !wp || zombified);
+    if (zombified) {
+      const claws = new T.Group();
+      const cm = std('#7bd45f', { emissive: '#2b8a1a', emissiveIntensity: 0.6 });
+      for (let i = -1; i <= 1; i++) {
+        const c = cone(0.02, 0.14, cm); c.rotation.x = -Math.PI / 2; c.position.set(i * 0.04, 0, -0.16);
+        claws.add(c);
+      }
+      vm.weaponMesh = claws;
+    } else if (wp && wp !== 'fist') {
+      vm.weaponMesh = buildWeapon(wp);
+    }
+    if (vm.weaponMesh) {
+      vm.weaponMesh.traverse(o => { if (o.material) { o.material.depthTest = false; } o.renderOrder = 1000; });
+      vm.weaponA.add(vm.weaponMesh);
+    }
+  }
+
+  return {
+    makePlayer, animatePlayer, setPlayerWeapon, setOpacity, tintZombie,
+    applyCosmetics, applyWeaponFx, buildWeapon, makePickup, makeBoss, animateBoss,
+    makeMerchant, makeViewModel, setViewWeapon, makeNameplate, textSprite, std,
+  };
+})();

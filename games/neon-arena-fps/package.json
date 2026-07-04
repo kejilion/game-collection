@@ -1,0 +1,18 @@
+{
+  "name": "neon-arena-fps",
+  "version": "1.0.0",
+  "description": "3D 第一人称多人在线竞技射击游戏 — 单房间权威 Node 服务器 + Three.js 客户端",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node server/index.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "ws": "^8.18.0"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT"
+}

@@ -10,6 +10,7 @@ A growing collection of web-based games by kejilion.
 | 敲冰块大逃脱 Ice Climber Arena | [`games/ice-climber-arena`](games/ice-climber-arena) | ✅ Active | [Live](https://github.com/kejilion/game-collection/tree/main/games/ice-climber-arena) |
 | 炸弹派对 Bomb Party | [`games/bomb-party`](games/bomb-party) | ✅ Active | [Live](https://github.com/kejilion/game-collection/tree/main/games/bomb-party) |
 | 疯狂碰碰车 Crazy Bumper Cars | [`games/crazy-bumper-cars`](games/crazy-bumper-cars) | ✅ Active | [Live](https://github.com/kejilion/game-collection/tree/main/games/crazy-bumper-cars) |
+| 3D射击游戏 Neon Arena FPS | [`games/neon-arena-fps`](games/neon-arena-fps) | ✅ Active | [Live](https://github.com/kejilion/game-collection/tree/main/games/neon-arena-fps) |
 
 ## Getting Started
 

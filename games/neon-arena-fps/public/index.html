@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>霓虹竞技场 · 3D 多人射击</title>
+<link rel="stylesheet" href="css/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='0.9em' font-size='90'>🎯</text></svg>">
+</head>
+<body>
+<canvas id="cv"></canvas>
+
+<!-- ======== 主菜单 ======== -->
+<div id="menu" class="overlay">
+  <div class="menu-card">
+    <h1 class="title">霓虹竞技场</h1>
+    <div class="subtitle">NEON ARENA · 3D 多人在线混战</div>
+    <div class="online-line">在线: <span id="menuOnline">0</span> 人 <span id="menuBossHint"></span></div>
+    <input id="nameInput" maxlength="12" placeholder="输入你的昵称" autocomplete="off">
+    <button id="btnPlay" class="btn primary">🎮 进入战斗</button>
+    <button id="btnSpec" class="btn">👁️ 观战模式</button>
+    <div class="help">
+      <div class="help-title">操作说明</div>
+      <div class="help-grid">
+        <span>WASD 移动 · 空格 跳跃</span><span>鼠标左键 攻击 / 射击</span>
+        <span>1 近战 · 2 枪械 · 3 手雷</span><span>R 换弹 · 右键 狙击开镜</span>
+        <span>走近道具自动拾取</span><span>E 打开神秘商店</span>
+        <span>回车 聊天 · Tab 排行榜</span><span>击杀+25金币 BOSS+200</span>
+      </div>
+    </div>
+    <div id="menuErr" class="menu-err"></div>
+  </div>
+</div>
+
+<!-- ======== 游戏 HUD ======== -->
+<div id="hud" class="hidden">
+  <div id="crosshair"><i class="ch t"></i><i class="ch b"></i><i class="ch l"></i><i class="ch r"></i><i class="ch dot"></i></div>
+  <div id="hitmarker">✕</div>
+  <div id="scope" class="hidden"><div class="scope-ring"></div><div class="scope-line h"></div><div class="scope-line v"></div></div>
+
+  <div id="vitals">
+    <div class="bar-row"><span class="bar-ico">❤️</span><div class="bar hp"><div id="hpFill"></div><span id="hpNum"></span></div></div>
+    <div class="bar-row"><span class="bar-ico">🛡️</span><div class="bar armor"><div id="arFill"></div><span id="arNum"></span></div></div>
+    <div class="bar-row" id="shieldRow"><span class="bar-ico">✨</span><div class="bar shield"><div id="shFill"></div><span id="shNum"></span></div></div>
+  </div>
+
+  <div id="weaponPanel">
+    <div class="wslot" id="slotMelee"><span class="wkey">1</span><span class="wico"></span><span class="wname"></span></div>
+    <div class="wslot" id="slotGun"><span class="wkey">2</span><span class="wico"></span><span class="wname"></span><span class="wammo"></span></div>
+    <div class="wslot" id="slotNade"><span class="wkey">3</span><span class="wico"></span><span class="wname"></span><span class="wammo"></span></div>
+    <div id="reloadBar" class="hidden"><div id="reloadFill"></div><span id="reloadText">换弹中…</span></div>
+  </div>
+
+  <div id="topLeft">
+    <div id="coinBox">🪙 <span id="coinNum">0</span></div>
+    <div id="buffRow"></div>
+  </div>
+
+  <div id="killfeed"></div>
+
+  <div id="bossBar" class="hidden">
+    <div class="boss-name">👹 <span id="bossName"></span></div>
+    <div class="boss-hp"><div id="bossFill"></div></div>
+  </div>
+  <div id="bossTimer" class="hidden"></div>
+
+  <div id="notice"></div>
+  <div id="bigNotice"></div>
+  <div id="interactHint" class="hidden">按 <b>E</b> 打开神秘商店</div>
+  <div id="protectHint" class="hidden">🛡️ 出生保护中</div>
+
+  <div id="dmgVignette"></div>
+  <div id="zombieTint"></div>
+  <div id="statLine"><span id="fpsNum"></span> · <span id="pingNum"></span></div>
+</div>
+
+<!-- ======== 聊天 ======== -->
+<div id="chatBox" class="hidden">
+  <div id="chatMsgs"></div>
+  <div id="chatInputRow" class="hidden"><input id="chatInput" maxlength="120" placeholder="按回车发送，Esc 取消"></div>
+</div>
+
+<!-- ======== 排行榜 ======== -->
+<div id="board" class="overlay panel hidden">
+  <div class="panel-card">
+    <div class="panel-title">🏆 排行榜 <span class="panel-sub">击杀数优先</span></div>
+    <div class="tabs"><button id="tabRt" class="tab active">实时榜</button><button id="tabHist" class="tab">历史榜</button></div>
+    <div id="boardRt" class="board-table"></div>
+    <div id="boardHist" class="board-table hidden"></div>
+    <div class="panel-hint">按 Tab 关闭</div>
+  </div>
+</div>
+
+<!-- ======== 神秘商店 ======== -->
+<div id="shop" class="overlay panel hidden">
+  <div class="panel-card shop-card">
+    <div class="panel-title">🧙 神秘商店 <span class="shop-coins">🪙 <span id="shopCoins">0</span></span></div>
+    <div class="tabs" id="shopTabs"></div>
+    <div id="shopGrid"></div>
+    <div id="shopMsg"></div>
+    <div class="panel-hint">按 E 或 Esc 关闭 · 外观全场可见，按昵称永久保存</div>
+  </div>
+</div>
+
+<!-- ======== 死亡界面 ======== -->
+<div id="death" class="overlay hidden">
+  <div class="death-card">
+    <div class="death-title">你阵亡了</div>
+    <div id="deathBy"></div>
+    <div id="deathCount"></div>
+    <button id="btnDeathSpec" class="btn small">👁️ 观战等待</button>
+  </div>
+</div>
+
+<!-- ======== 观战条 ======== -->
+<div id="specBar" class="hidden">
+  <div id="specMode"></div>
+  <div id="specTarget"></div>
+  <div class="spec-keys">F 自由/跟随 · ←/→ 切换玩家 · <b id="btnSpecJoin">回车 加入战斗</b></div>
+</div>
+
+<!-- ======== 暂停 / 断线 ======== -->
+<div id="pause" class="overlay hidden">
+  <div class="menu-card small-card">
+    <div class="pause-title">已暂停</div>
+    <button id="btnResume" class="btn primary">继续游戏</button>
+    <button id="btnToMenu" class="btn">返回菜单</button>
+  </div>
+</div>
+<div id="lost" class="overlay hidden">
+  <div class="menu-card small-card">
+    <div class="pause-title">与服务器断开</div>
+    <div id="lostText" class="lost-text">正在重连…</div>
+  </div>
+</div>
+
+<script src="lib/three.min.js"></script>
+<script src="js/audio.js"></script>
+<script src="js/models.js"></script>
+<script src="js/world.js"></script>
+<script src="js/effects.js"></script>
+<script src="js/game.js"></script>
+</body>
+</html>
