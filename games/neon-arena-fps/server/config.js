@@ -23,8 +23,23 @@ const RAMPS = [
   { x: 19,    z: -25.4, axis: 'z', dir: 1,  len: 4.8, w: 3, h: 2.2 },  // 高地A 北坡
   { x: -14,   z: 13,    axis: 'x', dir: -1, len: 4,   w: 3, h: 1.6 },  // 高地B 东坡
 ];
+
+const OUTER_COVER = [
+  { t: 'box', x: 35,  z: 27,   w: 5.5, d: 1.3, h: 3.0, kind: 'wall' },
+  { t: 'box', x: -35, z: -27,  w: 5.5, d: 1.3, h: 3.0, kind: 'wall' },
+  { t: 'box', x: -37, z: 24,   w: 1.3, d: 5.5, h: 3.0, kind: 'wall' },
+  { t: 'box', x: 37,  z: -31,  w: 1.3, d: 5.5, h: 3.0, kind: 'wall' },
+  { t: 'box', x: 38,  z: -8,   w: 2.4, d: 2.4, h: 2.4, kind: 'crate' },
+  { t: 'box', x: -38, z: 10,   w: 2.4, d: 2.4, h: 2.4, kind: 'crate' },
+  { t: 'box', x: 7,   z: 38,   w: 2.4, d: 2.4, h: 2.4, kind: 'crate' },
+  { t: 'box', x: -9,  z: -38,  w: 2.4, d: 2.4, h: 2.4, kind: 'crate' },
+  { t: 'box', x: 27,  z: 39,   w: 5.0, d: 1.1, h: 1.15, kind: 'barrier' },
+  { t: 'box', x: -27, z: -39,  w: 5.0, d: 1.1, h: 1.15, kind: 'barrier' },
+  { t: 'box', x: 41,  z: 14,   w: 1.1, d: 4.5, h: 1.15, kind: 'barrier' },
+  { t: 'box', x: -41, z: -14,  w: 1.1, d: 4.5, h: 1.15, kind: 'barrier' },
+];
 const MAP = {
-  half: 35,            // 场地半宽（墙位于 ±35）
+  half: 48,            // 场地半宽（外墙位于 ±48，整体战场 96x96）
   wallH: 6,
   obstacles: [
     // 中央双墙掩体
@@ -47,42 +62,44 @@ const MAP = {
     // 高地 B（西北）：6x6x1.6 平台 + 东侧斜坡
     { t: 'box', x: -19,  z: 13,    w: 6,   d: 6,   h: 1.6,  kind: 'platform' },
     ...RAMPS.flatMap(r => rampSlices(r.x, r.z, r.axis, r.dir, r.len, r.w, r.h)),
+    ...OUTER_COVER,
   ],
   ramps: RAMPS,   // 客户端渲染整块斜面用
   // 可摧毁油桶（独立实体，非静态障碍）
   barrels: [
     { x: -19, z: 17.5 }, { x: 4, z: -11 }, { x: 26, z: -21 },
-    { x: 12, z: 20 }, { x: -6, z: -24 },
+    { x: 12, z: 20 }, { x: -6, z: -24 }, { x: 34, z: 8 },
+    { x: -34, z: -8 },
   ],
   barrelR: 0.85, barrelH: 1.7,
   // 出生点（随机取，均远离中心）
   spawns: [
-    [28, 28], [-28, 28], [28, -28], [-28, -26], [0, 30], [0, -30],
-    [30, 0], [-30, 4], [28, -31], [-24, 18],
+    [39, 34], [-39, 34], [39, -34], [-39, -34], [0, 41], [0, -41],
+    [41, 0], [-41, 0], [30, -38], [-30, 38], [32, 22], [-32, -22],
   ],
   // 拾取点：cat = wep 武器 / equip 装备 / buff 状态道具；y 为所在地面高度
   pickups: [
-    { id: 0,  x: 0,    z: -3,  cat: 'wep'   },
-    { id: 1,  x: 13,   z: 14,  cat: 'wep'   },
-    { id: 2,  x: -10,  z: 12,  cat: 'wep'   },
-    { id: 3,  x: 9,    z: -15, cat: 'wep'   },
-    { id: 4,  x: -11,  z: -19, cat: 'wep'   },
-    { id: 5,  x: 21,   z: 1,   cat: 'wep'   },
-    { id: 6,  x: 26,   z: 25,  cat: 'equip' },
-    { id: 7,  x: -26,  z: -28, cat: 'equip' },
-    { id: 8,  x: -25,  z: 21,  cat: 'equip' },
-    { id: 9,  x: 23,   z: -25, cat: 'equip', y: 0 },
-    { id: 10, x: 3,    z: 8,   cat: 'buff'  },
-    { id: 11, x: -3,   z: 24,  cat: 'buff'  },
-    { id: 12, x: 17,   z: 23,  cat: 'buff'  },
-    { id: 13, x: -30,  z: -8,  cat: 'buff'  },
-    { id: 14, x: 30,   z: -12, cat: 'buff'  },
-    { id: 15, x: -17,  z: -6,  cat: 'buff'  },
+    { id: 0,  x: 0,    z: -6,  cat: 'wep'   },
+    { id: 1,  x: 17,   z: 14,  cat: 'wep'   },
+    { id: 2,  x: -18,  z: 8,   cat: 'wep'   },
+    { id: 3,  x: 3,    z: -23, cat: 'wep'   },
+    { id: 4,  x: -29,  z: -24, cat: 'wep'   },
+    { id: 5,  x: 30,   z: 10,  cat: 'wep'   },
+    { id: 6,  x: 39,   z: 31,  cat: 'equip' },
+    { id: 7,  x: -39,  z: -31, cat: 'equip' },
+    { id: 8,  x: -32,  z: 27,  cat: 'equip' },
+    { id: 9,  x: 32,   z: -37, cat: 'equip', y: 0 },
+    { id: 10, x: 4,    z: 10,  cat: 'buff'  },
+    { id: 11, x: -8,   z: 32,  cat: 'buff'  },
+    { id: 12, x: 28,   z: 29,  cat: 'buff'  },
+    { id: 13, x: -32,  z: -10, cat: 'buff'  },
+    { id: 14, x: 32,   z: -18, cat: 'buff'  },
+    { id: 15, x: -8,   z: -32, cat: 'buff'  },
     { id: 16, x: 19,   z: -19, cat: 'wep',  y: 2.2 },   // 高地 A 顶
     { id: 17, x: -19,  z: 13,  cat: 'buff', y: 1.6 },   // 高地 B 顶
   ],
-  merchant: { x: -29, z: 29 },       // 神秘商人摊位（西北角）
-  bossSpawns: [[0, -14], [16, 10], [-16, -10], [0, 20]],
+  merchant: { x: -43, z: 40 },       // 神秘商人摊位（西北侧）
+  bossSpawns: [[0, -18], [22, 12], [-22, -12], [0, 26], [28, -28], [-28, 24]],
 };
 
 // ---------- 武器 ----------

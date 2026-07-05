@@ -35,17 +35,18 @@ function save() {  // 2 秒防抖
 
 function get(name) {
   if (!profiles[name]) {
-    profiles[name] = { kills: 0, deaths: 0, bossKills: 0, coins: null, owned: [], eq: {}, joins: 0, last: 0 };
+    profiles[name] = { kills: 0, deaths: 0, bossKills: 0, bestStreak: 0, coins: null, owned: [], eq: {}, joins: 0, last: 0 };
   }
+  if (profiles[name].bestStreak === undefined) profiles[name].bestStreak = 0;   // 旧档案兼容
   return profiles[name];
 }
 
-// 历史榜：总击杀优先，其次 BOSS 击杀，其次死亡少
+// 历史榜：总击杀优先，其次历史最高连杀，其次 BOSS 击杀，其次死亡少
 function top(n = 10) {
   return Object.entries(profiles)
-    .map(([name, p]) => ({ n: name, k: p.kills | 0, d: p.deaths | 0, bk: p.bossKills | 0 }))
+    .map(([name, p]) => ({ n: name, k: p.kills | 0, d: p.deaths | 0, bk: p.bossKills | 0, bs: p.bestStreak | 0 }))
     .filter(e => e.k > 0 || e.bk > 0 || e.d > 0)
-    .sort((a, b) => b.k - a.k || b.bk - a.bk || a.d - b.d)
+    .sort((a, b) => b.k - a.k || b.bs - a.bs || b.bk - a.bk || a.d - b.d)
     .slice(0, n);
 }
 

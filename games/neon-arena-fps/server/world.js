@@ -161,9 +161,18 @@ class World {
 
   // ---------- 反作弊：几何/速度查询（引擎回调注入点） ----------
   maxSpeedOf(p) {
-    return RULES.baseSpeed * (1 + 0.1 * p.boots)
+    const base = RULES.baseSpeed * (1 + 0.1 * p.boots)
       * (this.buffOn(p, 'speed') ? 1.6 : 1)
       * (this.buffOn(p, 'zombie') ? 1.35 : 1);
+    // 近期峰值宽限：buff 生效/失效边界上，客户端与服务端对 buff 状态的认知有 1 帧网络时差，
+    // 取近 1.2s 内的最大理论速度，避免边界瞬间被误判超速
+    const t = now();
+    if (base >= (p._spdPeak || 0) || t - (p._spdPeakAt || 0) > 1200) { p._spdPeak = base; p._spdPeakAt = t; }
+    return Math.max(base, p._spdPeak || base);
+  }
+  maxAboveFloorOf(p) {
+    // 跳跃增益让跳跃高度 ×2.25，飞天阈值同步抬高，避免弹跳道具误判
+    return this.buffOn(p, 'jump') ? 10 : 7;
   }
   floorAtSrv(pos) {   // 支撑面高度（含微阶坡道片与存活油桶）
     let f = 0;
@@ -198,6 +207,7 @@ class World {
     const res = p.mon.movement(cand, {
       maxSpeed: this.maxSpeedOf(p),
       floorY: this.floorAtSrv(cand),
+      maxAboveFloor: this.maxAboveFloorOf(p),
       inSolid: q => this.inSolidSrv(q),
     });
     p.pos = res.pos;   // 违规时已回拉到最后合法位置，快照广播的永远是合法坐标
@@ -488,7 +498,9 @@ class World {
       attacker.kills++; attacker.score += RULES.killScore; attacker.coins += RULES.killCoins;
       attacker.hp = Math.min(RULES.maxHp, attacker.hp + RULES.killHeal);
       attacker.streak++;
-      const aProf = board.get(attacker.name); aProf.kills++; board.save();
+      const aProf = board.get(attacker.name); aProf.kills++;
+      if (attacker.streak > aProf.bestStreak) aProf.bestStreak = attacker.streak;   // 历史最高连杀入档
+      board.save();
       kInfo = { id: attacker.id, n: attacker.name, c: attacker.color };
       const s = attacker.streak;
       const label = s === 3 ? '三连杀!' : s === 5 ? '五连杀!!' : s === 8 ? '八连杀，锐不可当!' : s === 12 ? '超神了!!!' : null;
@@ -875,8 +887,8 @@ class World {
 
   boardMsg() {
     const rt = [...this.players.values()]
-      .sort((a, b) => b.kills - a.kills || b.score - a.score || a.deaths - b.deaths)
-      .map(p => ({ i: p.id, n: p.name, c: p.color, k: p.kills, d: p.deaths, s: p.score }));
+      .sort((a, b) => b.kills - a.kills || b.streak - a.streak || b.score - a.score || a.deaths - b.deaths)
+      .map(p => ({ i: p.id, n: p.name, c: p.color, k: p.kills, d: p.deaths, s: p.score, st: p.streak }));
     return { type: 'board', rt, hist: board.top(10) };
   }
 }

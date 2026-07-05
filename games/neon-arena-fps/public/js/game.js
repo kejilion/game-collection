@@ -756,10 +756,14 @@
   // ---------- 排行榜（含首页历史榜） ----------
   function renderBoard(m) {
     const mkRows = (rows, isRt) => {
-      let html = `<div class="brow head"><span>#</span><span>玩家</span><span class="num">击杀</span><span class="num">死亡</span><span class="num">${isRt ? '得分' : 'BOSS'}</span></div>`;
+      // 6 列：# 玩家 击杀 死亡 得分/BOSS 连杀。连杀列(实时=当前连杀/历史=最高连杀)参与排序，服务端已排好
+      const col5 = isRt ? '得分' : 'BOSS';
+      let html = `<div class="brow head"><span>#</span><span>玩家</span><span class="num">击杀</span><span class="num">死亡</span><span class="num">${col5}</span><span class="num">连杀</span></div>`;
       rows.forEach((r, i) => {
         const meCls = (isRt && r.i === myId) || (!isRt && r.n === myName) ? ' me' : '';
-        html += `<div class="brow${meCls}"><span class="rank r${i + 1}">${i + 1}</span><span style="color:${r.c || '#cfe6f5'}">${esc(r.n)}</span><span class="num">${r.k}</span><span class="num">${r.d}</span><span class="num">${isRt ? r.s : r.bk}</span></div>`;
+        const streakVal = isRt ? (r.st | 0) : (r.bs | 0);
+        const streakCls = streakVal >= 3 ? ' streak-hot' : '';
+        html += `<div class="brow${meCls}"><span class="rank r${i + 1}">${i + 1}</span><span style="color:${r.c || '#cfe6f5'}">${esc(r.n)}</span><span class="num">${r.k}</span><span class="num">${r.d}</span><span class="num">${isRt ? (r.s | 0) : (r.bk | 0)}</span><span class="num${streakCls}">${streakVal > 0 ? '🔥' + streakVal : '-'}</span></div>`;
       });
       if (!rows.length) html += '<div class="brow"><span></span><span style="color:#7591ad">暂无数据</span></div>';
       return html;
@@ -1399,6 +1403,8 @@
       while (dy > Math.PI) dy -= Math.PI * 2;
       while (dy < -Math.PI) dy += Math.PI * 2;
       e.disp.ya += dy * k;
+      if (e.disp.pi === undefined) e.disp.pi = s.pi;
+      e.disp.pi += (s.pi - e.disp.pi) * k;   // pitch 也插值：观战第一人称需要俯仰跟手，之前漏维护导致视角割裂
       const m = e.model;
       m.group.position.set(e.disp.x, e.disp.y, e.disp.z);
       m.group.rotation.y = e.disp.ya;
@@ -1601,9 +1607,10 @@
       const ts = specTargets();
       if (specFollow >= 0 && ts.length) {
         const e = ts[Math.min(specFollow, ts.length - 1)];
-        const eye = V3(e.disp.x, e.disp.y + 1.62, e.disp.z);
-        const q = new T.Quaternion().setFromEuler(new T.Euler(e.cur.pi, e.disp.ya, 0, 'YXZ'));
+        const pi = e.disp.pi !== undefined ? e.disp.pi : e.cur.pi;   // pitch/yaw 同源（都用插值值），消除两轴不同步
+        const eye = V3(e.disp.x, e.disp.y + defs.rules.eyeH, e.disp.z);
         if (specView === 'tp') {
+          const q = new T.Quaternion().setFromEuler(new T.Euler(pi, e.disp.ya, 0, 'YXZ'));
           const vd = V3(0, 0, -1).applyQuaternion(q);
           const desired = eye.clone().addScaledVector(vd, -3.8).add(V3(0, 0.5, 0));
           const dir = desired.clone().sub(eye);
@@ -1614,10 +1621,13 @@
           const camPos = eye.clone().addScaledVector(dir, d);
           if (camPos.y < 0.3) camPos.y = 0.3;
           camera.position.lerp(camPos, Math.min(1, dt * 10));
+          camera.quaternion.slerp(q, Math.min(1, dt * 8));   // 第三人称保留平滑（镜头跟随需要缓冲）
         } else {
-          camera.position.lerp(eye, Math.min(1, dt * 10));
+          // 第一人称：直接复刻目标玩家的真实视角——位置和朝向都直接 set（e.disp 已含网络插值），
+          // 不再叠加 position.lerp / quaternion.slerp，跟手感与玩家自己的第一人称一致
+          camera.position.copy(eye);
+          camera.rotation.set(pi, e.disp.ya, 0);
         }
-        camera.quaternion.slerp(q, Math.min(1, dt * 8));
         if (Math.floor(perfNow / 500) !== Math.floor((perfNow - dt * 1000) / 500)) updateSpecBar();
       } else {
         let spd = 14 * specSpeed * (keys.ShiftLeft ? 2.2 : 1);

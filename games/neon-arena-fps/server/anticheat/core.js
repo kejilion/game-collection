@@ -41,14 +41,21 @@ const DEFAULTS = {
   // 移动校验
   movement: {
     dtMinMs: 15, dtMaxMs: 400,   // 单包计时钳制（防时间伪造/卡顿误判）
-    speedSlack: 1.25,            // 速度许可倍率（容忍插值与抖动）
+    speedSlack: 1.3,             // 速度许可倍率（容忍插值与抖动）
     packetPad: 0.05,             // 每包固定余量（米）
-    teleportDist: 6,             // 单包位移即判瞬移的距离
-    speedBucketMax: 3,           // 超速漏桶容量（米），溢出记违规并回拉
+    teleportDist: 6,             // 单包位移即判瞬移的距离（下限，会随 dt 动态放大）
+    teleportDtScale: 3,          // 瞬移阈值 = max(teleportDist, allowed×此系数)，长间隔包自动放宽
+    speedBucketMax: 4,           // 超速漏桶容量（米），溢出记违规并回拉
     speedBucketLeak: 0.25,       // 合法包时漏桶回收比例
     maxAboveFloor: 7,            // 高于支撑面多少米算"飞天"（含跳跃+平台余量）
     flyBucketMax: 6,             // 飞天漏桶（米·包）
     clipStreak: 3,               // 连续 N 包卡在实体内才判穿墙
+    // 网络尖峰豁免：包间隔超过 lagSpikeMs（丢包/卡顿恢复）时，仅回拉位置不计分，
+    // 使卡顿玩家不被误封；外挂即便利用大间隔发包也照样被回拉，占不到便宜。
+    // 为防刻意慢速发包滥用豁免，lagBudget 为窗口内可豁免次数，超出则恢复正常计分。
+    lagSpikeMs: 500,
+    lagBudget: 8,                // 60s 窗口内的豁免额度
+    lagWindowMs: 60000,
   },
   // 瞄准统计
   aim: {
@@ -199,36 +206,52 @@ class Monitor {
     }
     const st = this._mv;
     if (!this.enabled) { st.pos = cand; st.at = t; return { ok: true, pos: cand }; }
-    const dt = Math.max(M.dtMinMs, Math.min(M.dtMaxMs, t - st.at));
+    const rawDelta = t - st.at;   // 真实包间隔（未钳制）
+    const dt = Math.max(M.dtMinMs, Math.min(M.dtMaxMs, rawDelta));
     st.at = t;
     const dx = cand.x - st.pos.x, dz = cand.z - st.pos.z;
     const horiz = hyp2(dx, dz);
     const allowed = (ctx.maxSpeed || 10) * dt / 1000 * M.speedSlack + M.packetPad;
     let reject = false, reason = '';
 
-    // 瞬移：单包位移离谱
-    const tpDist = ctx.teleportDist || M.teleportDist;
+    // 网络尖峰判定：包间隔异常大 = 丢包/卡顿恢复。豁免额度按 60s 窗口滚动补充，防刻意慢发滥用。
+    let lagExempt = false;
+    if (rawDelta > M.lagSpikeMs) {
+      if (st.lagWinAt === undefined || t - st.lagWinAt > M.lagWindowMs) { st.lagWinAt = t; st.lagUsed = 0; }
+      if ((st.lagUsed || 0) < M.lagBudget) { st.lagUsed = (st.lagUsed || 0) + 1; lagExempt = true; }
+    }
+
+    // 瞬移：单包位移离谱。阈值随 dt 动态放大——长间隔包本就该允许更大位移。
+    const tpDist = Math.max(ctx.teleportDist || M.teleportDist, allowed * M.teleportDtScale);
     if (horiz > tpDist) {
       this.stats.teleports++;
+      if (lagExempt) {
+        // 网络尖峰：静默回拉到最后合法位置，不计分（公平性由回拉保证，外挂占不到便宜）
+        st.speedBucket = 0;
+        this.stats.corrections++;
+        return { ok: false, pos: { x: st.pos.x, y: st.pos.y, z: st.pos.z }, reason: 'lag' };
+      }
       this.flag('teleport', undefined, `单包位移 ${horiz.toFixed(1)}m (${st.pos.x.toFixed(1)},${st.pos.z.toFixed(1)})→(${cand.x.toFixed(1)},${cand.z.toFixed(1)}) dt=${dt}ms`);
       reject = true; reason = 'teleport';
     } else if (horiz > allowed) {
-      // 超速：漏桶累积，溢出才处置（容忍抖动）
-      st.speedBucket += horiz - allowed;
-      if (st.speedBucket > M.speedBucketMax) {
-        this.flag('speed', undefined, `累计超速 ${st.speedBucket.toFixed(1)}m`);
-        st.speedBucket *= 0.5;
-        reject = true; reason = 'speed';
+      // 超速：漏桶累积，溢出才处置（容忍抖动）。网络尖峰包不喂桶，避免卡顿恢复的正常位移被累计。
+      if (!lagExempt) {
+        st.speedBucket += horiz - allowed;
+        if (st.speedBucket > M.speedBucketMax) {
+          this.flag('speed', undefined, `累计超速 ${st.speedBucket.toFixed(1)}m`);
+          st.speedBucket *= 0.5;
+          reject = true; reason = 'speed';
+        }
       }
     } else {
       st.speedBucket = Math.max(0, st.speedBucket - allowed * M.speedBucketLeak);
     }
 
-    // 飞天：持续高于支撑面
+    // 飞天：持续高于支撑面（网络尖峰包不喂桶，卡顿恢复时的高度跳变不误判）
     if (!reject && ctx.floorY !== undefined) {
       const maxAbove = ctx.maxAboveFloor || M.maxAboveFloor;
       const over = cand.y - (ctx.floorY + maxAbove);
-      if (over > 0) {
+      if (over > 0 && !lagExempt) {
         st.flyBucket += Math.min(over, 2);
         if (st.flyBucket > M.flyBucketMax) {
           this.flag('fly', undefined, `悬空 y=${cand.y.toFixed(1)} floor=${ctx.floorY.toFixed(1)}`);
@@ -236,7 +259,7 @@ class Monitor {
           st.pos.y = Math.min(st.pos.y, ctx.floorY + 1);  // 基线可能已悬空，一并拉回地表附近
           reject = true; reason = 'fly';
         }
-      } else {
+      } else if (over <= 0) {
         st.flyBucket = Math.max(0, st.flyBucket - 0.5);
       }
     }

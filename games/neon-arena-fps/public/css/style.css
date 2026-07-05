@@ -18,7 +18,7 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: #05070d;
 .menu-hist { width: 320px; padding: 22px 20px; text-align: left; display: flex; flex-direction: column; }
 .mh-title { font-size: 17px; font-weight: 800; margin-bottom: 10px; color: var(--gold); letter-spacing: 2px; }
 .menu-hist .board-table { flex: 1; font-size: 13px; }
-.menu-hist .brow { grid-template-columns: 30px 1fr 52px 52px 52px; padding: 6px 8px; }
+.menu-hist .brow { grid-template-columns: 26px 1fr 42px 42px 42px 46px; padding: 6px 6px; font-size: 12px; }
 .menu-card { width: 380px; max-width: 92vw; padding: 28px 30px; text-align: center;
   background: var(--bg); border: 1px solid var(--line); border-radius: 14px;
   box-shadow: 0 0 60px rgba(53,224,255,.12), inset 0 0 30px rgba(53,224,255,.04); }
@@ -198,8 +198,9 @@ body.chat-focus #chatBox { bottom: 44vh; }
   border: 1px solid rgba(255,255,255,.14); border-radius: 6px; cursor: pointer; font-family: inherit; }
 .tab.active { color: #05202c; background: var(--neon); border-color: var(--neon); font-weight: 700; }
 .board-table { font-size: 14px; }
-.brow { display: grid; grid-template-columns: 36px 1fr 62px 62px 70px; padding: 7px 10px; border-radius: 6px; align-items: center; }
+.brow { display: grid; grid-template-columns: 32px 1fr 50px 50px 56px 56px; padding: 7px 10px; border-radius: 6px; align-items: center; }
 .brow.head { color: #7fa8c9; font-size: 12px; }
+.brow .num.streak-hot { color: #ff8a3c; font-weight: 800; }
 .brow:nth-child(even):not(.head) { background: rgba(255,255,255,.035); }
 .brow.me { background: rgba(53,224,255,.14); border: 1px solid rgba(53,224,255,.35); }
 .brow .rank { font-weight: 800; color: #9fc3dd; }

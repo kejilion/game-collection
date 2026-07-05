@@ -216,9 +216,10 @@ G.world = (function () {
     sun.position.set(40, 60, -30);
     sun.castShadow = true;
     sun.shadow.mapSize.set(shadowSize || 2048, shadowSize || 2048);   // 仅观感开销：不影响雾距/视距（公平性要求）
-    sun.shadow.camera.left = -45; sun.shadow.camera.right = 45;
-    sun.shadow.camera.top = 45; sun.shadow.camera.bottom = -45;
-    sun.shadow.camera.far = 220;
+    const shExt = half + 4;   // 阴影相机覆盖整张地图
+    sun.shadow.camera.left = -shExt; sun.shadow.camera.right = shExt;
+    sun.shadow.camera.top = shExt; sun.shadow.camera.bottom = -shExt;
+    sun.shadow.camera.far = 260;
     sun.shadow.bias = -0.0004;
     scene.add(sun);
     sun.target.layers.enable(1);
