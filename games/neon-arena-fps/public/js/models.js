@@ -325,6 +325,24 @@ G.models = (function () {
         g.add(b, top); fxMats.push(topMat);
         break;
       }
+      case 'flash': {   // 闪光弹：银色小罐 + 白色发光环
+        const bodyMat = std('#c8ccd4', { metalness: 0.75, roughness: 0.25 });
+        const body = cyl(0.05, 0.05, 0.16, bodyMat);
+        const band = cyl(0.053, 0.053, 0.035, new T.MeshStandardMaterial({ color: '#ffffff', emissive: '#dfeaff', emissiveIntensity: 0.8 }));
+        band.position.y = 0.03;
+        const top = cyl(0.028, 0.028, 0.04, std('#2e3238', { metalness: 0.6 })); top.position.y = 0.1;
+        g.add(body, band, top); fxMats.push(bodyMat);
+        break;
+      }
+      case 'smoke': {   // 烟雾弹：灰罐 + 黄色警示环
+        const bodyMat = std('#5a626e', { roughness: 0.55 });
+        const body = cyl(0.06, 0.06, 0.2, bodyMat);
+        const band = cyl(0.063, 0.063, 0.04, std('#ffd23c', { emissive: '#7a5f00', emissiveIntensity: 0.4 }));
+        band.position.y = 0.04;
+        const top = cyl(0.03, 0.03, 0.04, std('#2e3238', { metalness: 0.6 })); top.position.y = 0.12;
+        g.add(body, band, top); fxMats.push(bodyMat);
+        break;
+      }
     }
     g.userData.fxMats = fxMats;
     return g;

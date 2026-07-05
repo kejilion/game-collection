@@ -32,7 +32,7 @@
     return (hwc <= 4 || mem <= 3) ? QUALITY.low : QUALITY.medium;
   })();
 
-  const WICON = { fist: '👊', knife: '🔪', sword: '⚔️', hammer: '🔨', pistol: '🔫', mg: '💥', sniper: '🎯', nade: '🧨', boss: '👹', barrel: '🛢️' };
+  const WICON = { fist: '👊', knife: '🔪', sword: '⚔️', hammer: '🔨', pistol: '🔫', mg: '💥', sniper: '🎯', nade: '🧨', flash: '🔆', smoke: '💨', boss: '👹', barrel: '🛢️' };
   const COS_ICON = { hat_cowboy: '🤠', hat_beret: '🧢', hat_horns: '😈', hat_crown: '👑', face_shades: '🕶️', face_visor: '🥽', back_cape: '🦸', back_jet: '🚀', back_wings: '👼', fx_ice: '❄️', fx_gold: '✨', fx_rainbow: '🌈' };
 
   // ---------- 渲染器 ----------
@@ -110,6 +110,7 @@
   let specFollow = -1, specFree = { pos: V3(0, 18, 30) }, specView = 'tp', specSpeed = 1;
   let shopPre = null, hoverEq = null;
   let lastBeatAt = 0;
+  let blindUntil = 0, blindTotal = 1;   // 闪光弹致盲：结束时间戳 + 本次总时长（算白屏淡出曲线用）
 
   // ---------- 网络 ----------
   function connect() {
@@ -166,6 +167,11 @@
       case 'shopmsg': shopMsg(m.text, m.ok); if (m.ok) G.audio.buy(); else G.audio.deny(); break;
       case 'err': $('menuErr').textContent = m.text; break;
       case 'kicked': kickedText = m.text || '你已被移出对局'; rejoinWanted = false; break;
+      case 'flashed': {
+        const newUntil = now() + m.ms;
+        if (newUntil > blindUntil) { blindUntil = newUntil; blindTotal = m.ms; }
+        break;
+      }
       case 'acwarn':
         bigNotice(m.text);
         addChat(`<span class="sys-text">${esc(m.text)}</span>`, 'sys streak');
@@ -243,6 +249,8 @@
       $('bossTimer').classList.remove('hidden');
       $('bossTimer').textContent = `👹 BOSS 将在 ${Math.ceil(m.nb / 1000)}s 后降临`;
     } else $('bossTimer').classList.add('hidden');
+    G.audio.setIntensity(m.boss ? 1 : 0);   // BOSS 在场时 BGM 进入高强度段
+
     // 弹道 / 手雷 / 油桶
     syncProjs(m.fb);
     syncNades(m.gd);
@@ -279,7 +287,23 @@
     }
     return g;
   }
-  function makeNadeMesh() {
+  function makeNadeMesh(kind) {
+    if (kind === 1) {   // 闪光弹：银罐
+      const g = new T.Mesh(new T.CylinderGeometry(0.07, 0.07, 0.2, 8),
+        new T.MeshStandardMaterial({ color: '#c8ccd4', metalness: 0.7, roughness: 0.3 }));
+      g.castShadow = true;
+      return g;
+    }
+    if (kind === 2) {   // 烟雾弹：灰罐黄环
+      const grp = new T.Group();
+      const body = new T.Mesh(new T.CylinderGeometry(0.08, 0.08, 0.22, 8),
+        new T.MeshStandardMaterial({ color: '#5a626e', roughness: 0.6 }));
+      body.castShadow = true;
+      const band = new T.Mesh(new T.CylinderGeometry(0.085, 0.085, 0.05, 8),
+        new T.MeshStandardMaterial({ color: '#ffd23c' }));
+      grp.add(body, band);
+      return grp;
+    }
     const g = new T.Mesh(new T.SphereGeometry(0.13, 8, 8), new T.MeshStandardMaterial({ color: '#3c5232' }));
     g.castShadow = true;
     return g;
@@ -289,6 +313,7 @@
     return { id: 'po' + i, pos: V3(a[0], a[1], a[2]), vel: V3(0, 0, 0), kind: a[3] || 0 };
   }
   function readNade(a, i) {
+    if (a.length >= 8) return { id: 'g' + a[0], pos: V3(a[1], a[2], a[3]), vel: V3(a[4], a[5], a[6]), kind: a[7] || 0 };
     if (a.length >= 7) return { id: 'g' + a[0], pos: V3(a[1], a[2], a[3]), vel: V3(a[4], a[5], a[6]), kind: 0 };
     return { id: 'go' + i, pos: V3(a[0], a[1], a[2]), vel: V3(0, 0, 0), kind: 0 };
   }
@@ -375,6 +400,44 @@
   function distToMe(pos) {
     return Math.hypot(pos[0] - camera.position.x, pos[2] - camera.position.z);
   }
+  // 客户端已知的活跃烟雾云：用于隐藏烟中玩家名牌 + 让触屏辅助瞄准无法隔烟锁人（公平性）
+  const activeSmokes = [];
+  function inSmoke(x, y, z) {
+    const t = now();
+    for (let i = activeSmokes.length - 1; i >= 0; i--) {
+      const s = activeSmokes[i];
+      if (s.until < t) { activeSmokes.splice(i, 1); continue; }
+      if (Math.hypot(x - s.x, y - s.y, z - s.z) < s.r * 0.85) return true;
+    }
+    return false;
+  }
+  function smokeBlocks(o, d, dist) {   // 视线段是否穿过烟雾球
+    const t = now();
+    for (const s of activeSmokes) {
+      if (s.until < t) continue;
+      const cx = s.x - o.x, cy = s.y - o.y, cz = s.z - o.z;
+      const b = cx * d.x + cy * d.y + cz * d.z;
+      if (b < 0 || b > dist) continue;
+      const px = o.x + d.x * b - s.x, py = o.y + d.y * b - s.y, pz = o.z + d.z * b - s.z;
+      if (px * px + py * py + pz * pz < (s.r * 0.7) ** 2) return true;
+    }
+    return false;
+  }
+  // 受击后仰：给挨打的模型一个短促的、朝攻击者反方向的位移，装饰性叠加在网络同步位置上，
+  // 不改 e.disp（下一帧仍从服务器权威位置重新插值），纯视觉，不会造成位置误差累积
+  function triggerFlinch(tgId, byId) {
+    const tgPos = entPos(tgId);
+    const byPos = byId ? entPos(byId) : null;
+    let dir;
+    if (tgPos && byPos && (Math.abs(tgPos[0] - byPos[0]) > 1e-3 || Math.abs(tgPos[2] - byPos[2]) > 1e-3)) {
+      dir = V3(tgPos[0] - byPos[0], 0, tgPos[2] - byPos[2]).normalize();
+    } else {
+      dir = V3(Math.random() - 0.5, 0, Math.random() - 0.5).normalize();
+    }
+    if (tgId === myId) { if (myModel) { myModel.flinchAt = now(); myModel.flinchDir = dir; } return; }
+    const e = ents.get(tgId);
+    if (e) { e.flinchAt = now(); e.flinchDir = dir; }
+  }
   function onFx(m) {
     switch (m.k) {
       case 'shot': {
@@ -384,6 +447,7 @@
         if (distToMe(m.o) < 75) G.audio.shot(m.wp);
         const e = ents.get(m.id);
         if (e) e.model.attackT = 0;
+        if (!m.tg) G.fx.impactSpark(m.e, '#ffe6a8');   // 没打中任何目标：在终点补个墙面/环境命中火花
         break;
       }
       case 'melee': {
@@ -395,14 +459,21 @@
         break;
       }
       case 'hit': {
-        G.fx.blood(m.pos);
+        const isMelee = !!(m.wp && defs.weapons[m.wp] && defs.weapons[m.wp].slot === 'melee');
+        let hitDir = null;
+        if (m.by) { const bp = entPos(m.by); if (bp) hitDir = V3(m.pos[0] - bp[0], 0.3, m.pos[2] - bp[2]).normalize(); }
+        G.fx.blood(m.pos, hitDir);
+        triggerFlinch(m.tg, m.by);
         if (m.by === myId) {
           const hm = $('hitmarker');
           hm.classList.remove('show', 'crit'); void hm.offsetWidth;
           if (m.crit || m.hs) hm.classList.add('crit');
           hm.classList.add('show');
-          if (m.hs) G.audio.headshot(); else G.audio.hit(m.crit);
+          if (m.hs) G.audio.headshot();
+          else if (isMelee) G.audio.meleeHit(m.wp);
+          else G.audio.hit(m.crit);
           G.fx.damageText(m.pos, (m.hs ? '爆头 ' : '') + m.dmg + (m.crit ? '!' : ''), m.crit ? '#ffd23c' : m.hs ? '#ff9c3c' : '#fff', m.crit || m.hs);
+          if (isMelee) G.fx.punch(camDir(), m.wp === 'hammer' ? 1.5 : m.wp === 'sword' ? 1.1 : 0.8);   // 近战命中：扎实一下前顶
         }
         if (m.tg === myId) {
           G.audio.hurt();
@@ -410,8 +481,10 @@
           dv.style.opacity = Math.min(1, 0.35 + m.dmg / 60);
           setTimeout(() => dv.style.opacity = 0, 140);
           G.fx.shake(Math.min(0.5, m.dmg / 80));
-          if (m.by) { const ap = entPos(m.by); if (ap) showDmgDir(ap); }
-          else if (bossEnt) showDmgDir([bossEnt.disp.x, 0, bossEnt.disp.z]);
+          let awayDir = null;
+          if (m.by) { const ap = entPos(m.by); if (ap) { showDmgDir(ap); awayDir = V3(me.pos.x - ap[0], 0, me.pos.z - ap[2]); } }
+          else if (bossEnt) { showDmgDir([bossEnt.disp.x, 0, bossEnt.disp.z]); awayDir = V3(me.pos.x - bossEnt.disp.x, 0, me.pos.z - bossEnt.disp.z); }
+          if (awayDir && awayDir.lengthSq() > 1e-6) { awayDir.normalize(); G.fx.punch(awayDir, Math.min(1.6, 0.5 + m.dmg / 35)); }
         }
         break;
       }
@@ -419,6 +492,15 @@
       case 'explode':
         G.fx.explosion(m.pos, m.r, { fire: m.fire, boss: m.boss, vp: m.vp });
         if (distToMe(m.pos) < 90) G.audio.explosion(m.boss || m.r > 4);
+        break;
+      case 'flashbang':
+        G.fx.flashPop(m.pos, m.r);
+        if (distToMe(m.pos) < 60) G.audio.flashPop();
+        break;
+      case 'smokepop':
+        G.fx.smokeCloud(m.pos, m.r, m.dur);
+        activeSmokes.push({ x: m.pos[0], y: m.pos[1] + 1, z: m.pos[2], r: m.r, until: now() + (m.dur || 9000) });
+        if (distToMe(m.pos) < 50) G.audio.smokePop();
         break;
       case 'throw': if (m.id !== myId) G.audio.throwNade(); break;
       case 'die': {
@@ -442,7 +524,8 @@
       case 'bossfire': if (distToMe(m.pos) < 80) G.audio.bossFire(); break;
       case 'bosshit':
         G.fx.impact(m.pos, '#ff8a50');
-        if (m.by === myId) { G.fx.damageText(m.pos, m.dmg, '#ff9c3c', false); G.audio.hit(false); }
+        if (bossEnt) bossEnt.flinchAt = now();
+        if (m.by === myId) { G.fx.damageText(m.pos, m.dmg, '#ff9c3c', false); G.audio.hit(false); G.fx.punch(camDir(), 0.5); }
         break;
       case 'barrel': {
         const br = G.world.barrelAt(m.id);
@@ -469,6 +552,13 @@
     if (m.k && m.k.id === myId && m.v.id !== myId) {
       G.audio.kill();
       notice(`击杀 ${m.v.n} +25🪙`, true);
+      // 击杀确认：准星短暂变骷髅 + 一记前顶
+      const hm = $('hitmarker');
+      hm.textContent = '💀';
+      hm.classList.remove('show', 'crit'); void hm.offsetWidth;
+      hm.classList.add('crit', 'show');
+      setTimeout(() => { hm.textContent = '✕'; }, 500);
+      G.fx.punch(camDir(), 0.5);
     }
     if (m.v.id === myId) {
       lastKillerText = m.self ? '你被自己的爆炸送走了' :
@@ -646,12 +736,13 @@
       sg.querySelector('.wammo').textContent = '';
     }
     const sn = $('slotNade');
-    sn.classList.toggle('empty', !s.hn);
+    sn.classList.toggle('empty', !s.ng);
     sn.classList.toggle('active', me.active === 'nade');
-    sn.querySelector('.wico').textContent = '🧨';
-    sn.querySelector('.wname').textContent = s.hn ? '手雷' : '未拾取手雷';
-    const nadeCd = Math.max(0, 3500 - (now() - me.lastNade));
-    sn.querySelector('.wammo').textContent = s.hn ? (nadeCd > 0 ? (nadeCd / 1000).toFixed(1) + 's' : '✓') : '';
+    sn.querySelector('.wico').textContent = s.ng ? WICON[s.ng] : '🧨';
+    sn.querySelector('.wname').textContent = s.ng ? defs.weapons[s.ng].name : '未拾取投掷物';
+    const nadeCdMs = s.ng && defs.weapons[s.ng] ? defs.weapons[s.ng].cd * 1000 : 2000;
+    const nadeCd = Math.max(0, nadeCdMs - (now() - me.lastNade));
+    sn.querySelector('.wammo').textContent = s.ng ? (nadeCd > 0 ? (nadeCd / 1000).toFixed(1) + 's' : '✓') : '';
     const br = $('buffRow');
     br.innerHTML = s.bf.map(([k, ms]) => {
       const b = defs.buffs[k];
@@ -949,7 +1040,7 @@
     if (zomb) return;
     const slots = ['melee'];
     if (mySnap.gw) slots.push('gun');
-    if (mySnap.hn) slots.push('nade');
+    if (mySnap.ng) slots.push('nade');
     if (slots.length < 2) return;
     let idx = slots.indexOf(me.active);
     if (idx < 0) idx = 0;
@@ -997,7 +1088,7 @@
     const zomb = mySnap.bf.some(b => b[0] === 'zombie');
     if (zomb && slot !== 'melee') { G.audio.deny(); return; }
     if (slot === 'gun' && !mySnap.gw) { G.audio.deny(); return; }
-    if (slot === 'nade' && !mySnap.hn) { G.audio.deny(); return; }
+    if (slot === 'nade' && !mySnap.ng) { G.audio.deny(); return; }
     if (me.active === slot) return;
     me.active = slot; me.lastSwitch = now();
     send({ type: 'switch', slot });
@@ -1093,12 +1184,13 @@
     let bestDot = AIM_ASSIST_CONE, bestDir = null;
     for (const e of ents.values()) {
       if (!e.cur || !e.cur.al || e.cur.bf.some(b => b[0] === 'invis')) continue;
+      if (inSmoke(e.disp.x, e.disp.y + 1.1, e.disp.z)) continue;   // 烟中目标不吸附
       const to = V3(e.disp.x, e.disp.y + 1.1, e.disp.z).sub(origin);
       const dist = to.length();
       if (dist < 0.5 || dist > AIM_ASSIST_RANGE) continue;
       to.normalize();
       const dot = to.dot(dir);
-      if (dot > bestDot) { bestDot = dot; bestDir = to; }
+      if (dot > bestDot && !smokeBlocks(origin, to, dist)) { bestDot = dot; bestDir = to; }
     }
     if (bossEnt && bossEnt.cur && defs.bosses && defs.bosses[bossEnt.tp]) {
       const yc = defs.bosses[bossEnt.tp].yc || 2;
@@ -1107,14 +1199,17 @@
       if (dist >= 0.5 && dist <= AIM_ASSIST_RANGE) {
         to.normalize();
         const dot = to.dot(dir);
-        if (dot > bestDot) { bestDot = dot; bestDir = to; }
+        if (dot > bestDot && !smokeBlocks(origin, to, dist)) { bestDot = dot; bestDir = to; }
       }
     }
     return bestDir ? dir.clone().lerp(bestDir, AIM_ASSIST_BLEND).normalize() : dir;
   }
 
+  // 返回 {end, wall}：wall=true 表示这发子弹被静态几何挡住了（不是打中玩家/BOSS），
+  // 用来在本地预测里立刻补一个墙面命中火花，不用等服务器广播的 shot fx 回来
   function localRayEnd(o, d, maxR) {
     let t = G.world.rayObstacles({ x: o.x, y: o.y, z: o.z }, { x: d.x, y: d.y, z: d.z }, maxR);
+    const wallT = t;
     for (const e of ents.values()) {
       if (!e.cur || !e.cur.al) continue;
       for (const [oy, r] of [[0.95, 0.55], [1.55, 0.34]]) {
@@ -1133,7 +1228,7 @@
       const disc = b * b - (oc.lengthSq() - bi.radius * bi.radius);
       if (disc > 0) { const tt = -b - Math.sqrt(disc); if (tt > 0 && tt < t) t = tt; }
     }
-    return o.clone().addScaledVector(d, t);
+    return { end: o.clone().addScaledVector(d, t), wall: t >= wallT - 0.02 && wallT < maxR - 0.05 };
   }
 
   function combat(dt) {
@@ -1173,11 +1268,12 @@
       d = applyAimAssist(d, o);
       send({ type: 'fire', o: [o.x, o.y, o.z], d: [d.x, d.y, d.z] });
       G.audio.shot(mySnap.gw);
-      const end = localRayEnd(o, d, def.range);
+      const { end, wall } = localRayEnd(o, d, def.range);
       const mp = o.clone().addScaledVector(d, 0.9).addScaledVector(V3(Math.cos(me.yaw), 0, -Math.sin(me.yaw)), 0.14);
       mp.y -= 0.1;
       G.fx.tracer([mp.x, mp.y, mp.z], [end.x, end.y, end.z], '#ffe0a0');
       G.fx.muzzle(mp);
+      if (wall) G.fx.impactSpark([end.x, end.y, end.z], '#ffe6a8');
       // 枪口青烟
       G.fx.dustPuff([mp.x, mp.y, mp.z], 0.5, '#9aa4b0');
       vmKick = Math.min(1, vmKick + (mySnap.gw === 'sniper' ? 1 : 0.4));
@@ -1185,8 +1281,9 @@
       me.spread = Math.min(14, me.spread + 5);
       if (myModel) myModel.attackT = 0;
       if (me.ammoL <= 0) { tryLocalReload(); }
-    } else if (me.active === 'nade' && mySnap.hn) {
-      if (t - me.lastNade >= 3500) {
+    } else if (me.active === 'nade' && mySnap.ng) {
+      const nadeCdMs = (defs.weapons[mySnap.ng] ? defs.weapons[mySnap.ng].cd : 2) * 1000;
+      if (t - me.lastNade >= nadeCdMs) {
         me.lastNade = t;
         const d = camDir();
         send({ type: 'nade', d: [d.x, d.y, d.z] });
@@ -1283,6 +1380,13 @@
   }
 
   // ---------- 远程实体渲染 ----------
+  // 受击后仰位移：在网络同步位置之上叠加一个快速衰减的偏移，装饰性的，不进 e.disp 所以不会累积误差
+  const FLINCH_DUR = 220;
+  function flinchOffset(flinchAt) {
+    if (!flinchAt) return 0;
+    const k = 1 - (now() - flinchAt) / FLINCH_DUR;
+    return k > 0 ? k * k : 0;
+  }
   function renderEnts(dt) {
     const k = 1 - Math.exp(-dt * 14);
     for (const e of ents.values()) {
@@ -1298,11 +1402,17 @@
       const m = e.model;
       m.group.position.set(e.disp.x, e.disp.y, e.disp.z);
       m.group.rotation.y = e.disp.ya;
+      const fk = flinchOffset(e.flinchAt);
+      if (fk > 0) {
+        m.group.position.x += e.flinchDir.x * fk * 0.22;
+        m.group.position.z += e.flinchDir.z * fk * 0.22;
+        m.group.position.y += Math.sin(fk * Math.PI) * 0.05;
+      } else e.flinchAt = 0;
       m.group.visible = !!s.al;
       if (!s.al) continue;
       const zomb = s.bf.some(b => b[0] === 'zombie');
       G.models.tintZombie(m, zomb);
-      const heldWeapon = zomb ? null : (s.ac === 'gun' ? s.gw : s.ac === 'nade' ? 'nade' : s.mw);
+      const heldWeapon = zomb ? null : (s.ac === 'gun' ? s.gw : s.ac === 'nade' ? (s.ng || 'nade') : s.mw);
       G.models.setPlayerWeapon(m, heldWeapon);
       G.models.animatePlayer(m, dt, !!s.an, s.ac, 1);
       G.models.applyCosmetics(m, s.eq);
@@ -1311,7 +1421,7 @@
       G.models.setOpacity(m, invis ? 0.12 : 1);
       if (s.pr) m.group.rotation.y += Math.sin(perfNow / 90) * 0.02;
       if (e.lastHp !== s.hp) { e.lastHp = s.hp; m.plate.userData.set(s.hp, 100); }
-      m.plate.visible = !invis;
+      m.plate.visible = !invis && !inSmoke(e.disp.x, e.disp.y + 1.2, e.disp.z);   // 烟雾里不透视名牌
     }
     // BOSS
     if (bossEnt && bossEnt.cur) {
@@ -1327,6 +1437,16 @@
       bossEnt.model.group.rotation.y = bossEnt.disp.ya;
       bossEnt.model.update(dt, moving);
       bossEnt.model.plate.userData.set(b.hp, b.mx);
+      const bfk = flinchOffset(bossEnt.flinchAt) * 0.6;   // BOSS 个头太大，位移不明显，改用挤压表现挨打
+      if (bfk > 0) {
+        bossEnt.model.group.scale.set(1 - bfk * 0.05, 1 + bfk * 0.09, 1 - bfk * 0.05);
+        // 名牌是 group 的子节点，反向抵消一下父级挤压，免得血条文字跟着变形
+        bossEnt.model.plate.scale.set(3.2 / (1 - bfk * 0.05), 0.8 / (1 + bfk * 0.09), 1);
+      } else {
+        bossEnt.model.group.scale.set(1, 1, 1);
+        bossEnt.model.plate.scale.set(3.2, 0.8, 1);
+        bossEnt.flinchAt = 0;
+      }
     }
     // 拾取物漂浮 + 光环脉动
     for (const pm of pickupMeshes) {
@@ -1351,9 +1471,15 @@
     myModel.group.visible = true;
     myModel.group.position.copy(me.pos);
     myModel.group.rotation.y = me.yaw;
+    const mfk = flinchOffset(myModel.flinchAt);
+    if (mfk > 0) {
+      myModel.group.position.x += myModel.flinchDir.x * mfk * 0.22;
+      myModel.group.position.z += myModel.flinchDir.z * mfk * 0.22;
+      myModel.group.position.y += Math.sin(mfk * Math.PI) * 0.05;
+    } else myModel.flinchAt = 0;
     const zomb = mySnap.bf.some(b => b[0] === 'zombie');
     G.models.tintZombie(myModel, zomb);
-    const held = zomb ? null : (me.active === 'gun' ? mySnap.gw : me.active === 'nade' ? 'nade' : mySnap.mw);
+    const held = zomb ? null : (me.active === 'gun' ? mySnap.gw : me.active === 'nade' ? (mySnap.ng || 'nade') : mySnap.mw);
     G.models.setPlayerWeapon(myModel, held);
     G.models.animatePlayer(myModel, dt, me.moving, me.active, 1);
     G.models.applyCosmetics(myModel, mySnap.eq);
@@ -1370,7 +1496,7 @@
     vm.group.visible = inPlay && me.zoom < 0.5 && effectiveView() === 'fp';
     if (!inPlay) return;
     const zomb = mySnap.bf.some(b => b[0] === 'zombie');
-    const held = me.active === 'gun' ? mySnap.gw : me.active === 'nade' ? 'nade' : mySnap.mw;
+    const held = me.active === 'gun' ? mySnap.gw : me.active === 'nade' ? (mySnap.ng || 'nade') : mySnap.mw;
     G.models.setViewWeapon(vm, held, zomb && me.active === 'melee');
     G.models.applyWeaponFx({ weaponMesh: vm.weaponMesh }, mySnap.eq.fx || null, perfNow / 1000);
     vmSwingT += dt; vmThrowT += dt;
@@ -1399,7 +1525,21 @@
 
   // ---------- HUD 每帧 ----------
   function hudFrame() {
-    if (TOUCH) $('tScope').classList.toggle('hidden', !(mode === 'play' && mySnap && mySnap.al && mySnap.gw === 'sniper' && me.active === 'gun'));
+    if (TOUCH) {
+      const showScope = mode === 'play' && mySnap && mySnap.al && mySnap.gw === 'sniper' && me.active === 'gun';
+      $('tScope').classList.toggle('hidden', !showScope);
+      if (!showScope && rmbDown) rmbDown = false;          // 切走狙击枪自动收镜
+      $('tScope').classList.toggle('on', showScope && rmbDown);
+    }
+    // 闪光弹白屏：前 18% 时长保持全白（完全看不见），之后随时间淡出
+    const blindRemain = blindUntil - now();
+    if (mode === 'play' && blindRemain > 0) {
+      const k = blindRemain / blindTotal, hold = 0.18;
+      const op = k > (1 - hold) ? 1 : Math.max(0, k) / (1 - hold);
+      $('flashWhite').style.opacity = Math.pow(Math.max(0, Math.min(1, op)), 0.7);
+    } else {
+      $('flashWhite').style.opacity = 0;
+    }
     if (mode !== 'play' || !mySnap) return;
     me.spread = Math.max(0, me.spread - 0.6);
     const sp = me.spread + (me.moving ? 4 : 0);
@@ -1502,6 +1642,8 @@
     }
     const sh = G.fx.getShake();
     if (sh) { camera.position.x += sh.x; camera.position.y += sh.y; camera.position.z += sh.z; }
+    const kk = G.fx.getKick();
+    if (kk) { camera.position.x += kk.x; camera.position.y += kk.y; camera.position.z += kk.z; }
   }
 
   // ---------- 主循环（后台标签页降级为 10Hz 定时器，防止逻辑停摆） ----------

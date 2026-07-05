@@ -12,6 +12,7 @@ const r5 = v => Math.round(v * 100000) / 100000;
 
 const COLORS = ['#ff6b6b', '#4dabf7', '#69db7c', '#ffd43b', '#da77f2', '#ffa94d', '#63e6e2', '#f783ac', '#a9e34b', '#748ffc', '#ff8787', '#66d9e8'];
 const PROJ_KIND = { fire: 0, bullet: 1, orb: 2 };
+const NADE_KIND = { frag: 0, flash: 1, smoke: 2 };
 
 // 静态障碍物 AABB，用于子弹遮挡与 BOSS 碰撞（油桶单独作为动态实体）
 const OBS = MAP.obstacles.map(o => ({
@@ -102,7 +103,7 @@ class World {
       id: this.nextId++, name, color: COLORS[(this.nextId + name.length) % COLORS.length],
       pos: { x: 0, y: 0, z: 0 }, yaw: 0, pitch: 0, anim: 0,
       hp: RULES.maxHp, armor: 0, shield: 0, alive: true, deadUntil: 0, protectUntil: now() + RULES.protectMs,
-      melee: 'fist', gun: null, hasNade: false, active: 'melee',
+      melee: 'fist', gun: null, nadeType: null, active: 'melee',
       ammo: 0, reloadUntil: 0, lastFire: {}, lastNade: 0,
       boots: 0, buffs: {},
       kills: 0, deaths: 0, score: 0, streak: 0,
@@ -150,7 +151,7 @@ class World {
 
   respawn(p) {
     p.alive = true; p.hp = RULES.maxHp; p.armor = 0; p.shield = 0;
-    p.melee = 'fist'; p.gun = null; p.hasNade = false; p.active = 'melee';
+    p.melee = 'fist'; p.gun = null; p.nadeType = null; p.active = 'melee';
     p.ammo = 0; p.reloadUntil = 0; p.buffs = {}; p.boots = 0; p.anim = 0;
     p.protectUntil = now() + RULES.protectMs;
     this.placeAtSpawn(p);
@@ -297,9 +298,10 @@ class World {
   }
 
   handleNade(p, m) {
-    if (!p.alive || !p.hasNade) return;
+    if (!p.alive || !p.nadeType) return;
     if (this.buffOn(p, 'zombie')) return;
-    const t = now(), def = WEAPONS.nade;
+    const t = now(), def = WEAPONS[p.nadeType];
+    // 同一个 'nade' 冷却标签不分类型：换一种投掷物不能借机绕过冷却
     if (!p.mon.cooldown('nade', def.cd * 1000 * 0.85)) return;
     p.lastNade = t;
     const dv = p.mon.vec3(m.d, { unit: true });
@@ -307,12 +309,33 @@ class World {
     const d = { x: dv[0], y: dv[1], z: dv[2] };
     const eye = { x: p.pos.x, y: p.pos.y + RULES.eyeH, z: p.pos.z };
     this.grenades.push({
-      id: this.entId++, owner: p.id,
+      id: this.entId++, owner: p.id, kind: def.kind,
       pos: { x: eye.x + d.x * 0.6, y: eye.y, z: eye.z + d.z * 0.6 },
       vel: { x: d.x * 16, y: d.y * 16 + 3.5, z: d.z * 16 },
       explodeAt: t + def.fuse * 1000,
     });
     this.broadcast({ type: 'fx', k: 'throw', id: p.id });
+  }
+
+  // 闪光弹致盲：视线被遮挡则免疫；越正对着爆点、离得越近，致盲时间越长
+  applyFlash(pos, def) {
+    for (const p of this.players.values()) {
+      if (!p.alive) continue;
+      const eye = { x: p.pos.x, y: p.pos.y + RULES.eyeH, z: p.pos.z };
+      const dx = pos.x - eye.x, dy = pos.y - eye.y, dz = pos.z - eye.z;
+      const dist = Math.hypot(dx, dy, dz);
+      if (dist > def.blindRadius || dist < 0.05) continue;
+      const dir = { x: dx / dist, y: dy / dist, z: dz / dist };
+      const blockT = this.obstacleBlock(eye, dir, dist);
+      if (blockT < dist - 0.15) continue;   // 视线被墙挡住，免疫
+      const view = this.viewVec(p);
+      const facing = Math.max(0, view[0] * dir.x + view[1] * dir.y + view[2] * dir.z);
+      if (facing < 0.12) continue;          // 基本背对/侧对，不吃闪光
+      const distFalloff = 1 - dist / def.blindRadius;
+      const dur = def.blindMax * Math.pow(facing, 1.4) * (0.35 + 0.65 * distFalloff);
+      if (dur < 0.15) continue;
+      this.sendTo(p.id, { type: 'flashed', ms: Math.round(dur * 1000) });
+    }
   }
 
   handleReload(p) {
@@ -328,7 +351,7 @@ class World {
     if (this.buffOn(p, 'zombie') && slot !== 'melee') return;
     if (slot === 'melee') p.active = 'melee';
     else if (slot === 'gun' && p.gun) p.active = 'gun';
-    else if (slot === 'nade' && p.hasNade) p.active = 'nade';
+    else if (slot === 'nade' && p.nadeType) p.active = 'nade';
   }
 
   handlePickup(p, m) {
@@ -355,8 +378,11 @@ class World {
       const def = WEAPONS[item];
       if (def.slot === 'melee') { p.melee = item; if (!this.buffOn(p, 'zombie')) p.active = 'melee'; }
       else if (def.slot === 'gun') { p.gun = item; p.ammo = def.mag; p.reloadUntil = 0; if (!this.buffOn(p, 'zombie')) p.active = 'gun'; }
-      else if (def.slot === 'nade') { p.hasNade = true; }
-      info = { kind: 'wep', name: def.name, desc: def.slot === 'nade' ? '按 3 投掷 · 无限数量有冷却' : '' };
+      else if (def.slot === 'nade') { p.nadeType = item; }
+      const nadeDesc = item === 'flash' ? '按 3 投掷 · 致盲正对爆点的敌人'
+        : item === 'smoke' ? '按 3 投掷 · 制造视野遮蔽烟雾'
+        : def.slot === 'nade' ? '按 3 投掷 · 无限数量有冷却' : '';
+      info = { kind: 'wep', name: def.name, desc: nadeDesc };
     } else if (EQUIPS[item]) {
       if (item === 'health') p.hp = Math.min(RULES.maxHp, p.hp + 50);
       else if (item === 'armor') p.armor = Math.min(RULES.maxArmor, p.armor + 50);
@@ -443,6 +469,7 @@ class World {
     this.broadcast({
       type: 'fx', k: 'hit', tg: victim.id, by: attacker ? attacker.id : 0,
       dmg, crit, hs: !!opts.hs, pos: this.chest(victim),
+      wp: opts.wp || null, melee: !!opts.melee,   // 附带武器信息供客户端做打击反馈分化，不影响判定
     });
     if (victim.hp <= 0) this.killPlayer(victim, attacker, opts.wp || 'boss', opts.bossName);
     return dmg;
@@ -717,10 +744,18 @@ class World {
       if (Math.abs(g.pos.z) > lim) { g.pos.z = clamp(g.pos.z, -lim, lim); g.vel.z *= -0.5; }
       if (t >= g.explodeAt) {
         this.grenades.splice(i, 1);
-        const def = WEAPONS.nade;
-        this.broadcast({ type: 'fx', k: 'explode', pos: [r2(g.pos.x), r2(g.pos.y), r2(g.pos.z)], r: def.radius });
+        const def = WEAPONS[g.kind] || WEAPONS.nade;
         const owner = this.players.get(g.owner) || null;
-        this.aoeDamage({ x: g.pos.x, y: g.pos.y, z: g.pos.z }, def.radius, def.dmg, owner, { wp: 'nade', falloff: 0.65 });
+        const pos = [r2(g.pos.x), r2(g.pos.y), r2(g.pos.z)];
+        if (g.kind === 'smoke') {
+          this.broadcast({ type: 'fx', k: 'smokepop', pos, r: def.radius, dur: def.smokeDur });
+        } else if (g.kind === 'flash') {
+          this.broadcast({ type: 'fx', k: 'flashbang', pos, r: def.blindRadius });
+          this.applyFlash(g.pos, def);
+        } else {
+          this.broadcast({ type: 'fx', k: 'explode', pos, r: def.radius });
+          this.aoeDamage({ x: g.pos.x, y: g.pos.y, z: g.pos.z }, def.radius, def.dmg, owner, { wp: 'nade', falloff: 0.65 });
+        }
       }
     }
     // BOSS 弹道（火球/弹幕/追踪法球）
@@ -812,7 +847,7 @@ class World {
         i: p.id, n: p.name, c: p.color,
         p: [r2(p.pos.x), r2(p.pos.y), r2(p.pos.z)], ya: r2(p.yaw), pi: r2(p.pitch), an: p.anim,
         hp: Math.max(0, Math.round(p.hp)), ar: Math.round(p.armor), sh: Math.round(p.shield),
-        al: p.alive ? 1 : 0, ac: p.active, mw: p.melee, gw: p.gun, hn: p.hasNade ? 1 : 0,
+        al: p.alive ? 1 : 0, ac: p.active, mw: p.melee, gw: p.gun, ng: p.nadeType || null,
         am: p.ammo, rl: p.reloadUntil > t ? p.reloadUntil - t : 0,
         dd: !p.alive ? Math.max(0, p.deadUntil - t) : 0,
         pr: p.protectUntil > t ? 1 : 0, bo: p.boots,
@@ -831,7 +866,7 @@ class World {
         iv: this.boss.invisUntil > t ? 1 : 0,
       } : null,
       fb: this.projs.map(f => [f.id, r2(f.pos.x), r2(f.pos.y), r2(f.pos.z), r2(f.vel.x), r2(f.vel.y), r2(f.vel.z), PROJ_KIND[f.kind] || 0]),
-      gd: this.grenades.map(g => [g.id, r2(g.pos.x), r2(g.pos.y), r2(g.pos.z), r2(g.vel.x), r2(g.vel.y), r2(g.vel.z)]),
+      gd: this.grenades.map(g => [g.id, r2(g.pos.x), r2(g.pos.y), r2(g.pos.z), r2(g.vel.x), r2(g.vel.y), r2(g.vel.z), NADE_KIND[g.kind] || 0]),
       pk: this.pickups.map(pk => pk.avail ? pk.item : null),
       br: this.barrels.map(b => b.alive ? 1 : 0),
       nb: !this.boss ? Math.max(0, this.nextBossAt - t) : 0,

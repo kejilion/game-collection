@@ -95,7 +95,9 @@ const WEAPONS = {
   pistol: { slot: 'gun',   name: '手枪',   dmg: 22,  range: 80,  cd: 0.27, mag: 12, reload: 1.3, auto: false, spread: 0.014 },
   mg:     { slot: 'gun',   name: '机枪',   dmg: 13,  range: 65,  cd: 0.09, mag: 40, reload: 2.4, auto: true,  spread: 0.05  },
   sniper: { slot: 'gun',   name: '狙击枪', dmg: 95,  range: 220, cd: 1.4,  mag: 5,  reload: 2.8, auto: false, spread: 0.002, zoom: true },
-  nade:   { slot: 'nade',  name: '手雷',   dmg: 105, radius: 6.5, fuse: 2.2, cd: 3.5 },
+  nade:   { slot: 'nade',  name: '手雷',   dmg: 105, radius: 6.5, fuse: 2.2, cd: 2.0, kind: 'frag' },
+  flash:  { slot: 'nade',  name: '闪光弹', radius: 14,  fuse: 1.3, cd: 1.6, kind: 'flash', blindMax: 3.2, blindRadius: 14 },
+  smoke:  { slot: 'nade',  name: '烟雾弹', radius: 8,   fuse: 1.4, cd: 1.6, kind: 'smoke', smokeDur: 9000 },
 };
 
 // ---------- 装备（即时生效拾取物） ----------
@@ -118,7 +120,7 @@ const BUFFS = {
 
 // 拾取点各分类可随机出的物品
 const PICKUP_POOLS = {
-  wep:   ['knife', 'sword', 'hammer', 'pistol', 'pistol', 'mg', 'mg', 'sniper', 'nade', 'nade'],
+  wep:   ['knife', 'sword', 'hammer', 'pistol', 'pistol', 'mg', 'mg', 'sniper', 'nade', 'nade', 'flash', 'flash', 'smoke', 'smoke'],
   equip: ['health', 'health', 'armor', 'armor', 'boots'],
   buff:  ['speed', 'rage', 'crit', 'invis', 'zombie', 'jump', 'shield'],
 };

@@ -64,6 +64,8 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: #05070d;
   font-size: 30px; font-weight: 900; color: #fff; opacity: 0; pointer-events: none; text-shadow: 0 0 8px #fff; }
 #hitmarker.crit { color: var(--gold); }
 #hitmarker.show { animation: hitpop .22s ease-out; }
+#hitmarker.crit.show { animation: hitpopCrit .3s ease-out; }
+@keyframes hitpopCrit { 0% { opacity: 1; transform: translate(-50%,-50%) scale(1.7); } 60% { transform: translate(-50%,-50%) scale(1.05); } 100% { opacity: 0; transform: translate(-50%,-50%) scale(.85); } }
 @keyframes hitpop { 0% { opacity: 1; transform: translate(-50%,-50%) scale(1.25); } 100% { opacity: 0; transform: translate(-50%,-50%) scale(.7); } }
 #scope { position: fixed; inset: 0; z-index: 9; pointer-events: none; }
 .scope-ring { position: absolute; left: 50%; top: 50%; width: min(88vh, 88vw); height: min(88vh, 88vw);
@@ -159,6 +161,8 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: #05070d;
   background: radial-gradient(ellipse at center, transparent 55%, rgba(255,20,20,.55) 100%); transition: opacity .1s; }
 #zombieTint { position: fixed; inset: 0; z-index: 7; pointer-events: none; opacity: 0;
   background: radial-gradient(ellipse at center, rgba(60,255,60,.06), rgba(30,180,40,.22)); transition: opacity .4s; }
+#flashWhite { position: fixed; inset: 0; z-index: 13; pointer-events: none; opacity: 0;
+  background: radial-gradient(circle, #fff 0%, #fff 55%, #eef6ff 100%); }
 #statLine { position: fixed; right: 8px; bottom: 4px; z-index: 10; font-size: 10px; color: rgba(160,200,220,.55); }
 
 /* ---------- 聊天 ---------- */
@@ -259,6 +263,10 @@ body.chat-focus #chatBox { bottom: 44vh; }
   background: rgba(10,14,24,.5); border: 2px solid rgba(53,224,255,.4); color: #dff6ff;
   font-size: 22px; user-select: none; }
 .tbtn:active { background: rgba(53,224,255,.3); }
+.tbtn.on { background: rgba(255,210,60,.4); border-color: var(--gold); }
+
+/* 纯展示型 HUD 不拦截指针/触摸：移动端手指落在血条/播报/BOSS条上也能正常拖动视角 */
+#vitals, #topLeft, #killfeed, #bossBar, #bossTimer, #protectHint, #statLine, #reloadBar { pointer-events: none; }
 .tFire { width: 82px; height: 82px; right: calc(24px + env(safe-area-inset-right, 0px)); bottom: calc(30px + env(safe-area-inset-bottom, 0px));
   font-size: 34px; border-color: rgba(255,90,90,.55); }
 .tFire:active { background: rgba(255,60,60,.32); }
