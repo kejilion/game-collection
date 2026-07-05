@@ -172,7 +172,14 @@ class World {
   }
   maxAboveFloorOf(p) {
     // 跳跃增益让跳跃高度 ×2.25，飞天阈值同步抬高，避免弹跳道具误判
-    return this.buffOn(p, 'jump') ? 10 : 7;
+    const mul = this.buffOn(p, 'jump') ? 1.5 : 1;
+    const jumpH = (RULES.jumpVel * mul) ** 2 / (2 * RULES.gravity);
+    return jumpH + (this.buffOn(p, 'jump') ? 2.2 : 2.8);
+  }
+  maxAirMsOf(p) {
+    const mul = this.buffOn(p, 'jump') ? 1.5 : 1;
+    const jumpFlightMs = 2 * RULES.jumpVel * mul / RULES.gravity * 1000;
+    return jumpFlightMs + (this.buffOn(p, 'jump') ? 1500 : 1100);
   }
   floorAtSrv(pos) {   // 支撑面高度（含微阶坡道片与存活油桶）
     let f = 0;
@@ -208,6 +215,8 @@ class World {
       maxSpeed: this.maxSpeedOf(p),
       floorY: this.floorAtSrv(cand),
       maxAboveFloor: this.maxAboveFloorOf(p),
+      airMinAboveFloor: this.buffOn(p, 'jump') ? 1.8 : 1.2,
+      maxAirMs: this.maxAirMsOf(p),
       inSolid: q => this.inSolidSrv(q),
     });
     p.pos = res.pos;   // 违规时已回拉到最后合法位置，快照广播的永远是合法坐标

@@ -56,6 +56,10 @@ const DEFAULTS = {
     lagSpikeMs: 500,
     lagBudget: 8,                // 60s 窗口内的豁免额度
     lagWindowMs: 60000,
+    maxAboveFloor: 4.5,
+    airMinAboveFloor: 1.25,
+    maxAirMs: 1900,
+    flyBucketMax: 4,
   },
   // 瞄准统计
   aim: {
@@ -201,7 +205,7 @@ class Monitor {
     const M = this.engine.opts.movement;
     const t = now();
     if (!this._mv) {
-      this._mv = { pos: { x: cand.x, y: cand.y, z: cand.z }, at: t, speedBucket: 0, flyBucket: 0, clipN: 0 };
+      this._mv = { pos: { x: cand.x, y: cand.y, z: cand.z }, at: t, speedBucket: 0, flyBucket: 0, airMs: 0, clipN: 0 };
       return { ok: true, pos: cand };
     }
     const st = this._mv;
@@ -256,6 +260,8 @@ class Monitor {
         if (st.flyBucket > M.flyBucketMax) {
           this.flag('fly', undefined, `悬空 y=${cand.y.toFixed(1)} floor=${ctx.floorY.toFixed(1)}`);
           st.flyBucket = 0;
+          st.airMs = 0;
+          reject = true; reason = 'fly';
           st.pos.y = Math.min(st.pos.y, ctx.floorY + 1);  // 基线可能已悬空，一并拉回地表附近
           reject = true; reason = 'fly';
         }
@@ -265,6 +271,22 @@ class Monitor {
     }
 
     // 穿墙：连续多包卡在实体内
+    // Sustained hover below the hard height cap is still flying.
+    if (!reject && ctx.floorY !== undefined && !lagExempt) {
+      const aboveAir = cand.y - ctx.floorY;
+      const airMin = ctx.airMinAboveFloor || M.airMinAboveFloor;
+      const maxAirMs = ctx.maxAirMs || M.maxAirMs;
+      if (aboveAir > airMin) st.airMs = (st.airMs || 0) + dt;
+      else st.airMs = Math.max(0, (st.airMs || 0) - dt * 1.5);
+      if (st.airMs > maxAirMs) {
+        this.flag('fly', undefined, `sustained air ${(st.airMs / 1000).toFixed(1)}s y=${cand.y.toFixed(1)} floor=${ctx.floorY.toFixed(1)}`);
+        st.flyBucket = 0;
+        st.airMs = 0;
+        st.pos.y = Math.min(st.pos.y, ctx.floorY + 0.4);
+        reject = true; reason = 'fly';
+      }
+    }
+
     if (!reject && ctx.inSolid) {
       if (ctx.inSolid(cand)) {
         st.clipN++;
@@ -285,7 +307,7 @@ class Monitor {
   }
   // 合法传送（出生/复活/技能位移）后由游戏调用，重置移动基线
   resetPos(pos) {
-    this._mv = { pos: { x: pos.x, y: pos.y, z: pos.z }, at: now(), speedBucket: 0, flyBucket: 0, clipN: 0 };
+    this._mv = { pos: { x: pos.x, y: pos.y, z: pos.z }, at: now(), speedBucket: 0, flyBucket: 0, airMs: 0, clipN: 0 };
   }
 
   // ---- 瞄准统计（惩罚类）----
