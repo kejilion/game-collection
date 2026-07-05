@@ -153,7 +153,7 @@ G.world = (function () {
     }
   }
 
-  function build(scene, map) {
+  function build(scene, map, shadowSize) {
     half = map.half;
     barrelR = map.barrelR; barrelH = map.barrelH;
     colliders = [];
@@ -215,7 +215,7 @@ G.world = (function () {
     sun.layers.enable(1);
     sun.position.set(40, 60, -30);
     sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.mapSize.set(shadowSize || 2048, shadowSize || 2048);   // 仅观感开销：不影响雾距/视距（公平性要求）
     sun.shadow.camera.left = -45; sun.shadow.camera.right = 45;
     sun.shadow.camera.top = 45; sun.shadow.camera.bottom = -45;
     sun.shadow.camera.far = 220;

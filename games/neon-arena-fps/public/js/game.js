@@ -7,16 +7,41 @@
   const qs = new URLSearchParams(location.search);
   const NOLOCK = qs.get('nolock') === '1';
 
+  // ---------- 移动端检测 + 画质分级 ----------
+  // 判定依据：主指针精度（pointer:coarse = 触屏/手写笔），可用 ?touch=1/0 强制覆盖用于桌面调试
+  const TOUCH = (() => {
+    const f = qs.get('touch');
+    if (f === '1') return true;
+    if (f === '0') return false;
+    return matchMedia('(pointer: coarse)').matches;
+  })();
+  document.body.classList.toggle('mobile', TOUCH);
+  // 画质仅影响阴影分辨率/抗锯齿/像素比这类纯观感开销，绝不缩短视距/雾距——
+  // 视野范围是竞技公平性的一部分，任何设备都必须能看到同样远的敌人
+  const QUALITY = {
+    high:   { pr: 2,    aa: true,  shadow: 2048, soft: true  },
+    medium: { pr: 1.5,  aa: true,  shadow: 1024, soft: false },
+    low:    { pr: 1.15, aa: false, shadow: 512,  soft: false },
+  };
+  const quality = (() => {
+    const forced = qs.get('quality');
+    if (QUALITY[forced]) return QUALITY[forced];
+    if (!TOUCH) return QUALITY.high;
+    const hwc = navigator.hardwareConcurrency || 4;
+    const mem = navigator.deviceMemory || 4;
+    return (hwc <= 4 || mem <= 3) ? QUALITY.low : QUALITY.medium;
+  })();
+
   const WICON = { fist: '👊', knife: '🔪', sword: '⚔️', hammer: '🔨', pistol: '🔫', mg: '💥', sniper: '🎯', nade: '🧨', boss: '👹', barrel: '🛢️' };
   const COS_ICON = { hat_cowboy: '🤠', hat_beret: '🧢', hat_horns: '😈', hat_crown: '👑', face_shades: '🕶️', face_visor: '🥽', back_cape: '🦸', back_jet: '🚀', back_wings: '👼', fx_ice: '❄️', fx_gold: '✨', fx_rainbow: '🌈' };
 
   // ---------- 渲染器 ----------
   const canvas = $('cv');
-  const renderer = new T.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
-  renderer.setPixelRatio(Math.min(2, window.devicePixelRatio));
+  const renderer = new T.WebGLRenderer({ canvas, antialias: quality.aa, powerPreference: 'high-performance' });
+  renderer.setPixelRatio(Math.min(quality.pr, window.devicePixelRatio));
   renderer.setSize(innerWidth, innerHeight);
   renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = T.PCFSoftShadowMap;
+  renderer.shadowMap.type = quality.soft ? T.PCFSoftShadowMap : T.PCFShadowMap;
   renderer.outputEncoding = T.sRGBEncoding;
   renderer.toneMapping = T.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 0.78;
@@ -40,6 +65,13 @@
   };
   G.audio.setMusic(settings.music);
   G.audio.setSfx(settings.sfx);
+  G.audio.setLite(TOUCH);   // 轻量BGM：移动端减少同时发声的振荡器数量
+  // 移动端音频解锁：触屏比鼠标点击更早触发，touchstart 抢在 click 之前解锁 AudioContext
+  addEventListener('touchstart', () => G.audio.init(), { once: true, passive: true });
+  // 触屏/桌面各自的操作说明 + 触控层显隐
+  $('helpDesktop').classList.toggle('hidden', TOUCH);
+  $('helpTouch').classList.toggle('hidden', !TOUCH);
+  $('touchLayer').classList.toggle('hidden', !TOUCH);
 
   // ---------- 全局状态 ----------
   let ws = null, wsOk = false, defs = null, worldBuilt = false;
@@ -62,6 +94,9 @@
   };
   const keys = {};
   let mouseDown = false, rmbDown = false, lockWanted = false;
+  // 触屏摇杆/视角状态：joyX/joyZ 为 -1..1 模拟量（movement() 里与键盘输入二选一）
+  const touch = { joyId: null, joyBaseX: 0, joyBaseY: 0, joyX: 0, joyZ: 0, lookId: null };
+  const activeTouches = new Map();   // touch identifier -> {role:'joy'|'look', ...}
 
   const ents = new Map();
   let bossEnt = null;
@@ -144,7 +179,7 @@
     dayMs = (m.rules && m.rules.dayMs) || 600000;
     if (!worldBuilt) {
       worldBuilt = true;
-      G.world.build(scene, defs.map);
+      G.world.build(scene, defs.map, quality.shadow);
       G.fx.init(scene);
       merchant = G.models.makeMerchant();
       merchant.position.set(defs.map.merchant.x, 0, defs.map.merchant.z);
@@ -774,31 +809,36 @@
   // ---------- 指针锁定与输入 ----------
   function requestLock() {
     lockWanted = true;
-    if (NOLOCK) return;
+    if (NOLOCK || TOUCH) return;   // 触屏没有指针锁定这回事，视角改由触摸拖拽驱动
     try { canvas.requestPointerLock && canvas.requestPointerLock(); } catch (_) {}
   }
   document.addEventListener('pointerlockchange', () => {
     if (!document.pointerLockElement && lockWanted && (mode === 'play' || mode === 'spec')
-      && $('shop').classList.contains('hidden') && $('pause').classList.contains('hidden') && !NOLOCK) {
+      && $('shop').classList.contains('hidden') && $('pause').classList.contains('hidden') && !NOLOCK && !TOUCH) {
       openPause();
     }
   });
   canvas.addEventListener('click', () => {
     G.audio.init();
-    if (mode !== 'menu' && !document.pointerLockElement
+    if (!TOUCH && mode !== 'menu' && !document.pointerLockElement
       && $('pause').classList.contains('hidden') && $('shop').classList.contains('hidden')) requestLock();
   });
   $('btnResume').onclick = () => closePause();
   $('btnToMenu').onclick = () => { send({ type: 'leave' }); rejoinWanted = false; lockWanted = false; backToMenu(); };
 
+  // 视角旋转：鼠标(movementX/Y)与触屏拖拽(帧间坐标差)最终都走这一个函数，行为完全一致
+  function applyLook(dx, dy, sensMul) {
+    if (mode === 'menu') return;
+    const sens = (sensMul || 0.0022) * settings.sens * (me.zoom > 0.5 ? 0.4 : 1);
+    me.yaw -= dx * sens;
+    me.pitch = Math.max(-1.53, Math.min(1.53, me.pitch - dy * sens));
+    me.swayX = Math.max(-0.06, Math.min(0.06, me.swayX + dx * 0.0005));
+    me.swayY = Math.max(-0.05, Math.min(0.05, me.swayY + dy * 0.0005));
+  }
   document.addEventListener('mousemove', e => {
     const locked = !!document.pointerLockElement || NOLOCK;
     if (!locked || mode === 'menu') return;
-    const sens = 0.0022 * settings.sens * (me.zoom > 0.5 ? 0.4 : 1);
-    me.yaw -= e.movementX * sens;
-    me.pitch = Math.max(-1.53, Math.min(1.53, me.pitch - e.movementY * sens));
-    me.swayX = Math.max(-0.06, Math.min(0.06, me.swayX + e.movementX * 0.0005));
-    me.swayY = Math.max(-0.05, Math.min(0.05, me.swayY + e.movementY * 0.0005));
+    applyLook(e.movementX, e.movementY);
   });
   document.addEventListener('mousedown', e => {
     if (mode === 'menu' || isTyping()) return;
@@ -812,7 +852,87 @@
     if (e.button === 2) rmbDown = false;
   });
   document.addEventListener('contextmenu', e => e.preventDefault());
-  addEventListener('blur', () => { for (const k in keys) keys[k] = false; mouseDown = rmbDown = false; });
+  addEventListener('blur', () => { for (const k in keys) keys[k] = false; mouseDown = rmbDown = false; touch.joyId = touch.lookId = null; });
+
+  // ---------- 触屏：虚拟摇杆 + 视角拖拽（画布上的触点按落点区域二选一角色） ----------
+  // 摇杆：浮动式，落在左下区域即在触点处生成；视角：其余区域拖拽，帧间坐标差喂给 applyLook()
+  // 按钮（.tbtn）pointer-events:auto 会先于画布收到触摸，这里天然不会跟按钮冲突
+  function joyZoneHit(x, y) { return x < innerWidth * 0.52 && y > innerHeight * 0.4; }
+  function showJoyAt(x, y) {
+    const base = $('joyBase');
+    base.style.left = (x - 56) + 'px'; base.style.top = (y - 56) + 'px';
+    base.classList.add('show');
+    $('joyStick').style.transform = 'translate(0px,0px)';
+  }
+  canvas.addEventListener('touchstart', e => {
+    if (mode === 'menu' || isTyping()) return;
+    for (const t of e.changedTouches) {
+      if (touch.joyId === null && joyZoneHit(t.clientX, t.clientY)) {
+        touch.joyId = t.identifier; touch.joyBaseX = t.clientX; touch.joyBaseY = t.clientY;
+        touch.joyX = 0; touch.joyZ = 0;
+        showJoyAt(t.clientX, t.clientY);
+      } else if (touch.lookId === null && !joyZoneHit(t.clientX, t.clientY)) {
+        touch.lookId = t.identifier;
+        activeTouches.set(t.identifier, { lastX: t.clientX, lastY: t.clientY });
+      }
+    }
+  }, { passive: true });
+  canvas.addEventListener('touchmove', e => {
+    for (const t of e.changedTouches) {
+      if (t.identifier === touch.joyId) {
+        let dx = t.clientX - touch.joyBaseX, dy = t.clientY - touch.joyBaseY;
+        const R = 52, dist = Math.hypot(dx, dy);
+        if (dist > R) { dx = dx / dist * R; dy = dy / dist * R; }
+        $('joyStick').style.transform = `translate(${dx}px,${dy}px)`;
+        touch.joyX = dx / R; touch.joyZ = -dy / R;
+      } else if (t.identifier === touch.lookId) {
+        const info = activeTouches.get(t.identifier);
+        if (!info) continue;
+        const dx = t.clientX - info.lastX, dy = t.clientY - info.lastY;
+        info.lastX = t.clientX; info.lastY = t.clientY;
+        applyLook(dx, dy, 0.0032);
+      }
+    }
+  }, { passive: true });
+  function touchEndHandler(e) {
+    for (const t of e.changedTouches) {
+      if (t.identifier === touch.joyId) {
+        touch.joyId = null; touch.joyX = 0; touch.joyZ = 0;
+        $('joyBase').classList.remove('show');
+      } else if (t.identifier === touch.lookId) {
+        touch.lookId = null; activeTouches.delete(t.identifier);
+      }
+    }
+  }
+  canvas.addEventListener('touchend', touchEndHandler, { passive: true });
+  canvas.addEventListener('touchcancel', touchEndHandler, { passive: true });
+
+  // 触屏按钮：Fire/Jump 需要"按住"语义走 touchstart/touchend；其余简单点按复用原生 click 即可
+  function touchActionAllowed() {
+    return mode !== 'menu' && !isTyping() && $('shop').classList.contains('hidden')
+      && $('pause').classList.contains('hidden') && $('lost').classList.contains('hidden');
+  }
+  $('tFire').addEventListener('touchstart', e => { e.preventDefault(); if (touchActionAllowed()) mouseDown = true; }, { passive: false });
+  $('tFire').addEventListener('touchend', e => { e.preventDefault(); mouseDown = false; }, { passive: false });
+  $('tFire').addEventListener('touchcancel', () => { mouseDown = false; });
+  $('tJump').addEventListener('touchstart', e => { e.preventDefault(); if (touchActionAllowed()) keys.Space = true; }, { passive: false });
+  $('tJump').addEventListener('touchend', e => { e.preventDefault(); keys.Space = false; }, { passive: false });
+  $('tJump').addEventListener('touchcancel', () => { keys.Space = false; });
+  $('tScope').onclick = () => { if (touchActionAllowed()) rmbDown = !rmbDown; };
+  $('tMenu').onclick = () => { if (mode === 'play' || mode === 'spec') openPause(); };
+  $('tBoard').onclick = () => { $('board').classList.toggle('hidden'); };
+  $('tChat').onclick = () => { if (mode === 'play') openChat(); };
+  $('boardClose').onclick = () => { $('board').classList.add('hidden'); };
+  $('shopClose').onclick = () => toggleShop(false);
+  // 武器栏点按切换（桌面鼠标点击同样生效，无副作用）；再点已激活的枪械栏 = 换弹
+  $('slotMelee').onclick = () => switchSlot('melee');
+  $('slotNade').onclick = () => switchSlot('nade');
+  $('slotGun').onclick = () => {
+    if (!mySnap || !mySnap.gw) return;
+    if (me.active !== 'gun') switchSlot('gun');
+    else { send({ type: 'reload' }); tryLocalReload(); }
+  };
+  $('interactHint').onclick = () => tryInteract();
 
   // 滚轮：战局中切武器 / 观战自由视角调速
   addEventListener('wheel', e => {
@@ -902,19 +1022,22 @@
     $('chatInputRow').classList.remove('hidden');
     $('chatInput').focus();
   }
+  function sendChatNow() {
+    const v = $('chatInput').value.trim();
+    if (v) send({ type: 'chat', text: v });
+    $('chatInput').value = '';
+    $('chatInputRow').classList.add('hidden');
+    $('chatInput').blur();
+  }
   $('chatInput').addEventListener('keydown', e => {
     e.stopPropagation();
-    if (e.code === 'Enter') {
-      const v = $('chatInput').value.trim();
-      if (v) send({ type: 'chat', text: v });
-      $('chatInput').value = '';
-      $('chatInputRow').classList.add('hidden');
-      $('chatInput').blur();
-    } else if (e.code === 'Escape') {
-      $('chatInputRow').classList.add('hidden');
-      $('chatInput').blur();
-    }
+    if (e.code === 'Enter') sendChatNow();
+    else if (e.code === 'Escape') { $('chatInputRow').classList.add('hidden'); $('chatInput').blur(); }
   });
+  $('chatSendBtn').onclick = () => sendChatNow();
+  // 移动端虚拟键盘会挡住底部聊天框，聚焦时临时上移（粗略估计键盘高度，非精确 visualViewport 适配）
+  $('chatInput').addEventListener('focus', () => { if (TOUCH) document.body.classList.add('chat-focus'); });
+  $('chatInput').addEventListener('blur', () => document.body.classList.remove('chat-focus'));
 
   // 菜单按钮
   $('nameInput').value = myName;
@@ -960,6 +1083,35 @@
   }
   function eyePos() { return V3(me.pos.x, me.pos.y + defs.rules.eyeH, me.pos.z); }
   function effectiveView() { return me.zoom > 0.5 ? 'fp' : settings.view; }
+
+  // 跨端公平性：触屏精度天然低于鼠标，给触屏客户端一点"子弹磁吸"辅助瞄准（bullet magnetism）。
+  // 只在本地把发送给服务器的开火方向朝最近目标中心柔性纠偏（≤35%），桌面端(TOUCH=false)完全不生效，
+  // 服务器侧判定逻辑没有任何变化——不是服务器给触屏玩家开后门，只是客户端替手指的抖动兜个底。
+  const AIM_ASSIST_CONE = Math.cos(7 * Math.PI / 180), AIM_ASSIST_RANGE = 55, AIM_ASSIST_BLEND = 0.35;
+  function applyAimAssist(dir, origin) {
+    if (!TOUCH) return dir;
+    let bestDot = AIM_ASSIST_CONE, bestDir = null;
+    for (const e of ents.values()) {
+      if (!e.cur || !e.cur.al || e.cur.bf.some(b => b[0] === 'invis')) continue;
+      const to = V3(e.disp.x, e.disp.y + 1.1, e.disp.z).sub(origin);
+      const dist = to.length();
+      if (dist < 0.5 || dist > AIM_ASSIST_RANGE) continue;
+      to.normalize();
+      const dot = to.dot(dir);
+      if (dot > bestDot) { bestDot = dot; bestDir = to; }
+    }
+    if (bossEnt && bossEnt.cur && defs.bosses && defs.bosses[bossEnt.tp]) {
+      const yc = defs.bosses[bossEnt.tp].yc || 2;
+      const to = V3(bossEnt.disp.x, yc, bossEnt.disp.z).sub(origin);
+      const dist = to.length();
+      if (dist >= 0.5 && dist <= AIM_ASSIST_RANGE) {
+        to.normalize();
+        const dot = to.dot(dir);
+        if (dot > bestDot) { bestDot = dot; bestDir = to; }
+      }
+    }
+    return bestDir ? dir.clone().lerp(bestDir, AIM_ASSIST_BLEND).normalize() : dir;
+  }
 
   function localRayEnd(o, d, maxR) {
     let t = G.world.rayObstacles({ x: o.x, y: o.y, z: o.z }, { x: d.x, y: d.y, z: d.z }, maxR);
@@ -1012,12 +1164,13 @@
       me.lastShot = t; me.firedOnce = true;
       me.ammoL--;
       const spread = me.zoom > 0.5 ? 0 : def.spread * (me.moving ? 1.6 : 1);
-      const d = camDir();
+      const o = eyePos();
+      let d = camDir();
       d.x += (Math.random() - 0.5) * spread * 2;
       d.y += (Math.random() - 0.5) * spread * 2;
       d.z += (Math.random() - 0.5) * spread * 2;
       d.normalize();
-      const o = eyePos();
+      d = applyAimAssist(d, o);
       send({ type: 'fire', o: [o.x, o.y, o.z], d: [d.x, d.y, d.z] });
       G.audio.shot(mySnap.gw);
       const end = localRayEnd(o, d, def.range);
@@ -1044,6 +1197,20 @@
     }
   }
 
+  // 移动输入轴：触屏摇杆优先（模拟量，支持半推半速），否则退回键盘（数字量，斜向已归一化不吃加速）
+  // 桌面端行为与改造前逐字节一致：mag 恒为 1，方向归一化——这里只是把同一段逻辑抽成两端共用的函数
+  function moveAxes() {
+    if (touch.joyId !== null) {
+      const L = Math.hypot(touch.joyX, touch.joyZ);
+      return L > 1e-4 ? { ix: touch.joyX / L, iz: touch.joyZ / L, mag: Math.min(1, L) } : { ix: 0, iz: 0, mag: 0 };
+    }
+    let ix = 0, iz = 0;
+    if (keys.KeyW) iz += 1; if (keys.KeyS) iz -= 1;
+    if (keys.KeyA) ix -= 1; if (keys.KeyD) ix += 1;
+    const L = Math.hypot(ix, iz);
+    return L > 0 ? { ix: ix / L, iz: iz / L, mag: 1 } : { ix: 0, iz: 0, mag: 0 };
+  }
+
   // ---------- 本地移动 ----------
   function movement(dt) {
     if (!mySnap || !mySnap.al) return;
@@ -1052,17 +1219,13 @@
     const hasSpeed = mySnap.bf.some(b => b[0] === 'speed');
     const hasJump = mySnap.bf.some(b => b[0] === 'jump');
     let spd = defs.rules.baseSpeed * (1 + 0.1 * mySnap.bo) * (hasSpeed ? 1.6 : 1) * (zomb ? 1.35 : 1) * (me.zoom > 0.5 ? 0.55 : 1);
-    let ix = 0, iz = 0;
-    if (keys.KeyW) iz += 1; if (keys.KeyS) iz -= 1;
-    if (keys.KeyA) ix -= 1; if (keys.KeyD) ix += 1;
-    const L = Math.hypot(ix, iz);
-    me.moving = L > 0;
-    if (L > 0) {
-      ix /= L; iz /= L;
+    const { ix, iz, mag } = moveAxes();
+    me.moving = mag > 0.05;
+    if (me.moving) {
       const fx = -Math.sin(me.yaw), fz = -Math.cos(me.yaw);
       const rx = Math.cos(me.yaw), rz = -Math.sin(me.yaw);
-      const dx = (fx * iz + rx * ix) * spd * dt;
-      const dz = (fz * iz + rz * ix) * spd * dt;
+      const dx = (fx * iz + rx * ix) * spd * mag * dt;
+      const dz = (fz * iz + rz * ix) * spd * mag * dt;
       G.world.moveStep(me.pos, dx, dz);
     }
     const floor = G.world.floorAt(me.pos);
@@ -1236,6 +1399,7 @@
 
   // ---------- HUD 每帧 ----------
   function hudFrame() {
+    if (TOUCH) $('tScope').classList.toggle('hidden', !(mode === 'play' && mySnap && mySnap.al && mySnap.gw === 'sniper' && me.active === 'gun'));
     if (mode !== 'play' || !mySnap) return;
     me.spread = Math.max(0, me.spread - 0.6);
     const sp = me.spread + (me.moving ? 4 : 0);
@@ -1319,10 +1483,12 @@
         let spd = 14 * specSpeed * (keys.ShiftLeft ? 2.2 : 1);
         const d = camDir();
         const rx = Math.cos(me.yaw), rz = -Math.sin(me.yaw);
-        if (keys.KeyW) specFree.pos.addScaledVector(d, spd * dt);
-        if (keys.KeyS) specFree.pos.addScaledVector(d, -spd * dt);
-        if (keys.KeyA) { specFree.pos.x -= rx * spd * dt; specFree.pos.z -= rz * spd * dt; }
-        if (keys.KeyD) { specFree.pos.x += rx * spd * dt; specFree.pos.z += rz * spd * dt; }
+        const { ix, iz, mag } = moveAxes();
+        if (mag > 0.05) {
+          specFree.pos.addScaledVector(d, iz * spd * mag * dt);
+          specFree.pos.x += rx * ix * spd * mag * dt;
+          specFree.pos.z += rz * ix * spd * mag * dt;
+        }
         if (keys.Space) specFree.pos.y += spd * dt;
         if (keys.KeyC) specFree.pos.y -= spd * dt;
         specFree.pos.y = Math.max(0.5, Math.min(60, specFree.pos.y));
@@ -1341,6 +1507,7 @@
   // ---------- 主循环（后台标签页降级为 10Hz 定时器，防止逻辑停摆） ----------
   let perfNow = performance.now(), lastFrame = performance.now();
   let fpsCnt = 0, fpsAt = performance.now();
+  let lowFpsStreak = 0;
   let loopGen = 0;
   function schedule() {
     // 世代令牌：可见性切换时旧的 rAF 回调可能永远挂起或迟到，令牌保证单链推进
@@ -1387,6 +1554,14 @@
       $('pingNum').textContent = pingMs + ' ms';
       const di = G.world.dayInfo();
       $('dayChip').textContent = `${di.icon} ${di.phase}`;
+      // 运行时画质自动降级：持续低帧率就砍掉阴影这类纯观感开销（绝不动视距/雾距，公平性红线）
+      if (TOUCH && fpsCnt < 40 && renderer.shadowMap.enabled) {
+        if (++lowFpsStreak >= 4) {
+          renderer.shadowMap.enabled = false;
+          renderer.setPixelRatio(Math.min(1, renderer.getPixelRatio()));
+          lowFpsStreak = 0;
+        }
+      } else lowFpsStreak = 0;
       fpsCnt = 0; fpsAt = perfNow;
     }
   }
@@ -1410,7 +1585,11 @@
     camera.layers.mask = oldMask;
   }
 
-  window.__na = { renderer, scene, camera, ui: { toggleShop, openPause, toggleView, get shopPre() { return shopPre; } } };   // 调试句柄（截帧/诊断用）
+  window.__na = {
+    renderer, scene, camera, TOUCH, quality,
+    ui: { toggleShop, openPause, toggleView, get shopPre() { return shopPre; } },
+    touch, applyLook, moveAxes,
+  };   // 调试句柄（截帧/诊断用）
   refreshOpts();
   connect();
   loop();

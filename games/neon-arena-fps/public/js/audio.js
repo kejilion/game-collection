@@ -2,7 +2,7 @@
 window.G = window.G || {};
 G.audio = (function () {
   let ctx = null, master = null, musicGain = null;
-  const S = { sfxOn: true, musicOn: true };
+  const S = { sfxOn: true, musicOn: true, lite: false };
 
   function init() {
     if (ctx) { if (ctx.state === 'suspended') ctx.resume(); startMusic(); return; }
@@ -19,6 +19,12 @@ G.audio = (function () {
     } catch (_) { ctx = null; }
   }
   const ok = () => ctx && ctx.state === 'running';
+
+  // 标签页/App 切后台时暂停音乐调度定时器（省电，避免后台无谓计算），回前台恢复
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) { if (music.timer) { clearInterval(music.timer); music.timer = null; } }
+    else { if (ctx && ctx.state === 'suspended') ctx.resume(); if (S.musicOn) startMusic(); }
+  });
 
   function noiseBuf(dur) {
     const n = Math.floor(ctx.sampleRate * dur);
@@ -92,10 +98,10 @@ G.audio = (function () {
         const st = music.step % 16, at = music.nextAt;
         const bass = BASS[st];
         if (bass) mnote('sawtooth', bass, 0.4, 0.16, at, 320);
-        if (st % 2 === 0) mhat(at + 0.16);
+        if (st % (S.lite ? 4 : 2) === 0) mhat(at + 0.16);
         if (st % 4 === 2 && Math.random() < 0.7)
           mnote('sine', ARP[Math.floor(Math.random() * ARP.length)], 0.5, 0.045, at);
-        if (st === 0) {                                  // 长音和弦垫
+        if (st === 0 && !S.lite) {                        // 长音和弦垫（轻量模式跳过，省 3 个长振荡器）
           mnote('triangle', 110, STEP * 16, 0.05, at);
           mnote('triangle', 164.8, STEP * 16, 0.04, at);
           mnote('triangle', 220.9, STEP * 16, 0.03, at);
@@ -114,6 +120,7 @@ G.audio = (function () {
     get sfxOn() { return S.sfxOn; }, get musicOn() { return S.musicOn; },
     setSfx(on) { S.sfxOn = !!on; },
     setMusic(on) { S.musicOn = !!on; if (on) startMusic(); else stopMusic(); },
+    setLite(on) { S.lite = !!on; },   // 轻量模式：移动端等性能受限设备减少同时发声的振荡器数量
     shot(wp) {
       if (wp === 'pistol') { burst(0.12, 2400, 0.5, 0.1); tone('square', 320, 90, 0.08, 0.16); }
       else if (wp === 'mg') { burst(0.09, 2000, 0.42, 0.07); tone('square', 260, 80, 0.06, 0.13); }

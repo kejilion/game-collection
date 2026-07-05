@@ -2,7 +2,10 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>霓虹竞技场 · 3D 多人射击</title>
 <link rel="stylesheet" href="css/style.css">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='0.9em' font-size='90'>🎯</text></svg>">
@@ -20,13 +23,21 @@
       <input id="nameInput" maxlength="12" placeholder="输入你的昵称" autocomplete="off">
       <button id="btnPlay" class="btn primary">🎮 进入战斗</button>
       <button id="btnSpec" class="btn">👁️ 观战模式</button>
-      <div class="help">
+      <div class="help" id="helpDesktop">
         <div class="help-title">操作说明</div>
         <div class="help-grid">
           <span>WASD 移动 · 空格 跳跃</span><span>鼠标左键 攻击 / 射击</span>
           <span>1/2/3 或 滚轮 换武器</span><span>R 换弹 · 右键 狙击开镜</span>
           <span>V 第一/第三人称切换</span><span>E 商店 · ESC 设置</span>
           <span>回车 聊天 · Tab 排行榜</span><span>油桶会爆炸，小心！</span>
+        </div>
+      </div>
+      <div class="help hidden" id="helpTouch">
+        <div class="help-title">触屏操作说明</div>
+        <div class="help-grid">
+          <span>左下摇杆：移动</span><span>屏幕拖动：视角</span>
+          <span>点武器栏：切换 / 再点弹药栏换弹</span><span>◎ 开火 · ⤒ 跳跃</span>
+          <span>🔭 狙击开镜（持狙击枪时出现）</span><span>☰ 设置 · 🏆 榜单 · 💬 聊天</span>
         </div>
       </div>
       <div id="menuErr" class="menu-err"></div>
@@ -89,23 +100,40 @@
 <!-- ======== 聊天 ======== -->
 <div id="chatBox" class="hidden">
   <div id="chatMsgs"></div>
-  <div id="chatInputRow" class="hidden"><input id="chatInput" maxlength="120" placeholder="按回车发送，Esc 取消"></div>
+  <div id="chatInputRow" class="hidden">
+    <input id="chatInput" maxlength="120" placeholder="按回车发送，Esc 取消">
+    <button id="chatSendBtn">发送</button>
+  </div>
+</div>
+
+<!-- ======== 移动端触控层 ======== -->
+<div id="touchLayer" class="hidden">
+  <div id="joyHint"></div>
+  <div id="joyBase"><div id="joyStick"></div></div>
+  <button id="tMenu" class="tbtn tMenu" aria-label="设置">☰</button>
+  <button id="tBoard" class="tbtn tBoard" aria-label="排行榜">🏆</button>
+  <button id="tChat" class="tbtn tChat" aria-label="聊天">💬</button>
+  <button id="tScope" class="tbtn tScope hidden" aria-label="瞄准镜">🔭</button>
+  <button id="tJump" class="tbtn tJump" aria-label="跳跃">⤒</button>
+  <button id="tFire" class="tbtn tFire" aria-label="开火">◎</button>
 </div>
 
 <!-- ======== 排行榜 ======== -->
 <div id="board" class="overlay panel hidden">
   <div class="panel-card">
+    <button class="panel-close" id="boardClose" aria-label="关闭">×</button>
     <div class="panel-title">🏆 排行榜 <span class="panel-sub">击杀数优先</span></div>
     <div class="tabs"><button id="tabRt" class="tab active">实时榜</button><button id="tabHist" class="tab">历史榜</button></div>
     <div id="boardRt" class="board-table"></div>
     <div id="boardHist" class="board-table hidden"></div>
-    <div class="panel-hint">按 Tab 关闭</div>
+    <div class="panel-hint">按 Tab 或点 × 关闭</div>
   </div>
 </div>
 
 <!-- ======== 神秘商店 ======== -->
 <div id="shop" class="overlay panel hidden">
   <div class="panel-card shop-card">
+    <button class="panel-close" id="shopClose" aria-label="关闭">×</button>
     <div class="panel-title">🧙 神秘商店 <span class="shop-coins">🪙 <span id="shopCoins">0</span></span></div>
     <div class="tabs" id="shopTabs"></div>
     <div class="shop-body">

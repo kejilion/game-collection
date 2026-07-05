@@ -6,8 +6,9 @@
 }
 html, body { width: 100%; height: 100%; overflow: hidden; background: #05070d;
   font-family: 'Segoe UI', 'Microsoft YaHei', 'PingFang SC', sans-serif; color: #e8f4ff;
-  user-select: none; -webkit-user-select: none; }
-#cv { position: fixed; inset: 0; display: block; }
+  user-select: none; -webkit-user-select: none;
+  touch-action: manipulation; overscroll-behavior: none; }
+#cv { position: fixed; inset: 0; display: block; touch-action: none; }
 .hidden { display: none !important; }
 
 /* ---------- 通用覆盖层 ---------- */
@@ -73,7 +74,7 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: #05070d;
 .scope-line.v { top: 8%; bottom: 8%; left: 50%; width: 1px; }
 
 /* ---------- 生命 / 武器面板 ---------- */
-#vitals { position: fixed; left: 20px; bottom: 20px; z-index: 10; width: 250px; }
+#vitals { position: fixed; left: calc(20px + env(safe-area-inset-left, 0px)); bottom: calc(20px + env(safe-area-inset-bottom, 0px)); z-index: 10; width: 250px; }
 .bar-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
 .bar-ico { font-size: 15px; width: 20px; text-align: center; filter: drop-shadow(0 0 3px rgba(0,0,0,.8)); }
 .bar { position: relative; flex: 1; height: 17px; background: rgba(0,0,0,.55); border: 1px solid rgba(255,255,255,.18); border-radius: 4px; overflow: hidden; }
@@ -84,7 +85,7 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: #05070d;
 #shFill { background: linear-gradient(90deg, #b09bff, #e2c6ff); }
 .bar span { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
   font-size: 11px; font-weight: 700; color: #fff; text-shadow: 0 1px 2px #000; }
-#weaponPanel { position: fixed; right: 20px; bottom: 20px; z-index: 10; display: flex; flex-direction: column; gap: 6px; align-items: flex-end; }
+#weaponPanel { position: fixed; right: calc(20px + env(safe-area-inset-right, 0px)); bottom: calc(20px + env(safe-area-inset-bottom, 0px)); z-index: 10; display: flex; flex-direction: column; gap: 6px; align-items: flex-end; }
 .wslot { display: flex; align-items: center; gap: 8px; min-width: 190px; padding: 7px 12px;
   background: var(--bg); border: 1px solid rgba(255,255,255,.14); border-radius: 8px; font-size: 14px; opacity: .55; transition: all .12s; }
 .wslot.active { opacity: 1; border-color: var(--neon); box-shadow: 0 0 14px rgba(53,224,255,.25); }
@@ -98,7 +99,7 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: #05070d;
 #reloadText { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 10px; color: #fff; text-shadow: 0 1px 2px #000; }
 
 /* ---------- 左上：金币 & 昼夜 & BUFF ---------- */
-#topLeft { position: fixed; left: 20px; top: 18px; z-index: 10; }
+#topLeft { position: fixed; left: calc(20px + env(safe-area-inset-left, 0px)); top: calc(18px + env(safe-area-inset-top, 0px)); z-index: 10; }
 .tl-row { display: flex; gap: 8px; align-items: center; }
 #coinBox { display: inline-block; padding: 6px 14px; font-size: 16px; font-weight: 800; color: var(--gold);
   background: var(--bg); border: 1px solid rgba(255,210,60,.4); border-radius: 8px; }
@@ -110,7 +111,7 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: #05070d;
   box-shadow: 0 0 10px color-mix(in srgb, var(--bc, #35e0ff) 40%, transparent); }
 
 /* ---------- 击杀播报 ---------- */
-#killfeed { position: fixed; right: 20px; top: 18px; z-index: 10; display: flex; flex-direction: column; gap: 5px; align-items: flex-end; }
+#killfeed { position: fixed; right: calc(20px + env(safe-area-inset-right, 0px)); top: calc(56px + env(safe-area-inset-top, 0px)); z-index: 10; display: flex; flex-direction: column; gap: 5px; align-items: flex-end; }
 .kf { padding: 5px 12px; font-size: 13px; background: rgba(8,12,22,.78); border: 1px solid rgba(255,255,255,.12);
   border-radius: 6px; animation: kfIn .2s ease-out; }
 .kf b { font-weight: 700; }
@@ -135,7 +136,7 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: #05070d;
   color: var(--gold); text-shadow: 0 0 24px rgba(255,180,40,.8), 0 2px 4px #000; opacity: 0; pointer-events: none; letter-spacing: 3px; }
 #bigNotice.show { animation: bigIn 2.4s forwards; }
 @keyframes bigIn { 0% { opacity: 0; transform: translateX(-50%) scale(1.6); } 12% { opacity: 1; transform: translateX(-50%) scale(1); } 78% { opacity: 1; } 100% { opacity: 0; } }
-#interactHint { position: fixed; left: 50%; bottom: 26%; transform: translateX(-50%); z-index: 10;
+#interactHint { position: fixed; left: 50%; bottom: 26%; transform: translateX(-50%); z-index: 10; cursor: pointer;
   padding: 8px 20px; font-size: 15px; background: rgba(8,14,26,.8); border: 1px solid var(--gold); border-radius: 8px; color: #ffe9a8; }
 #protectHint { position: fixed; left: 50%; bottom: 20%; transform: translateX(-50%); z-index: 10; font-size: 13px; color: #9fd8ef; }
 
@@ -161,7 +162,7 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: #05070d;
 #statLine { position: fixed; right: 8px; bottom: 4px; z-index: 10; font-size: 10px; color: rgba(160,200,220,.55); }
 
 /* ---------- 聊天 ---------- */
-#chatBox { position: fixed; left: 20px; bottom: 110px; z-index: 11; width: 340px; max-width: 45vw; }
+#chatBox { position: fixed; left: calc(20px + env(safe-area-inset-left, 0px)); bottom: 110px; z-index: 11; width: 340px; max-width: 45vw; transition: bottom .15s; }
 #chatMsgs { display: flex; flex-direction: column; gap: 3px; max-height: 200px; overflow: hidden; justify-content: flex-end; }
 .cmsg { font-size: 13px; padding: 3px 9px; background: rgba(6,10,18,.62); border-radius: 5px; line-height: 1.45;
   word-break: break-all; animation: kfIn .15s ease-out; }
@@ -170,14 +171,21 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: #05070d;
 .cmsg.sys.boss { color: #ffb45c; font-weight: 700; font-style: normal; }
 .cmsg.sys.streak { color: var(--gold); font-weight: 700; font-style: normal; }
 .cmsg.sys.shop { color: #d0a9ff; }
-#chatInputRow { margin-top: 6px; }
-#chatInput { width: 100%; padding: 8px 12px; font-size: 14px; color: #fff; background: rgba(8,14,26,.85);
+#chatInputRow { margin-top: 6px; display: flex; gap: 6px; }
+#chatInput { flex: 1; min-width: 0; padding: 8px 12px; font-size: 14px; color: #fff; background: rgba(8,14,26,.85);
   border: 1px solid var(--neon); border-radius: 6px; outline: none; font-family: inherit; }
+#chatSendBtn { flex: 0 0 auto; padding: 8px 16px; font-size: 13px; font-weight: 700; color: #05202c;
+  background: var(--neon); border: none; border-radius: 6px; cursor: pointer; font-family: inherit; }
+body.chat-focus #chatBox { bottom: 44vh; }
 
 /* ---------- 面板（排行榜/商店） ---------- */
 .panel { background: rgba(3,5,10,.5); }
-.panel-card { width: 520px; max-width: 94vw; max-height: 86vh; overflow: auto; padding: 20px 24px;
+.panel-card { position: relative; width: 520px; max-width: 94vw; max-height: 86vh; overflow: auto; padding: 20px 24px;
   background: var(--bg); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 0 50px rgba(53,224,255,.1); }
+.panel-close { position: absolute; top: 10px; right: 10px; width: 34px; height: 34px; z-index: 5;
+  border-radius: 50%; border: 1px solid rgba(255,255,255,.25); background: rgba(255,255,255,.08);
+  color: #cfe6f5; font-size: 19px; line-height: 1; cursor: pointer; font-family: inherit; }
+.panel-close:hover { background: rgba(255,80,80,.25); border-color: rgba(255,120,120,.5); }
 .panel-title { font-size: 20px; font-weight: 800; margin-bottom: 12px; display: flex; align-items: center; gap: 10px; }
 .panel-sub { font-size: 12px; color: #7fa8c9; font-weight: 400; }
 .panel-hint { margin-top: 12px; text-align: center; font-size: 11px; color: #7591ad; }
@@ -223,9 +231,63 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: #05070d;
 #deathCount { margin-bottom: 16px; font-size: 15px; color: #9fd8ef; }
 
 /* ---------- 观战 ---------- */
-#specBar { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 10; text-align: center;
-  padding: 10px 26px; background: var(--bg); border: 1px solid var(--line); border-radius: 12px; }
+#specBar { position: fixed; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); z-index: 10; text-align: center;
+  padding: 10px 26px; background: var(--bg); border: 1px solid var(--line); border-radius: 12px; max-width: 92vw; }
 #specMode { font-size: 13px; color: var(--neon); font-weight: 700; letter-spacing: 2px; }
 #specTarget { font-size: 17px; font-weight: 800; margin: 3px 0; min-height: 22px; }
 .spec-keys { font-size: 12px; color: #8fb3cd; }
 .spec-keys b { color: var(--gold); cursor: pointer; }
+
+/* ============================================================
+   移动端触控层：摇杆 / 视角拖拽区 / 功能按钮
+   所有元素 pointer-events:none，实际触摸判定统一在 JS 里按坐标分发
+   （摇杆区 vs 视角拖拽区），按钮各自处理自己的 pointer-events:auto
+   ============================================================ */
+#touchLayer { position: fixed; inset: 0; z-index: 20; pointer-events: none; }
+#joyHint, #joyBase, #joyStick { pointer-events: none; }
+#joyHint { position: fixed; left: calc(34px + env(safe-area-inset-left, 0px));
+  bottom: calc(34px + env(safe-area-inset-bottom, 0px)); width: 112px; height: 112px;
+  border-radius: 50%; border: 2px dashed rgba(255,255,255,.14); }
+#joyBase { position: fixed; width: 112px; height: 112px; border-radius: 50%;
+  background: rgba(255,255,255,.05); border: 2px solid rgba(53,224,255,.45); opacity: 0; }
+#joyBase.show { opacity: 1; }
+#joyStick { position: absolute; left: 31px; top: 31px; width: 50px; height: 50px; border-radius: 50%;
+  background: rgba(53,224,255,.5); box-shadow: 0 0 14px rgba(53,224,255,.55); }
+
+.tbtn { position: fixed; pointer-events: auto; touch-action: none; -webkit-tap-highlight-color: transparent;
+  display: flex; align-items: center; justify-content: center; border-radius: 50%;
+  background: rgba(10,14,24,.5); border: 2px solid rgba(53,224,255,.4); color: #dff6ff;
+  font-size: 22px; user-select: none; }
+.tbtn:active { background: rgba(53,224,255,.3); }
+.tFire { width: 82px; height: 82px; right: calc(24px + env(safe-area-inset-right, 0px)); bottom: calc(30px + env(safe-area-inset-bottom, 0px));
+  font-size: 34px; border-color: rgba(255,90,90,.55); }
+.tFire:active { background: rgba(255,60,60,.32); }
+.tJump { width: 60px; height: 60px; right: calc(118px + env(safe-area-inset-right, 0px)); bottom: calc(44px + env(safe-area-inset-bottom, 0px)); }
+.tScope { width: 56px; height: 56px; right: calc(34px + env(safe-area-inset-right, 0px)); bottom: calc(122px + env(safe-area-inset-bottom, 0px));
+  border-color: rgba(255,210,60,.5); font-size: 24px; }
+.tMenu, .tBoard, .tChat { width: 42px; height: 42px; font-size: 18px; top: calc(8px + env(safe-area-inset-top, 0px)); }
+.tMenu { right: calc(12px + env(safe-area-inset-right, 0px)); }
+.tBoard { right: calc(60px + env(safe-area-inset-right, 0px)); }
+.tChat { right: calc(108px + env(safe-area-inset-right, 0px)); }
+
+/* 触屏下武器栏挪高，避开右下角按钮群；生命条略微收窄 */
+body.mobile #weaponPanel { bottom: calc(150px + env(safe-area-inset-bottom, 0px)); }
+body.mobile #vitals { width: 210px; }
+body.mobile #interactHint { bottom: 34%; }
+body.mobile .wslot { min-width: 150px; padding: 6px 9px; font-size: 12px; }
+
+/* 触屏 / 窄屏：菜单与提示收缩，避免溢出小屏 */
+@media (pointer: coarse), (max-width: 720px) {
+  .title { font-size: 30px; letter-spacing: 5px; }
+  .menu-card { padding: 20px 18px; }
+  .help-grid { grid-template-columns: 1fr; font-size: 11px; }
+  .menu-hist { width: 100%; max-width: 380px; }
+  .shop-body { flex-direction: column; align-items: center; }
+  #shopStage { flex: none; }
+  .panel-card { padding: 16px 14px; }
+}
+@media (max-width: 480px) {
+  #vitals, #weaponPanel { width: auto; min-width: 0; }
+  .wslot { min-width: 120px; }
+  #bossBar { width: 260px; }
+}
