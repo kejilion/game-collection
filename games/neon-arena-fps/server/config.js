@@ -113,8 +113,8 @@ const WEAPONS = {
   mg:     { slot: 'gun',   name: '机枪',   dmg: 13,  range: 65,  cd: 0.09, mag: 40, reload: 2.4, auto: true,  spread: 0.05  },
   sniper: { slot: 'gun',   name: '狙击枪', dmg: 95,  range: 220, cd: 1.4,  mag: 5,  reload: 2.8, auto: false, spread: 0.002, zoom: true },
   nade:   { slot: 'nade',  name: '手雷',   dmg: 105, radius: 6.5, fuse: 2.2, cd: 2.0, kind: 'frag' },
-  flash:  { slot: 'nade',  name: '闪光弹', radius: 14,  fuse: 1.3, cd: 1.6, kind: 'flash', blindMax: 3.2, blindRadius: 14 },
-  smoke:  { slot: 'nade',  name: '烟雾弹', radius: 8,   fuse: 1.4, cd: 1.6, kind: 'smoke', smokeDur: 9000 },
+  flash:  { slot: 'nade',  name: '闪光弹', radius: 14,  fuse: 1.3, cd: 1.6, kind: 'flash', blindMax: 5.0, blindRadius: 14 },
+  smoke:  { slot: 'nade',  name: '烟雾弹', radius: 8,   fuse: 1.4, cd: 1.6, kind: 'smoke', smokeDur: 15000 },
 };
 
 // ---------- 装备（即时生效拾取物） ----------
