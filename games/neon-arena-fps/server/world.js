@@ -1,8 +1,7 @@
 // 权威游戏世界：所有伤害/拾取/购买/BOSS/油桶均在服务端判定，客户端只上报输入与位置
 'use strict';
-const { MAP, WEAPONS, EQUIPS, BUFFS, PICKUP_POOLS, BOSS, BOSSES, SHOP, RULES, REPORT } = require('./config');
+const { MAP, WEAPONS, EQUIPS, BUFFS, PICKUP_POOLS, BOSS, BOSSES, SHOP, RULES } = require('./config');
 const board = require('./leaderboard');
-const { ReportVote } = require('./anticheat');
 
 const now = () => Date.now();
 const rand = (a, b) => a + Math.random() * (b - a);
@@ -14,6 +13,12 @@ const r5 = v => Math.round(v * 100000) / 100000;
 const COLORS = ['#ff6b6b', '#4dabf7', '#69db7c', '#ffd43b', '#da77f2', '#ffa94d', '#63e6e2', '#f783ac', '#a9e34b', '#748ffc', '#ff8787', '#66d9e8'];
 const PROJ_KIND = { fire: 0, bullet: 1, orb: 2 };
 const NADE_KIND = { frag: 0, flash: 1, smoke: 2 };
+const KILL_PACE_MAX_WINDOW = 60000;
+const KILL_PACE_RULES = [
+  { tag: 'burst', windowMs: 10000, minKills: 4, minVictims: 3, minPlayers: 4, weight: 25, cooldownMs: 12000 },
+  { tag: 'rush', windowMs: 30000, minKills: 7, minVictims: 3, minPlayers: 4, weight: 46, cooldownMs: 20000 },
+  { tag: 'wipe', windowMs: 60000, minKills: 10, minVictims: 4, minPlayers: 5, weight: 70, cooldownMs: 30000 },
+];
 
 // 静态障碍物 AABB，用于子弹遮挡与 BOSS 碰撞（油桶单独作为动态实体）
 const OBS = MAP.obstacles.map(o => ({
@@ -74,7 +79,6 @@ class World {
     this.blasts = [];        // 巫妖延迟爆破 {pos, at, dmg, r, bossName}
     this.grenades = [];
     this.entId = 1;
-    this.reportVote = new ReportVote({ threshold: REPORT.threshold, windowMs: REPORT.windowMs });
   }
 
   // 射线被障碍物/存活油桶挡住的最近距离
@@ -111,6 +115,7 @@ class World {
       kills: 0, deaths: 0, score: 0, streak: 0,
       coins: prof.coins, owned: prof.owned.slice(), eq: Object.assign({ head: null, face: null, back: null, fx: null }, prof.eq),
       lastChatAt: 0, lastSpawnIdx: -1,
+      acKillPace: { kills: [], flags: {} },
     };
     this.placeAtSpawn(p);
     p.mon = this.ac.attach(p.id, { name, ip });
@@ -279,13 +284,15 @@ class World {
     if (t < p.reloadUntil) return;
     if (p.ammo <= 0) {
       if (p.ammoReserve > 0) p.reloadUntil = t + def.reload * 1000;   // 有备弹：进换弹冷却
-      // 已空枪再开火：静默（提示只在"打出最后一发"发一次，见下），客户端本地播空仓声
+      else this.outOfAmmo(p);                                          // 无备弹：空枪切近战
       return;
     }
     if (!p.mon.cooldown('fire_' + p.gun, def.cd * 1000 * 0.8)) return;
     p.ammo--;
-    if (p.ammo <= 0 && p.ammoReserve > 0) p.reloadUntil = t + def.reload * 1000;   // 打空当前匣、有备弹 → 自动换弹
-    else if (p.ammo <= 0) this.outOfAmmo(p);                                        // 打出最后一发、无备弹 → 提示一次
+    if (p.ammo <= 0) {
+      if (p.ammoReserve > 0) p.reloadUntil = t + def.reload * 1000;   // 打空当前匣、有备弹 → 自动换弹
+      else this.outOfAmmo(p);                                          // 打出最后一发、无备弹 → 切近战
+    }
     const eye = { x: p.pos.x, y: p.pos.y + RULES.eyeH, z: p.pos.z };
     const co = m.o;
     if (Array.isArray(co) && Math.hypot(co[0] - eye.x, co[1] - eye.y, co[2] - eye.z) < 2.5) {
@@ -440,23 +447,6 @@ class World {
     this.broadcast({ type: 'chat', from: p.name, color: p.color, text });
   }
 
-  // 玩家举报：不同举报者（按 IP 去重）在窗口内达阈值 → 投票封禁（复用反作弊封禁出口）
-  handleReport(reporter, m) {
-    const target = this.players.get(m.id | 0);
-    if (!target || target.id === reporter.id) return;         // 目标不存在 / 不能举报自己
-    if (target.mon && target.mon.kicked) return;               // 已被处置，忽略
-    const reporterKey = 'ip:' + (reporter.mon.meta.ip || reporter.id);
-    const res = this.reportVote.report(target.id, reporterKey);
-    // 反馈举报者当前进度（去重后，同一 IP 反复点不涨）
-    this.sendTo(reporter.id, { type: 'reported', name: target.name, count: res.count, need: res.threshold });
-    // 达阈值 + 房间人数够（太小的房间不触发，防少数人串通/无意义举报）→ 封禁
-    if (res.triggered && this.players.size >= REPORT.minReporters) {
-      if (this.ac.banByVote(target.mon, REPORT.banMinutes, `多名玩家举报（${res.count} 人）`)) {
-        this.reportVote.clear(target.id);
-      }
-    }
-  }
-
   handleBuy(p, m) {
     const item = SHOP.find(s => s.id === m.id);
     if (!item) return;
@@ -535,6 +525,7 @@ class World {
     victim.streak = 0;
     let kInfo = null;
     if (attacker && attacker !== victim) {
+      this.recordKillPace(attacker, victim, wp, bossName);
       attacker.kills++; attacker.score += RULES.killScore; attacker.coins += RULES.killCoins;
       attacker.hp = Math.min(RULES.maxHp, attacker.hp + RULES.killHeal);
       attacker.streak++;
@@ -553,6 +544,32 @@ class World {
       wp, boss: bossName || null, self: attacker === victim,
     });
     this.broadcast({ type: 'fx', k: 'die', id: victim.id, pos: this.chest(victim) });
+  }
+
+  recordKillPace(attacker, victim, wp, bossName) {
+    if (!attacker.mon || attacker.mon.kicked || bossName || wp === 'barrel') return;
+    if (!attacker.acKillPace) attacker.acKillPace = { kills: [], flags: {} };
+    const t = now();
+    const state = attacker.acKillPace;
+    state.kills = state.kills.filter(k => t - k.t <= KILL_PACE_MAX_WINDOW);
+    state.kills.push({ t, victimId: victim.id, victimName: victim.name, wp: wp || '' });
+    const alivePlayers = [...this.players.values()].filter(p => p.alive).length;
+    const totalPlayers = Math.max(alivePlayers, this.players.size);
+
+    for (const rule of KILL_PACE_RULES) {
+      if (totalPlayers < rule.minPlayers) continue;
+      const recent = state.kills.filter(k => t - k.t <= rule.windowMs);
+      if (recent.length < rule.minKills) continue;
+      const victims = new Set(recent.map(k => k.victimId || k.victimName));
+      if (victims.size < rule.minVictims) continue;
+      if (t - (state.flags[rule.tag] || 0) < rule.cooldownMs) continue;
+      state.flags[rule.tag] = t;
+      attacker.mon.flag(
+        'killpace',
+        rule.weight,
+        `${Math.round(rule.windowMs / 1000)}s 内击杀 ${recent.length} 次 / ${victims.size} 名玩家，在线 ${totalPlayers} 人`
+      );
+    }
   }
 
   // ---------- 范围伤害（手雷/油桶/火箭/爆破 共用，含油桶连锁） ----------

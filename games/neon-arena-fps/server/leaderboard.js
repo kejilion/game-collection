@@ -37,7 +37,16 @@ function get(name) {
   if (!profiles[name]) {
     profiles[name] = { kills: 0, deaths: 0, bossKills: 0, bestStreak: 0, coins: null, owned: [], eq: {}, joins: 0, last: 0 };
   }
-  if (profiles[name].bestStreak === undefined) profiles[name].bestStreak = 0;   // 旧档案兼容
+  const p = profiles[name];
+  if (p.kills === undefined) p.kills = 0;
+  if (p.deaths === undefined) p.deaths = 0;
+  if (p.bossKills === undefined) p.bossKills = 0;
+  if (p.bestStreak === undefined) p.bestStreak = 0;
+  if (p.coins === undefined) p.coins = null;
+  if (!Array.isArray(p.owned)) p.owned = [];
+  if (!p.eq || typeof p.eq !== 'object') p.eq = {};
+  if (p.joins === undefined) p.joins = 0;
+  if (p.last === undefined) p.last = 0;
   return profiles[name];
 }
 

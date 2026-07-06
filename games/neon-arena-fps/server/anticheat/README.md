@@ -137,7 +137,7 @@ handleFire(p, m) {
 | `onAction(key, action, reason, mon)` | — | `warn`/`kick`/`ban` 处置回调（网络断连由接入方执行） |
 | `log(entry)` | — | 每条违规明细回调 |
 
-方法：`attach(key, {ip, name}) → Monitor`、`detach(key)`、`isBanned(idents[])`、`registerBan(idents[], minutes, reason)`（手动封禁/管理后台可用）、`banByVote(mon, minutes, reason) → bool`（外部裁决封禁，如玩家举报——复用同一封禁持久化 + `onAction` 处置链路，接入方无需另写踢人逻辑）、`tick(dtSec)`、`status()`。
+方法：`attach(key, {ip, name}) → Monitor`、`detach(key)`、`isBanned(idents[])`、`registerBan(idents[], minutes, reason)`（手动封禁/管理后台可用）、`tick(dtSec)`、`status()`。
 
 ### `Monitor`（每玩家一个）
 
@@ -153,34 +153,6 @@ handleFire(p, m) {
 | `flag(rule, weight?, detail?)` | 惩罚 | 手动上报自定义违规 |
 
 属性：`score`（当前违规分）、`violations`（最近明细）、`stats`（corrections/teleports/dropped）。
-
-### `ReportVote`（玩家举报投票封禁，可选模块）
-
-`require('./anticheat').ReportVote` —— 纯计票逻辑，不含任何游戏代码，与 `banByVote` 搭配即成一套完整的"社区自治"封禁：
-
-```js
-const { ReportVote } = require('./anticheat');
-const votes = new ReportVote({ threshold: 3, windowMs: 5 * 60000 });
-
-function onReport(reporter, targetMon) {
-  // reporterKey 建议用 IP：同一 IP 的多开小号对同一目标只算 1 票，防自己刷票封人
-  const res = votes.report(targetMon.key, 'ip:' + reporter.ip);
-  if (res.triggered && enoughPlayersOnline()) {   // 人数门槛由接入方把关
-    ac.banByVote(targetMon, 10, `多名玩家举报（${res.count} 人）`);
-    votes.clear(targetMon.key);
-  }
-}
-setInterval(() => votes.sweep(), 1000);   // 周期 GC 过期票
-```
-
-| 方法 | 说明 |
-| --- | --- |
-| `report(targetKey, reporterKey) → {count, threshold, triggered}` | 记一票；同一 `reporterKey` 只刷新时间戳不叠加（去重）；返回窗口内不同举报者数 |
-| `count(targetKey) → number` | 只读当前有效票数 |
-| `clear(targetKey)` | 目标已处置/离场时清空票仓 |
-| `sweep()` | 周期清理过期票与空票仓，防内存累积 |
-
-**防滥用三板斧**：① 按 `reporterKey`（建议 IP）去重挡多开刷票；② `windowMs` 滚动窗口挡跨局攒票；③ `threshold` + 接入方人数门槛挡少数人串通。**固有局限**：无法防多名真实独立玩家串通，需靠"举报 + 录像回放人工复核"兜底——定位是快速处置明显作弊/辱骂，误封有封禁时长自动兜底。
 
 ## 五、调参指南（新游戏接入 checklist）
 
@@ -211,7 +183,7 @@ if (game.turn !== p.id) return p.mon.flag('protocol', 3, '非本回合操作');
 | 文件 | 接入点 |
 | --- | --- |
 | `server/index.js` | 引擎实例化、封禁门、分类型限速、处置回调、`/health` 指标、`AC_MODE` 开关 |
-| `server/world.js` | `handleMove` 移动校验（`floorAtSrv`/`inSolidSrv`/`maxSpeedOf`）、fire/melee/nade 冷却收口与方向清洗、`aimShot` 喂入、出生/复活 `resetPos`；`ReportVote` 实例 + `handleReport`（举报去重/阈值/`banByVote`） |
-| `public/js/game.js` | `kicked`（断线原因展示）、`acwarn`（警告提示）、`reported`（举报回执）消息处理；排行榜 🚩 举报按钮 |
+| `server/world.js` | `handleMove` 移动校验（`floorAtSrv`/`inSolidSrv`/`maxSpeedOf`）、fire/melee/nade 冷却收口与方向清洗、`aimShot` 喂入、出生/复活 `resetPos` |
+| `public/js/game.js` | `kicked`（断线原因展示）与 `acwarn`（警告提示）消息处理 |
 
 运行时观测：`GET /health` 返回 `anticheat: { players, flags, kicks, bans, recent }`；封禁数据在 `data/anticheat.json`，删除对应键即可手动解封。

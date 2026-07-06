@@ -2,14 +2,13 @@
 'use strict';
 const { AntiCheat, Monitor, TokenBucket, DEFAULTS } = require('./core');
 const { createJsonStore, createMemoryStore } = require('./store');
-const { ReportVote } = require('./report');
 
 // FPS/动作类预设：客户端上报位置 + 服务端裁决伤害 的典型架构
 // override 里可覆盖任意 DEFAULTS 字段（deepMerge）
 function fpsPreset(override) {
   return Object.assign({
-    thresholds: { warn: 20, kick: 45, ban: 90 },
-    banMinutes: 10,
+    thresholds: { warn: 15, kick: 35, ban: 70 },
+    banMinutes: 15,
     kicksToBan: 3,
   }, override || {});
 }
@@ -27,11 +26,11 @@ function turnBasedPreset(override) {
 const RATE_PRESETS = {
   move: [40, 80], fire: [25, 35], melee: [10, 15], nade: [4, 6],
   chat: [2, 4], pickup: [10, 20], switch: [10, 15], reload: [5, 8],
-  buy: [3, 6], equip: [5, 8], ping: [2, 4], report: [1, 3], default: [6, 10],
+  buy: [3, 6], equip: [5, 8], ping: [2, 4], default: [6, 10],
 };
 
 module.exports = {
   AntiCheat, Monitor, TokenBucket, DEFAULTS,
-  createJsonStore, createMemoryStore, ReportVote,
+  createJsonStore, createMemoryStore,
   fpsPreset, turnBasedPreset, RATE_PRESETS,
 };

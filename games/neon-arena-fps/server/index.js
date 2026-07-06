@@ -62,10 +62,7 @@ const ac = new AntiCheat(fpsPreset({
     const label = action === 'ban'
       ? `你已被临时封禁：${reason}`
       : `你已被移出对局：${reason}`;
-    if (p) {
-      const how = /举报/.test(reason || '') ? '因多名玩家举报被' : '因异常行为被系统';
-      broadcast({ type: 'sys', style: 'streak', text: `🚫 ${p.name} ${how}${action === 'ban' ? '封禁' : '移出'}` });
-    }
+    if (p) broadcast({ type: 'sys', style: 'streak', text: `🚫 ${p.name} 因异常行为被系统${action === 'ban' ? '封禁' : '移出'}` });
     if (ws) {
       rawSend(ws, JSON.stringify({ type: 'kicked', text: label }));
       setTimeout(() => { try { ws.close(4001, 'anticheat'); } catch (_) { /* 忽略 */ } }, 60);
@@ -73,8 +70,33 @@ const ac = new AntiCheat(fpsPreset({
   },
   log: e => console.warn(`[anticheat] ${e.name || e.key} ${e.rule} ${e.detail} → score=${e.score}`),
 }));
+
+// ---- 底层 TCP 瞬间涌入丢弃与自动封禁 (防大并发卡顿) ----
+const tcpConnHistory = new Map(); // ip -> [timestamps]
+server.on('connection', (socket) => {
+  const rawIp = socket.remoteAddress;
+  if (!rawIp) return;
+  const ip = rawIp.replace(/^::ffff:/, '');
+  const ipKey = 'ip:' + rawIp;
+  const ban = ac.isBanned([ipKey]);
+  if (ban) {
+    socket.destroy();
+    return;
+  }
+  const now = Date.now();
+  let times = tcpConnHistory.get(ip) || [];
+  times = times.filter(t => now - t < 2000);
+  times.push(now);
+  tcpConnHistory.set(ip, times);
+  if (times.length > 6) {
+    console.log(`[TCP-SURGE] IP ${ip} 瞬间涌入攻击，直接销毁并封禁。`);
+    ac.registerBan([ipKey], 15, 'TCP 瞬间涌入攻击');
+    socket.destroy();
+  }
+});
+setInterval(() => ac.tick(1), 1000);
+
 const world = new World(broadcast, sendTo, ac);
-setInterval(() => { ac.tick(1); world.reportVote.sweep(); }, 1000);   // 违规分衰减 + 举报票 GC
 
 // 下发给新连接的静态定义（地图/武器/道具/商店），两端共用一份数据
 const DEFS = {
@@ -93,12 +115,90 @@ const DEFS = {
     [k, { name: b.name, radius: b.radius, yc: b.yc, color: b.color }])),
 };
 
+// ---- 连接防刷：同 IP 短时间内大量连接直接拒绝 ----
+const connTracker = new Map();  // ip -> { times: [timestamps], blocked: until }
+const CONN_WINDOW = 10000;      // 10 秒窗口
+const CONN_MAX = 8;             // 窗口内最大连接数
+const CONN_BLOCK_BASE = 30000;  // 首次封堵 30 秒
+const CONN_BLOCK_MAX = 600000;  // 最高封堵 10 分钟
+function checkConnFlood(ip) {
+  const now = Date.now();
+  let rec = connTracker.get(ip);
+  if (!rec) { rec = { times: [], blocked: 0, strikes: 0 }; connTracker.set(ip, rec); }
+  if (rec.blocked > now) return false;
+  rec.times = rec.times.filter(t => now - t < CONN_WINDOW);
+  rec.times.push(now);
+  if (rec.times.length > CONN_MAX) {
+    rec.strikes++;
+    const blockMs = Math.min(CONN_BLOCK_BASE * Math.pow(2, rec.strikes - 1), CONN_BLOCK_MAX);
+    rec.blocked = now + blockMs;
+    rec.times = [];
+    console.log(`[conn-flood] IP ${ip} blocked for ${Math.round(blockMs/1000)}s (strike #${rec.strikes})`);
+    return false;
+  }
+  return true;
+}
+// 定时清理过期记录（每 60 秒）
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, rec] of connTracker) {
+    if (rec.blocked < now && rec.times.length === 0) connTracker.delete(ip);
+  }
+}, 60000);
+
+// ---- 同IP并发连接限制 ----
+const IP_MAX_CONCURRENT = 4;
+const ipConns = new Map();  // ip -> count
+function ipConnAdd(ip) {
+  const c = (ipConns.get(ip) || 0) + 1;
+  ipConns.set(ip, c);
+  return c;
+}
+function ipConnDel(ip) {
+  const c = (ipConns.get(ip) || 1) - 1;
+  if (c <= 0) ipConns.delete(ip); else ipConns.set(ip, c);
+}
+
+// ---- 名字黑名单正则 ----
+const NAME_BLACKLIST = [
+  /我是sb/i,
+  /^sb\d*$/i,
+  /习近平/,
+  /毛泽[东西]/,
+];
+function isNameBlocked(name) {
+  return NAME_BLACKLIST.some(re => re.test(name));
+}
+
+// ---- 挂机/纯送死检测 ----
+const AFK_CHECK_INTERVAL = 15000;
+const AFK_DEATH_THRESHOLD = 10;  // 死亡超过此数且0击杀
+setInterval(() => {
+  for (const [id, p] of world.players) {
+    if (p.kills === 0 && p.deaths >= AFK_DEATH_THRESHOLD) {
+      const ws = sockets.get(id);
+      console.log(`[anti-grief] 踢出纯送死玩家: ${p.name} (0杀/${p.deaths}死)`);
+      world.removePlayer(id);
+      sockets.delete(id);
+      if (ws) {
+        ws.playerId = 0;
+        rawSend(ws, JSON.stringify({ type: 'err', text: '长时间未参与战斗，已被移出' }));
+        // 记录踢出到反作弊
+        if (p.mon) ac.opts.store.addKick('ip:' + (p.ip || 'unknown'), 24*3600000);
+        if (p.mon) ac.opts.store.addKick('name:' + p.name, 24*3600000);
+      }
+    }
+  }
+}, AFK_CHECK_INTERVAL);
+
 wss.on('connection', (ws, req) => {
   ws.isAlive = true;
   ws.spectator = false;
   ws.playerId = 0;
   ws.ip = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim()
     || req.socket.remoteAddress || 'unknown';
+  if (!checkConnFlood(ws.ip)) { ws.close(4429, 'too many connections'); return; }
+  if (ipConnAdd(ws.ip) > IP_MAX_CONCURRENT) { ipConnDel(ws.ip); ws.close(4429, 'too many concurrent'); return; }
   ws.preBucket = new TokenBucket(6, 12);   // 加入前的连接级限速
   ws.on('pong', () => { ws.isAlive = true; });
   rawSend(ws, JSON.stringify(DEFS));
@@ -121,6 +221,10 @@ wss.on('connection', (ws, req) => {
         if (world.players.size >= cfg.RULES.maxPlayers) { rawSend(ws, JSON.stringify({ type: 'err', text: '房间已满，稍后再试' })); return; }
         // 封禁门：IP 与昵称任一命中即拒绝
         const cleanName = String(m.name || '').replace(/[<>&"']/g, '').trim().slice(0, 12);
+        if (isNameBlocked(cleanName)) {
+          rawSend(ws, JSON.stringify({ type: 'err', text: '该昵称不可用' }));
+          return;
+        }
         const ban = ac.isBanned(['ip:' + ws.ip, 'name:' + cleanName]);
         if (ban) {
           const mins = Math.max(1, Math.ceil((ban.until - Date.now()) / 60000));
@@ -154,7 +258,6 @@ wss.on('connection', (ws, req) => {
       case 'switch': if (p) world.handleSwitch(p, m); break;
       case 'pickup': if (p) world.handlePickup(p, m); break;
       case 'chat':   if (p) world.handleChat(p, m); break;
-      case 'report': if (p) world.handleReport(p, m); break;
       case 'buy':    if (p) world.handleBuy(p, m); break;
       case 'equip':  if (p) world.handleEquipCos(p, m); break;
       case 'ping':   rawSend(ws, JSON.stringify({ type: 'pong', t: m.t })); break;
@@ -162,6 +265,7 @@ wss.on('connection', (ws, req) => {
   });
 
   ws.on('close', () => {
+    ipConnDel(ws.ip);
     if (ws.playerId) { world.removePlayer(ws.playerId); sockets.delete(ws.playerId); }
   });
   ws.on('error', () => { /* close 会跟着触发 */ });

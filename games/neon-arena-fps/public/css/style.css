@@ -208,17 +208,6 @@ body.chat-focus #chatBox { bottom: 44vh; }
 .brow .rank { font-weight: 800; color: #9fc3dd; }
 .brow .rank.r1 { color: var(--gold); } .brow .rank.r2 { color: #d8dee6; } .brow .rank.r3 { color: #d99a5b; }
 .brow .num { text-align: right; font-weight: 700; }
-/* 玩家名 + 举报按钮同处一格（1fr 列），按钮右对齐 */
-.brow .pcell { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.brow .pcell > :first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.report-btn {
-  margin-left: auto; flex: none; cursor: pointer;
-  font-size: 11px; line-height: 1; padding: 3px 7px; border-radius: 5px;
-  color: #ffb4b4; background: rgba(255,70,70,.12); border: 1px solid rgba(255,90,90,.35);
-  transition: background .15s, color .15s, opacity .15s;
-}
-.report-btn:hover { background: rgba(255,70,70,.26); color: #fff; }
-.report-btn.done { color: #8fd6a0; background: rgba(90,200,120,.12); border-color: rgba(90,200,120,.35); cursor: default; opacity: .8; }
 
 /* ---------- 商店 ---------- */
 .shop-card { width: 780px; }

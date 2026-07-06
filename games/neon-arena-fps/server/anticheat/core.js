@@ -20,7 +20,7 @@ const DEFAULTS = {
   enabled: true,
   // 违规分阈值与衰减
   thresholds: { warn: 20, kick: 45, ban: 90 },
-  decayPerSec: 0.8,          // 违规分每秒衰减
+  decayPerSec: 0.5,          // 违规分每秒衰减
   warnCooldownMs: 30000,     // 同一玩家两次警告的最小间隔
   banMinutes: 10,            // 直接封禁时长
   kicksToBan: 3,             // 24h 内被踢 N 次自动升级封禁
@@ -43,9 +43,9 @@ const DEFAULTS = {
     dtMinMs: 15, dtMaxMs: 400,   // 单包计时钳制（防时间伪造/卡顿误判）
     speedSlack: 1.3,             // 速度许可倍率（容忍插值与抖动）
     packetPad: 0.05,             // 每包固定余量（米）
-    teleportDist: 6,             // 单包位移即判瞬移的距离（下限，会随 dt 动态放大）
+    teleportDist: 10,            // 单包位移即判瞬移的距离（下限，会随 dt 动态放大）
     teleportDtScale: 3,          // 瞬移阈值 = max(teleportDist, allowed×此系数)，长间隔包自动放宽
-    speedBucketMax: 4,           // 超速漏桶容量（米），溢出记违规并回拉
+    speedBucketMax: 7,           // 超速漏桶容量（米），溢出记违规并回拉
     speedBucketLeak: 0.25,       // 合法包时漏桶回收比例
     maxAboveFloor: 7,            // 高于支撑面多少米算"飞天"（含跳跃+平台余量）
     flyBucketMax: 6,             // 飞天漏桶（米·包）
@@ -368,21 +368,27 @@ class AntiCheat {
     }
     return null;
   }
+  _escalatedMinutes(idents, baseMinutes) {
+    if (!this.opts.store || !this.opts.store.banCount) return baseMinutes;
+    let maxPrior = 0;
+    for (const id of idents || []) {
+      const c = this.opts.store.banCount(id);
+      if (c > maxPrior) maxPrior = c;
+    }
+    const tiers = [baseMinutes, 60, 360, 1440, 0];
+    if (maxPrior >= tiers.length - 1) return 0;
+    return tiers[maxPrior] || baseMinutes;
+  }
   registerBan(idents, minutes, reason) {
     if (!this.opts.store) return;
-    const until = now() + minutes * 60000;
-    for (const id of idents || []) this.opts.store.setBan(id, { until, reason, at: now() });
+    const actualMin = this._escalatedMinutes(idents, minutes);
+    const until = actualMin === 0 ? now() + 100 * 365.25 * 24 * 3600000 : now() + actualMin * 60000;
+    const suffix = actualMin !== minutes ? ` [升级→${actualMin === 0 ? "永封" : actualMin + "min"}]` : '';
+    for (const id of idents || []) {
+      this.opts.store.setBan(id, { until, reason: reason + suffix, at: now() });
+      if (this.opts.store.addBanRecord) this.opts.store.addBanRecord(id);
+    }
     this.totalBans++;
-  }
-
-  // 外部裁决封禁（如玩家投票举报）：复用同一套封禁持久化 + onAction 处置链路（发通知/踢连接）。
-  // mon 为目标的 Monitor（提供 idents 与 key）；与自动违规封禁走同一出口，接入方无需另写踢人逻辑。
-  banByVote(mon, minutes, reason) {
-    if (!mon || mon.kicked) return false;
-    mon.kicked = true;
-    this.registerBan(mon.idents(), minutes, reason);
-    this._action(mon, 'ban', reason);
-    return true;
   }
 
   // 每秒调用：违规分衰减
@@ -426,7 +432,6 @@ class AntiCheat {
       this._action(mon, 'ban', reason);
     } else {
       this.totalKicks++;
-      // 记录踢出，达到次数自动升级封禁
       let escalated = false;
       if (this.opts.store) {
         for (const id of mon.idents()) {
@@ -434,13 +439,16 @@ class AntiCheat {
         }
       }
       if (escalated) {
+        const escMin = this._escalatedMinutes(mon.idents(), this.opts.banMinutes);
+        const escLabel = escMin === 0 ? '永封' : (escMin + '分钟');
         this.registerBan(mon.idents(), this.opts.banMinutes, `24h 内被踢出 ${this.opts.kicksToBan} 次`);
-        this._action(mon, 'ban', `多次被踢，临时封禁 ${this.opts.banMinutes} 分钟`);
+        this._action(mon, 'ban', `多次被踢，封禁 ${escLabel}`);
       } else {
         this._action(mon, 'kick', reason);
       }
     }
   }
+
   _action(mon, action, reason) {
     if (typeof this.opts.onAction === 'function') {
       try { this.opts.onAction(mon.key, action, reason, mon); } catch (_) { /* 动作回调不允许炸引擎 */ }
@@ -448,10 +456,11 @@ class AntiCheat {
   }
   _log(entry) {
     this.totalFlags++;
+    entry.t = entry.t || now();
     this.recentLog.push(entry);
     if (this.recentLog.length > this.opts.logSize) this.recentLog.shift();
     if (typeof this.opts.log === 'function') {
-      try { this.opts.log(entry); } catch (_) { /* 同上 */ }
+      try { this.opts.log(entry); } catch (_) { /* 日志回调不允许炸引擎 */ }
     }
   }
 }

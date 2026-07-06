@@ -77,7 +77,6 @@
   let ws = null, wsOk = false, defs = null, worldBuilt = false;
   let mode = 'menu';            // menu | play | spec
   let myId = 0, myName = localStorage.getItem('na_name') || '';
-  const reportedIds = new Set();   // 本局已举报过的玩家 id（用于榜单按钮显"✓已举报"）
   let you = { coins: 0, owned: [], eq: { head: null, face: null, back: null, fx: null } };
   let mySnap = null;
   let lastKillerText = '';
@@ -180,9 +179,6 @@
       case 'dry':   // 弹药/投掷物用光：只提示，玩家自己去武器点获取新武器（不自动切武器）
         G.audio.dryFire();
         notice(`⚠️ ${m.name}用光了 · 去武器点获取新武器`, true);
-        break;
-      case 'reported':   // 举报回执：显示当前进度（同一 IP 反复举报不叠加）
-        notice(`🚩 已举报 ${esc(m.name)}（${m.count}/${m.need}）· 达标将自动封禁`, false);
         break;
       case 'pong': pingMs = now() - m.t; break;
     }
@@ -796,16 +792,10 @@
       const col5 = isRt ? '得分' : 'BOSS';
       let html = `<div class="brow head"><span>#</span><span>玩家</span><span class="num">击杀</span><span class="num">死亡</span><span class="num">${col5}</span><span class="num">连杀</span></div>`;
       rows.forEach((r, i) => {
-        const isMe = (isRt && r.i === myId) || (!isRt && r.n === myName);
-        const meCls = isMe ? ' me' : '';
+        const meCls = (isRt && r.i === myId) || (!isRt && r.n === myName) ? ' me' : '';
         const streakVal = isRt ? (r.st | 0) : (r.bs | 0);
         const streakCls = streakVal >= 3 ? ' streak-hot' : '';
-        // 举报按钮：仅实时榜、仅自己在场游戏时、且不是自己那行
-        const canReport = isRt && mode === 'play' && !isMe && r.i;
-        const rb = canReport
-          ? `<button class="report-btn${reportedIds.has(r.i) ? ' done' : ''}" data-rid="${r.i}" title="举报该玩家（多人举报将被封禁）">${reportedIds.has(r.i) ? '✓已举报' : '🚩举报'}</button>`
-          : '';
-        html += `<div class="brow${meCls}"><span class="rank r${i + 1}">${i + 1}</span><span class="pcell" style="color:${r.c || '#cfe6f5'}">${esc(r.n)}${rb}</span><span class="num">${r.k}</span><span class="num">${r.d}</span><span class="num">${isRt ? (r.s | 0) : (r.bk | 0)}</span><span class="num${streakCls}">${streakVal > 0 ? '🔥' + streakVal : '-'}</span></div>`;
+        html += `<div class="brow${meCls}"><span class="rank r${i + 1}">${i + 1}</span><span style="color:${r.c || '#cfe6f5'}">${esc(r.n)}</span><span class="num">${r.k}</span><span class="num">${r.d}</span><span class="num">${isRt ? (r.s | 0) : (r.bk | 0)}</span><span class="num${streakCls}">${streakVal > 0 ? '🔥' + streakVal : '-'}</span></div>`;
       });
       if (!rows.length) html += '<div class="brow"><span></span><span style="color:#7591ad">暂无数据</span></div>';
       return html;
@@ -814,16 +804,6 @@
     $('boardHist').innerHTML = mkRows(m.hist, false);
     $('menuHist').innerHTML = mkRows(m.hist.slice(0, 10), false);   // 首页历史榜显示前 10
   }
-  // 举报按钮（事件委托：榜单每 2s 重渲染，监听挂在稳定容器上）
-  $('boardRt').addEventListener('click', (e) => {
-    const btn = e.target.closest('.report-btn');
-    if (!btn) return;
-    const rid = +btn.dataset.rid;
-    if (!rid || rid === myId || mode !== 'play') return;
-    send({ type: 'report', id: rid });
-    reportedIds.add(rid);
-    btn.classList.add('done'); btn.textContent = '✓已举报';
-  });
   $('tabRt').onclick = () => { $('tabRt').classList.add('active'); $('tabHist').classList.remove('active'); $('boardRt').classList.remove('hidden'); $('boardHist').classList.add('hidden'); };
   $('tabHist').onclick = () => { $('tabHist').classList.add('active'); $('tabRt').classList.remove('active'); $('boardHist').classList.remove('hidden'); $('boardRt').classList.add('hidden'); };
 
@@ -952,15 +932,6 @@
     $('pause').classList.add('hidden');
     if (mode !== 'menu') requestLock();
   }
-  // 排行榜：开关式可交互面板（打开时解锁鼠标以便点举报，关闭后恢复瞄准）
-  function setBoard(open) {
-    const el = $('board');
-    if (open === !el.classList.contains('hidden')) return;   // 状态无变化
-    el.classList.toggle('hidden', !open);
-    if (open) document.exitPointerLock && document.exitPointerLock();
-    else if (mode !== 'menu') requestLock();
-  }
-  function toggleBoard() { setBoard($('board').classList.contains('hidden')); }
 
   // ---------- 指针锁定与输入 ----------
   function requestLock() {
@@ -970,15 +941,14 @@
   }
   document.addEventListener('pointerlockchange', () => {
     if (!document.pointerLockElement && lockWanted && (mode === 'play' || mode === 'spec')
-      && $('shop').classList.contains('hidden') && $('pause').classList.contains('hidden')
-      && $('board').classList.contains('hidden') && !NOLOCK && !TOUCH) {
-      openPause();   // 因排行榜打开而解锁的不算，避免弹出暂停
+      && $('shop').classList.contains('hidden') && $('pause').classList.contains('hidden') && !NOLOCK && !TOUCH) {
+      openPause();
     }
   });
   canvas.addEventListener('click', () => {
     G.audio.init();
-    if (!TOUCH && mode !== 'menu' && !document.pointerLockElement && $('pause').classList.contains('hidden')
-      && $('shop').classList.contains('hidden') && $('board').classList.contains('hidden')) requestLock();
+    if (!TOUCH && mode !== 'menu' && !document.pointerLockElement
+      && $('pause').classList.contains('hidden') && $('shop').classList.contains('hidden')) requestLock();
   });
   $('btnResume').onclick = () => closePause();
   $('btnToMenu').onclick = () => { send({ type: 'leave' }); rejoinWanted = false; lockWanted = false; backToMenu(); };
@@ -1092,9 +1062,9 @@
   $('specViewBtn').onclick = () => { specView = specView === 'tp' ? 'fp' : 'tp'; updateSpecBar(); };
   $('specJoinBtn').onclick = () => joinFromSpec();
   $('tMenu').onclick = () => { if (mode === 'play' || mode === 'spec') openPause(); };
-  $('tBoard').onclick = () => toggleBoard();
+  $('tBoard').onclick = () => { $('board').classList.toggle('hidden'); };
   $('tChat').onclick = () => { if (mode === 'play') openChat(); };
-  $('boardClose').onclick = () => setBoard(false);
+  $('boardClose').onclick = () => { $('board').classList.add('hidden'); };
   $('shopClose').onclick = () => toggleShop(false);
   // 武器栏点按切换（桌面鼠标点击同样生效，无副作用）；再点已激活的枪械栏 = 换弹
   $('slotMelee').onclick = () => switchSlot('melee');
@@ -1131,11 +1101,10 @@
   function isTyping() { return document.activeElement === $('chatInput') || document.activeElement === $('nameInput'); }
 
   document.addEventListener('keydown', e => {
-    if (e.code === 'Tab') { e.preventDefault(); if (!e.repeat && mode !== 'menu' && !isTyping()) toggleBoard(); return; }
+    if (e.code === 'Tab') { e.preventDefault(); if (mode !== 'menu' && !isTyping()) $('board').classList.remove('hidden'); return; }
     if (e.code === 'Escape') {
       if (!$('shop').classList.contains('hidden')) { toggleShop(false); return; }
       if (!$('pause').classList.contains('hidden')) { closePause(); return; }
-      if (!$('board').classList.contains('hidden')) { setBoard(false); return; }
       if (mode === 'play' || mode === 'spec') openPause();
       return;
     }
@@ -1161,7 +1130,7 @@
     }
   });
   document.addEventListener('keyup', e => {
-    if (e.code === 'Tab') { e.preventDefault(); return; }   // 开关式：松开不再关闭
+    if (e.code === 'Tab') { e.preventDefault(); $('board').classList.add('hidden'); return; }
     keys[e.code] = false;
   });
 

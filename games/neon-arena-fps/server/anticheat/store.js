@@ -30,6 +30,16 @@ function createJsonStore(file) {
       return b;
     },
     setBan(ident, ban) { data.bans[ident] = ban; save(); },
+    banCount(ident) {
+      const arr = data.banHistory && data.banHistory[ident];
+      return arr ? arr.length : 0;
+    },
+    addBanRecord(ident) {
+      if (!data.banHistory) data.banHistory = {};
+      if (!data.banHistory[ident]) data.banHistory[ident] = [];
+      data.banHistory[ident].push(Date.now());
+      save();
+    },
     // 记录一次踢出，返回窗口期内累计次数
     addKick(ident, windowMs) {
       const t = Date.now();
@@ -56,6 +66,15 @@ function createMemoryStore() {
       return b && b.until > Date.now() ? b : null;
     },
     setBan(ident, ban) { data.bans[ident] = ban; },
+    banCount(ident) {
+      const arr = data.banHistory && data.banHistory[ident];
+      return arr ? arr.length : 0;
+    },
+    addBanRecord(ident) {
+      if (!data.banHistory) data.banHistory = {};
+      if (!data.banHistory[ident]) data.banHistory[ident] = [];
+      data.banHistory[ident].push(Date.now());
+    },
     addKick(ident, windowMs) {
       const t = Date.now();
       const arr = (data.kicks[ident] || []).filter(ts => t - ts < windowMs);
