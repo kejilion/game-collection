@@ -277,15 +277,13 @@ class World {
     if (t < p.reloadUntil) return;
     if (p.ammo <= 0) {
       if (p.ammoReserve > 0) p.reloadUntil = t + def.reload * 1000;   // 有备弹：进换弹冷却
-      else this.outOfAmmo(p);                                          // 无备弹：空枪切近战
+      // 已空枪再开火：静默（提示只在"打出最后一发"发一次，见下），客户端本地播空仓声
       return;
     }
     if (!p.mon.cooldown('fire_' + p.gun, def.cd * 1000 * 0.8)) return;
     p.ammo--;
-    if (p.ammo <= 0) {
-      if (p.ammoReserve > 0) p.reloadUntil = t + def.reload * 1000;   // 打空当前匣、有备弹 → 自动换弹
-      else this.outOfAmmo(p);                                          // 打出最后一发、无备弹 → 切近战
-    }
+    if (p.ammo <= 0 && p.ammoReserve > 0) p.reloadUntil = t + def.reload * 1000;   // 打空当前匣、有备弹 → 自动换弹
+    else if (p.ammo <= 0) this.outOfAmmo(p);                                        // 打出最后一发、无备弹 → 提示一次
     const eye = { x: p.pos.x, y: p.pos.y + RULES.eyeH, z: p.pos.z };
     const co = m.o;
     if (Array.isArray(co) && Math.hypot(co[0] - eye.x, co[1] - eye.y, co[2] - eye.z) < 2.5) {
