@@ -794,7 +794,7 @@
     };
     $('boardRt').innerHTML = mkRows(m.rt, true);
     $('boardHist').innerHTML = mkRows(m.hist, false);
-    $('menuHist').innerHTML = mkRows(m.hist.slice(0, 8), false);
+    $('menuHist').innerHTML = mkRows(m.hist.slice(0, 10), false);   // 首页历史榜显示前 10
   }
   $('tabRt').onclick = () => { $('tabRt').classList.add('active'); $('tabHist').classList.remove('active'); $('boardRt').classList.remove('hidden'); $('boardHist').classList.add('hidden'); };
   $('tabHist').onclick = () => { $('tabHist').classList.add('active'); $('tabRt').classList.remove('active'); $('boardHist').classList.remove('hidden'); $('boardRt').classList.add('hidden'); };
