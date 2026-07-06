@@ -109,12 +109,14 @@ const WEAPONS = {
   knife:  { slot: 'melee', name: '小刀',   dmg: 26,  range: 2.6, cd: 0.32 },
   sword:  { slot: 'melee', name: '长刀',   dmg: 42,  range: 3.5, cd: 0.65 },
   hammer: { slot: 'melee', name: '铁锤',   dmg: 70,  range: 3.0, cd: 1.15, sweep: true },
-  pistol: { slot: 'gun',   name: '手枪',   dmg: 22,  range: 80,  cd: 0.27, mag: 12, reload: 1.3, auto: false, spread: 0.014 },
-  mg:     { slot: 'gun',   name: '机枪',   dmg: 13,  range: 65,  cd: 0.09, mag: 40, reload: 2.4, auto: true,  spread: 0.05  },
-  sniper: { slot: 'gun',   name: '狙击枪', dmg: 95,  range: 220, cd: 1.4,  mag: 5,  reload: 2.8, auto: false, spread: 0.002, zoom: true },
-  nade:   { slot: 'nade',  name: '手雷',   dmg: 105, radius: 6.5, fuse: 2.2, cd: 2.0, kind: 'frag' },
-  flash:  { slot: 'nade',  name: '闪光弹', radius: 14,  fuse: 1.3, cd: 1.6, kind: 'flash', blindMax: 5.0, blindRadius: 14 },
-  smoke:  { slot: 'nade',  name: '烟雾弹', radius: 8,   fuse: 1.4, cd: 1.6, kind: 'smoke', smokeDur: 15000 },
+  // reserveMags = 首个弹匣外可换弹的匣数（越强的枪越少）；打光备弹自动切近战，拾取武器补满
+  pistol: { slot: 'gun',   name: '手枪',   dmg: 22,  range: 80,  cd: 0.27, mag: 12, reload: 1.3, auto: false, spread: 0.014, reserveMags: 12 },
+  mg:     { slot: 'gun',   name: '机枪',   dmg: 13,  range: 65,  cd: 0.09, mag: 40, reload: 2.4, auto: true,  spread: 0.05,  reserveMags: 8  },
+  sniper: { slot: 'gun',   name: '狙击枪', dmg: 95,  range: 220, cd: 1.4,  mag: 5,  reload: 2.8, auto: false, spread: 0.002, zoom: true, reserveMags: 6 },
+  // count = 携带个数（拾取补满，投完切近战）
+  nade:   { slot: 'nade',  name: '手雷',   dmg: 105, radius: 6.5, fuse: 2.2, cd: 2.0, kind: 'frag',  count: 5 },
+  flash:  { slot: 'nade',  name: '闪光弹', radius: 14,  fuse: 1.3, cd: 1.6, kind: 'flash', blindMax: 5.0, blindRadius: 14, count: 6 },
+  smoke:  { slot: 'nade',  name: '烟雾弹', radius: 8,   fuse: 1.4, cd: 1.6, kind: 'smoke', smokeDur: 15000, count: 8 },
 };
 
 // ---------- 装备（即时生效拾取物） ----------

@@ -87,7 +87,7 @@
 
   const me = {
     pos: V3(0, 0, 0), vy: 0, grounded: true, yaw: 0, pitch: 0,
-    active: 'melee', ammoL: 0, reloadUntil: 0, reloadDur: 1,
+    active: 'melee', ammoL: 0, reserve: 0, nadeLeft: 0, reloadUntil: 0, reloadDur: 1,
     lastMelee: 0, lastShot: 0, lastNade: -99999, lastSwitch: 0,
     moving: false, zoom: 0, stepT: 0, spread: 0, fallV: 0,
     swayX: 0, swayY: 0,
@@ -175,6 +175,10 @@
       case 'acwarn':
         bigNotice(m.text);
         addChat(`<span class="sys-text">${esc(m.text)}</span>`, 'sys streak');
+        break;
+      case 'dry':   // 弹药/投掷物用光：只提示，玩家自己去武器点获取新武器（不自动切武器）
+        G.audio.dryFire();
+        notice(`⚠️ ${m.name}用光了 · 去武器点获取新武器`, true);
         break;
       case 'pong': pingMs = now() - m.t; break;
     }
@@ -375,6 +379,7 @@
     if (s.rl > 0) { me.reloadUntil = now() + s.rl; me.reloadDur = defs.weapons[s.gw] ? defs.weapons[s.gw].reload * 1000 : 1000; }
     else if (me.reloadUntil > now() + 200) me.reloadUntil = 0;
     if (Math.abs(s.am - me.ammoL) > 1 || s.rl > 0) me.ammoL = s.am;
+    me.reserve = s.re | 0; me.nadeLeft = s.nl | 0;   // 备弹/投掷数以服务端为准
     const zomb = s.bf.some(b => b[0] === 'zombie');
     if (zomb) me.active = 'melee';
     else if (now() - me.lastSwitch > 600 && s.ac !== me.active) me.active = s.ac;
@@ -753,11 +758,14 @@
     if (s.gw) {
       sg.querySelector('.wico').textContent = WICON[s.gw];
       sg.querySelector('.wname').textContent = defs.weapons[s.gw].name;
-      sg.querySelector('.wammo').textContent = `${me.ammoL}/${defs.weapons[s.gw].mag}`;
+      const empty = me.ammoL <= 0 && me.reserve <= 0;
+      sg.querySelector('.wammo').textContent = empty ? '空·补给' : `${me.ammoL}/${defs.weapons[s.gw].mag} · ${me.reserve}`;
+      sg.classList.toggle('out', empty);
     } else {
       sg.querySelector('.wico').textContent = '·';
       sg.querySelector('.wname').textContent = '未拾取枪械';
       sg.querySelector('.wammo').textContent = '';
+      sg.classList.remove('out');
     }
     const sn = $('slotNade');
     sn.classList.toggle('empty', !s.ng);
@@ -766,7 +774,7 @@
     sn.querySelector('.wname').textContent = s.ng ? defs.weapons[s.ng].name : '未拾取投掷物';
     const nadeCdMs = s.ng && defs.weapons[s.ng] ? defs.weapons[s.ng].cd * 1000 : 2000;
     const nadeCd = Math.max(0, nadeCdMs - (now() - me.lastNade));
-    sn.querySelector('.wammo').textContent = s.ng ? (nadeCd > 0 ? (nadeCd / 1000).toFixed(1) + 's' : '✓') : '';
+    sn.querySelector('.wammo').textContent = s.ng ? (`×${me.nadeLeft}` + (nadeCd > 0 ? ` ${(nadeCd / 1000).toFixed(1)}s` : '')) : '';
     const br = $('buffRow');
     br.innerHTML = s.bf.map(([k, ms]) => {
       const b = defs.buffs[k];
@@ -1140,7 +1148,7 @@
   function tryLocalReload() {
     if (!mySnap || !mySnap.gw) return;
     const def = defs.weapons[mySnap.gw];
-    if (me.ammoL >= def.mag || me.reloadUntil > now()) return;
+    if (me.ammoL >= def.mag || me.reloadUntil > now() || me.reserve <= 0) return;   // 无备弹不能换
     me.reloadUntil = now() + def.reload * 1000;
     me.reloadDur = def.reload * 1000;
     G.audio.reload();
@@ -1347,6 +1355,7 @@
       if (myModel) myModel.attackT = 0;
       if (me.ammoL <= 0) { tryLocalReload(); }
     } else if (me.active === 'nade' && mySnap.ng) {
+      if (me.nadeLeft <= 0) { if (!me.firedOnce) { G.audio.dryFire(); me.firedOnce = true; } return; }   // 投掷物用光：空手感反馈，不投也不切
       const nadeCdMs = (defs.weapons[mySnap.ng] ? defs.weapons[mySnap.ng].cd : 2) * 1000;
       if (t - me.lastNade >= nadeCdMs) {
         me.lastNade = t;

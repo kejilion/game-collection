@@ -104,7 +104,7 @@ class World {
       pos: { x: 0, y: 0, z: 0 }, yaw: 0, pitch: 0, anim: 0,
       hp: RULES.maxHp, armor: 0, shield: 0, alive: true, deadUntil: 0, protectUntil: now() + RULES.protectMs,
       melee: 'fist', gun: null, nadeType: null, active: 'melee',
-      ammo: 0, reloadUntil: 0, lastFire: {}, lastNade: 0,
+      ammo: 0, ammoReserve: 0, nadeLeft: 0, reloadUntil: 0, lastFire: {}, lastNade: 0,
       boots: 0, buffs: {},
       kills: 0, deaths: 0, score: 0, streak: 0,
       coins: prof.coins, owned: prof.owned.slice(), eq: Object.assign({ head: null, face: null, back: null, fx: null }, prof.eq),
@@ -152,7 +152,7 @@ class World {
   respawn(p) {
     p.alive = true; p.hp = RULES.maxHp; p.armor = 0; p.shield = 0;
     p.melee = 'fist'; p.gun = null; p.nadeType = null; p.active = 'melee';
-    p.ammo = 0; p.reloadUntil = 0; p.buffs = {}; p.boots = 0; p.anim = 0;
+    p.ammo = 0; p.ammoReserve = 0; p.nadeLeft = 0; p.reloadUntil = 0; p.buffs = {}; p.boots = 0; p.anim = 0;
     p.protectUntil = now() + RULES.protectMs;
     this.placeAtSpawn(p);
     p.mon.resetPos(p.pos);   // 合法传送：重置移动校验基线
@@ -265,15 +265,27 @@ class World {
     }
   }
 
+  // 打光备弹：只提示玩家（不自动切武器，枪留在手里=空枪，玩家自己去捡新武器）
+  outOfAmmo(p) {
+    this.sendTo(p.id, { type: 'dry', name: p.gun ? WEAPONS[p.gun].name : '枪械' });
+  }
+
   handleFire(p, m) {
     if (!p.alive || p.active !== 'gun' || !p.gun) return;
     if (this.buffOn(p, 'zombie')) return;
     const def = WEAPONS[p.gun], t = now();
     if (t < p.reloadUntil) return;
-    if (p.ammo <= 0) { p.reloadUntil = t + def.reload * 1000; return; }
+    if (p.ammo <= 0) {
+      if (p.ammoReserve > 0) p.reloadUntil = t + def.reload * 1000;   // 有备弹：进换弹冷却
+      else this.outOfAmmo(p);                                          // 无备弹：空枪切近战
+      return;
+    }
     if (!p.mon.cooldown('fire_' + p.gun, def.cd * 1000 * 0.8)) return;
     p.ammo--;
-    if (p.ammo <= 0) p.reloadUntil = t + def.reload * 1000;
+    if (p.ammo <= 0) {
+      if (p.ammoReserve > 0) p.reloadUntil = t + def.reload * 1000;   // 打空当前匣、有备弹 → 自动换弹
+      else this.outOfAmmo(p);                                          // 打出最后一发、无备弹 → 切近战
+    }
     const eye = { x: p.pos.x, y: p.pos.y + RULES.eyeH, z: p.pos.z };
     const co = m.o;
     if (Array.isArray(co) && Math.hypot(co[0] - eye.x, co[1] - eye.y, co[2] - eye.z) < 2.5) {
@@ -317,7 +329,7 @@ class World {
   }
 
   handleNade(p, m) {
-    if (!p.alive || !p.nadeType) return;
+    if (!p.alive || !p.nadeType || p.nadeLeft <= 0) return;   // 投掷物用完不能投
     if (this.buffOn(p, 'zombie')) return;
     const t = now(), def = WEAPONS[p.nadeType];
     // 同一个 'nade' 冷却标签不分类型：换一种投掷物不能借机绕过冷却
@@ -334,6 +346,8 @@ class World {
       explodeAt: t + def.fuse * 1000,
     });
     this.broadcast({ type: 'fx', k: 'throw', id: p.id });
+    p.nadeLeft--;
+    if (p.nadeLeft <= 0) this.sendTo(p.id, { type: 'dry', name: def.name });   // 投完只提示，不自动切武器
   }
 
   // 闪光弹致盲：视线被遮挡则免疫；越正对着爆点、离得越近，致盲时间越长
@@ -360,7 +374,7 @@ class World {
   handleReload(p) {
     if (!p.alive || !p.gun) return;
     const def = WEAPONS[p.gun], t = now();
-    if (t < p.reloadUntil || p.ammo >= def.mag) return;
+    if (t < p.reloadUntil || p.ammo >= def.mag || p.ammoReserve <= 0) return;   // 无备弹不能换
     p.reloadUntil = t + def.reload * 1000;
   }
 
@@ -396,8 +410,8 @@ class World {
     if (WEAPONS[item]) {
       const def = WEAPONS[item];
       if (def.slot === 'melee') { p.melee = item; if (!this.buffOn(p, 'zombie')) p.active = 'melee'; }
-      else if (def.slot === 'gun') { p.gun = item; p.ammo = def.mag; p.reloadUntil = 0; if (!this.buffOn(p, 'zombie')) p.active = 'gun'; }
-      else if (def.slot === 'nade') { p.nadeType = item; }
+      else if (def.slot === 'gun') { p.gun = item; p.ammo = def.mag; p.ammoReserve = def.mag * def.reserveMags; p.reloadUntil = 0; if (!this.buffOn(p, 'zombie')) p.active = 'gun'; }   // 拾取补满弹匣+备弹
+      else if (def.slot === 'nade') { p.nadeType = item; p.nadeLeft = def.count; }   // 拾取补满投掷数
       const nadeDesc = item === 'flash' ? '按 3 投掷 · 致盲正对爆点的敌人'
         : item === 'smoke' ? '按 3 投掷 · 制造视野遮蔽烟雾'
         : def.slot === 'nade' ? '按 3 投掷 · 无限数量有冷却' : '';
@@ -750,7 +764,10 @@ class World {
   update(dt) {
     const t = now();
     for (const p of this.players.values()) {
-      if (p.gun && p.reloadUntil && t >= p.reloadUntil) { p.ammo = WEAPONS[p.gun].mag; p.reloadUntil = 0; }
+      if (p.gun && p.reloadUntil && t >= p.reloadUntil) {   // 换弹完成：从备弹补入当前匣（可能不足一匣）
+        const mag = WEAPONS[p.gun].mag, take = Math.min(mag - p.ammo, p.ammoReserve);
+        p.ammo += take; p.ammoReserve -= take; p.reloadUntil = 0;
+      }
       if (!p.alive && t >= p.deadUntil) this.respawn(p);
       for (const k of Object.keys(p.buffs)) if (p.buffs[k] <= t) delete p.buffs[k];
     }
@@ -869,7 +886,7 @@ class World {
         p: [r2(p.pos.x), r2(p.pos.y), r2(p.pos.z)], ya: r2(p.yaw), pi: r2(p.pitch), an: p.anim,
         hp: Math.max(0, Math.round(p.hp)), ar: Math.round(p.armor), sh: Math.round(p.shield),
         al: p.alive ? 1 : 0, ac: p.active, mw: p.melee, gw: p.gun, ng: p.nadeType || null,
-        am: p.ammo, rl: p.reloadUntil > t ? p.reloadUntil - t : 0,
+        am: p.ammo, re: p.ammoReserve, nl: p.nadeLeft, rl: p.reloadUntil > t ? p.reloadUntil - t : 0,
         dd: !p.alive ? Math.max(0, p.deadUntil - t) : 0,
         pr: p.protectUntil > t ? 1 : 0, bo: p.boots,
         bf: Object.entries(p.buffs).map(([k, until]) => [k, until - t]),
