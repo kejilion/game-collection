@@ -68,10 +68,10 @@
   G.audio.setLite(TOUCH);   // 轻量BGM：移动端减少同时发声的振荡器数量
   // 移动端音频解锁：触屏比鼠标点击更早触发，touchstart 抢在 click 之前解锁 AudioContext
   addEventListener('touchstart', () => G.audio.init(), { once: true, passive: true });
-  // 触屏/桌面各自的操作说明 + 触控层显隐
+  // 触屏/桌面各自的操作说明（触控层显隐由 updateTouchLayout 按模式统一管理）
   $('helpDesktop').classList.toggle('hidden', TOUCH);
   $('helpTouch').classList.toggle('hidden', !TOUCH);
-  $('touchLayer').classList.toggle('hidden', !TOUCH);
+  $('touchLayer').classList.add('hidden');   // 启动在菜单态，先整体收起；进 play/spec 时由 updateTouchLayout 展开
 
   // ---------- 全局状态 ----------
   let ws = null, wsOk = false, defs = null, worldBuilt = false;
@@ -502,7 +502,12 @@
         activeSmokes.push({ x: m.pos[0], y: m.pos[1] + 1, z: m.pos[2], r: m.r, until: now() + (m.dur || 9000) });
         if (distToMe(m.pos) < 50) G.audio.smokePop();
         break;
-      case 'throw': if (m.id !== myId) G.audio.throwNade(); break;
+      case 'throw': {
+        if (m.id !== myId) G.audio.throwNade();
+        const e = ents.get(m.id);
+        if (e) { e.model.attackT = 0; e.model.attackDur = 0.3; }
+        break;
+      }
       case 'die': {
         const e = ents.get(m.id);
         G.fx.die(m.pos, e ? e.color : '#ff6b6b');
@@ -600,6 +605,22 @@
   }
 
   // ---------- 模式切换 ----------
+  // 触控层按钮显隐：按 游戏 / 观战自由 / 观战跟随 三态区分，避免观战时还显示开火跳跃等无意义键
+  function updateTouchLayout() {
+    if (!TOUCH) return;
+    const play = mode === 'play', spec = mode === 'spec';
+    const specFree = spec && specFollow < 0;
+    const show = (id, on) => $(id).classList.toggle('hidden', !on);
+    $('touchLayer').classList.toggle('hidden', !(play || spec));   // 菜单态整体收起
+    show('tFire', play);
+    show('tJump', play);
+    if (!play) $('tScope').classList.add('hidden');                // 游戏态由 hudFrame 精细控制
+    show('tUp', specFree);                                         // 升降键仅观战自由飞行
+    show('tDown', specFree);
+    show('tMenu', play || spec);
+    show('tBoard', play || spec);
+    show('tChat', play || spec);
+  }
   function enterPlay() {
     mode = 'play';
     $('menu').classList.add('hidden');
@@ -609,6 +630,7 @@
     $('death').classList.add('hidden');
     me.active = 'melee'; me.ammoL = 0; me.lastNade = -99999;
     if (mySnap) { me.pos.set(mySnap.p[0], mySnap.p[1], mySnap.p[2]); }
+    updateTouchLayout();
     requestLock();
   }
   function enterSpec() {
@@ -622,6 +644,7 @@
     specFollow = -1; specView = 'tp';
     specFree.pos = camera.position.clone();
     updateSpecBar();
+    updateTouchLayout();
     requestLock();
   }
   function backToMenu() {
@@ -634,6 +657,7 @@
     $('death').classList.add('hidden');
     $('shop').classList.add('hidden');
     $('pause').classList.add('hidden');
+    updateTouchLayout();
     document.exitPointerLock && document.exitPointerLock();
   }
   function onMyDeath() {
@@ -959,8 +983,10 @@
     base.classList.add('show');
     $('joyStick').style.transform = 'translate(0px,0px)';
   }
+  // 可自由驱动镜头：游戏中，或观战自由飞行。观战跟随时镜头锁定目标玩家，忽略摇杆/拖拽
+  function canDriveCam() { return mode === 'play' || (mode === 'spec' && specFollow < 0); }
   canvas.addEventListener('touchstart', e => {
-    if (mode === 'menu' || isTyping()) return;
+    if (!canDriveCam() || isTyping()) return;
     for (const t of e.changedTouches) {
       if (touch.joyId === null && joyZoneHit(t.clientX, t.clientY)) {
         touch.joyId = t.identifier; touch.joyBaseX = t.clientX; touch.joyBaseY = t.clientY;
@@ -1014,6 +1040,19 @@
   $('tJump').addEventListener('touchend', e => { e.preventDefault(); keys.Space = false; }, { passive: false });
   $('tJump').addEventListener('touchcancel', () => { keys.Space = false; });
   $('tScope').onclick = () => { if (touchActionAllowed()) rmbDown = !rmbDown; };
+  // 观战自由飞行升降（按住语义）
+  $('tUp').addEventListener('touchstart', e => { e.preventDefault(); keys.Space = true; }, { passive: false });
+  $('tUp').addEventListener('touchend', e => { e.preventDefault(); keys.Space = false; }, { passive: false });
+  $('tUp').addEventListener('touchcancel', () => { keys.Space = false; });
+  $('tDown').addEventListener('touchstart', e => { e.preventDefault(); keys.KeyC = true; }, { passive: false });
+  $('tDown').addEventListener('touchend', e => { e.preventDefault(); keys.KeyC = false; }, { passive: false });
+  $('tDown').addEventListener('touchcancel', () => { keys.KeyC = false; });
+  // 观战触屏按钮组
+  $('specPrev').onclick = () => cycleSpec(-1);
+  $('specNext').onclick = () => cycleSpec(1);
+  $('specFollowBtn').onclick = () => { specFollow = specFollow === -1 ? 0 : -1; updateSpecBar(); updateTouchLayout(); };
+  $('specViewBtn').onclick = () => { specView = specView === 'tp' ? 'fp' : 'tp'; updateSpecBar(); };
+  $('specJoinBtn').onclick = () => joinFromSpec();
   $('tMenu').onclick = () => { if (mode === 'play' || mode === 'spec') openPause(); };
   $('tBoard').onclick = () => { $('board').classList.toggle('hidden'); };
   $('tChat').onclick = () => { if (mode === 'play') openChat(); };
@@ -1153,23 +1192,38 @@
 
   // ---------- 观战 ----------
   function specTargets() { return [...ents.values()].filter(e => e.cur && e.cur.al); }
+  function specTarget() {
+    const ts = specTargets();
+    if (specFollow < 0 || !ts.length) return null;
+    return ts[Math.min(specFollow, ts.length - 1)];
+  }
   function cycleSpec(d) {
     const ts = specTargets();
-    if (!ts.length) { specFollow = -1; updateSpecBar(); return; }
-    if (specFollow === -1) specFollow = 0;
+    if (!ts.length) { specFollow = -1; updateSpecBar(); updateTouchLayout(); return; }
+    if (specFollow === -1) specFollow = 0;                    // 自由态下按切换键 = 进入跟随
     else specFollow = (specFollow + d + ts.length) % ts.length;
     updateSpecBar();
+    updateTouchLayout();
   }
   function updateSpecBar() {
     const ts = specTargets();
-    if (specFollow === -1 || !ts.length) {
+    const e = specTarget();
+    const following = !!e;
+    if (!following) {
       $('specMode').textContent = '自由视角';
-      $('specTarget').textContent = ts.length ? '按 F 跟随玩家' : '暂无玩家在场';
+      $('specTarget').textContent = ts.length ? (TOUCH ? '点 跟随 或 ◀▶ 选择玩家' : '按 F 跟随玩家') : '暂无玩家在场';
     } else {
-      const e = ts[Math.min(specFollow, ts.length - 1)];
       $('specMode').textContent = `跟随视角 · ${specView === 'tp' ? '第三人称' : '第一人称'}`;
       $('specTarget').innerHTML = `<span style="color:${e.color}">${esc(e.name)}</span> · ❤️${e.cur.hp}`;
     }
+    // 触屏按钮态
+    const fb = $('specFollowBtn');
+    fb.textContent = following ? '自由' : '跟随';
+    fb.classList.toggle('active', following);
+    const noTargets = ts.length === 0;
+    $('specPrev').disabled = noTargets;
+    $('specNext').disabled = noTargets;
+    $('specViewBtn').disabled = !following;                   // 视角切换仅跟随时有意义
   }
 
   // ---------- 本地战斗 ----------
@@ -1393,6 +1447,7 @@
   }
   function renderEnts(dt) {
     const k = 1 - Math.exp(-dt * 14);
+    const specFpTarget = mode === 'spec' && specView === 'fp' ? specTarget() : null;
     for (const e of ents.values()) {
       const s = e.cur;
       if (!s) continue;
@@ -1414,7 +1469,8 @@
         m.group.position.z += e.flinchDir.z * fk * 0.22;
         m.group.position.y += Math.sin(fk * Math.PI) * 0.05;
       } else e.flinchAt = 0;
-      m.group.visible = !!s.al;
+      const hideForSpecFp = specFpTarget && specFpTarget.id === e.id;
+      m.group.visible = !!s.al && !hideForSpecFp;
       if (!s.al) continue;
       const zomb = s.bf.some(b => b[0] === 'zombie');
       G.models.tintZombie(m, zomb);
@@ -1427,7 +1483,7 @@
       G.models.setOpacity(m, invis ? 0.12 : 1);
       if (s.pr) m.group.rotation.y += Math.sin(perfNow / 90) * 0.02;
       if (e.lastHp !== s.hp) { e.lastHp = s.hp; m.plate.userData.set(s.hp, 100); }
-      m.plate.visible = !invis && !inSmoke(e.disp.x, e.disp.y + 1.2, e.disp.z);   // 烟雾里不透视名牌
+      m.plate.visible = !hideForSpecFp && !invis && !inSmoke(e.disp.x, e.disp.y + 1.2, e.disp.z);   // 烟雾里不透视名牌
     }
     // BOSS
     if (bossEnt && bossEnt.cur) {
@@ -1499,32 +1555,68 @@
   function renderViewModel(dt) {
     if (!vm) return;
     const inPlay = mode === 'play' && mySnap && mySnap.al;
-    vm.group.visible = inPlay && me.zoom < 0.5 && effectiveView() === 'fp';
-    if (!inPlay) return;
-    const zomb = mySnap.bf.some(b => b[0] === 'zombie');
-    const held = me.active === 'gun' ? mySnap.gw : me.active === 'nade' ? (mySnap.ng || 'nade') : mySnap.mw;
-    G.models.setViewWeapon(vm, held, zomb && me.active === 'melee');
-    G.models.applyWeaponFx({ weaponMesh: vm.weaponMesh }, mySnap.eq.fx || null, perfNow / 1000);
-    vmSwingT += dt; vmThrowT += dt;
-    vmKick = Math.max(0, vmKick - dt * 6);
-    me.swayX *= Math.exp(-dt * 8);
-    me.swayY *= Math.exp(-dt * 8);
-    const bob = me.moving && me.grounded ? Math.sin(perfNow / 90) * 0.014 : Math.sin(perfNow / 700) * 0.004;
-    vm.group.position.set(0.02 - me.swayX * 0.4, -0.02 + bob - me.swayY * 0.3, vmKick * 0.06);
-    vm.group.rotation.set(vmKick * 0.12 - me.swayY * 0.6, -me.swayX * 0.8, 0);
-    if (vmSwingT < 0.28) {
-      const kk = vmSwingT / 0.28;
+    const specEnt = mode === 'spec' && specView === 'fp' ? specTarget() : null;
+    const inSpecFp = !!(specEnt && specEnt.cur && specEnt.cur.al);
+    vm.group.visible = (inPlay && me.zoom < 0.5 && effectiveView() === 'fp') || inSpecFp;
+
+    if (inPlay) {
+      const zomb = mySnap.bf.some(b => b[0] === 'zombie');
+      const held = me.active === 'gun' ? mySnap.gw : me.active === 'nade' ? (mySnap.ng || 'nade') : mySnap.mw;
+      G.models.setViewWeapon(vm, held, zomb && me.active === 'melee');
+      G.models.applyWeaponFx({ weaponMesh: vm.weaponMesh }, mySnap.eq.fx || null, perfNow / 1000);
+      vmSwingT += dt; vmThrowT += dt;
+      vmKick = Math.max(0, vmKick - dt * 6);
+      me.swayX *= Math.exp(-dt * 8);
+      me.swayY *= Math.exp(-dt * 8);
+      const bob = me.moving && me.grounded ? Math.sin(perfNow / 90) * 0.014 : Math.sin(perfNow / 700) * 0.004;
+      vm.group.position.set(0.02 - me.swayX * 0.4, -0.02 + bob - me.swayY * 0.3, vmKick * 0.06);
+      vm.group.rotation.set(vmKick * 0.12 - me.swayY * 0.6, -me.swayX * 0.8, 0);
+      if (vmSwingT < 0.28) {
+        const kk = vmSwingT / 0.28;
+        vm.armR.rotation.x = -1.6 * Math.sin(kk * Math.PI);
+        vm.armR.rotation.z = -0.5 * Math.sin(kk * Math.PI);
+      } else if (vmThrowT < 0.3) {
+        const kk = vmThrowT / 0.3;
+        vm.armR.rotation.x = -1.2 * Math.sin(kk * Math.PI);
+        vm.armR.rotation.z = 0;
+      } else {
+        vm.armR.rotation.x = 0; vm.armR.rotation.z = 0;
+      }
+      if (me.reloadUntil > now() && vm.weaponMesh) {
+        const rem = (me.reloadUntil - now()) / me.reloadDur;
+        vm.weaponMesh.rotation.x = Math.sin(rem * Math.PI) * 0.9;
+      } else if (vm.weaponMesh) vm.weaponMesh.rotation.x = 0;
+      return;
+    }
+
+    if (!inSpecFp) return;
+    const s = specEnt.cur;
+    const zomb = s.bf.some(b => b[0] === 'zombie');
+    const held = s.ac === 'gun' ? s.gw : s.ac === 'nade' ? (s.ng || 'nade') : s.mw;
+    G.models.setViewWeapon(vm, held, zomb && s.ac === 'melee');
+    G.models.applyWeaponFx({ weaponMesh: vm.weaponMesh }, s.eq.fx || null, perfNow / 1000);
+    const attackT = specEnt.model.attackT;
+    const attackDur = specEnt.model.attackDur || 0.3;
+    const attackK = attackT < attackDur ? 1 - attackT / attackDur : 0;
+    const bob = s.an ? Math.sin(perfNow / 90) * 0.014 : Math.sin(perfNow / 700) * 0.004;
+    const gunKick = s.ac === 'gun' ? attackK : 0;
+    vm.group.position.set(0.02, -0.02 + bob, gunKick * 0.055);
+    vm.group.rotation.set(gunKick * 0.11, 0, 0);
+    if (s.ac === 'melee' && attackK > 0) {
+      const kk = 1 - attackK;
       vm.armR.rotation.x = -1.6 * Math.sin(kk * Math.PI);
       vm.armR.rotation.z = -0.5 * Math.sin(kk * Math.PI);
-    } else if (vmThrowT < 0.3) {
-      const kk = vmThrowT / 0.3;
+    } else if (s.ac === 'nade' && attackK > 0) {
+      const kk = 1 - attackK;
       vm.armR.rotation.x = -1.2 * Math.sin(kk * Math.PI);
       vm.armR.rotation.z = 0;
     } else {
       vm.armR.rotation.x = 0; vm.armR.rotation.z = 0;
     }
-    if (me.reloadUntil > now() && vm.weaponMesh) {
-      const rem = (me.reloadUntil - now()) / me.reloadDur;
+    if (s.rl > 0 && s.gw && vm.weaponMesh) {
+      const def = defs.weapons[s.gw];
+      const dur = def ? def.reload * 1000 : 1000;
+      const rem = Math.max(0, Math.min(1, s.rl / dur));
       vm.weaponMesh.rotation.x = Math.sin(rem * Math.PI) * 0.9;
     } else if (vm.weaponMesh) vm.weaponMesh.rotation.x = 0;
   }
@@ -1604,9 +1696,8 @@
         camera.lookAt(me.pos.x, 0.5, me.pos.z);
       }
     } else if (mode === 'spec') {
-      const ts = specTargets();
-      if (specFollow >= 0 && ts.length) {
-        const e = ts[Math.min(specFollow, ts.length - 1)];
+      const e = specTarget();
+      if (e) {
         const pi = e.disp.pi !== undefined ? e.disp.pi : e.cur.pi;   // pitch/yaw 同源（都用插值值），消除两轴不同步
         const eye = V3(e.disp.x, e.disp.y + defs.rules.eyeH, e.disp.z);
         if (specView === 'tp') {

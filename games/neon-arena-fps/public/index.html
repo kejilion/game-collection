@@ -118,6 +118,9 @@
   <button id="tScope" class="tbtn tScope hidden" aria-label="瞄准镜">🔭</button>
   <button id="tJump" class="tbtn tJump" aria-label="跳跃">⤒</button>
   <button id="tFire" class="tbtn tFire" aria-label="开火">◎</button>
+  <!-- 观战自由视角升降（仅观战自由飞行时显示） -->
+  <button id="tUp" class="tbtn tUp hidden" aria-label="上升">⤒</button>
+  <button id="tDown" class="tbtn tDown hidden" aria-label="下降">⤓</button>
 </div>
 
 <!-- ======== 排行榜 ======== -->
@@ -164,7 +167,16 @@
 <div id="specBar" class="hidden">
   <div id="specMode"></div>
   <div id="specTarget"></div>
-  <div class="spec-keys">F 自由/跟随 · ←/→ 切换玩家 · V 视角 · ESC 设置 · <b id="btnSpecJoin">回车 加入战斗</b></div>
+  <!-- 桌面：键位提示 -->
+  <div class="spec-keys" id="specKeys">F 自由/跟随 · ←/→ 切换玩家 · V 视角 · ESC 设置 · <b id="btnSpecJoin">回车 加入战斗</b></div>
+  <!-- 手机：触屏观战控件 -->
+  <div class="spec-touch" id="specTouch">
+    <button id="specPrev" class="spec-btn" aria-label="上一个玩家">◀</button>
+    <button id="specFollowBtn" class="spec-btn wide">跟随</button>
+    <button id="specNext" class="spec-btn" aria-label="下一个玩家">▶</button>
+    <button id="specViewBtn" class="spec-btn">👁 视角</button>
+    <button id="specJoinBtn" class="spec-btn join">⚔ 加入</button>
+  </div>
 </div>
 
 <!-- ======== 设置 / 暂停 ======== -->
