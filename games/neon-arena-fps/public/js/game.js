@@ -952,6 +952,15 @@
     $('pause').classList.add('hidden');
     if (mode !== 'menu') requestLock();
   }
+  // 排行榜：开关式可交互面板（打开时解锁鼠标以便点举报，关闭后恢复瞄准）
+  function setBoard(open) {
+    const el = $('board');
+    if (open === !el.classList.contains('hidden')) return;   // 状态无变化
+    el.classList.toggle('hidden', !open);
+    if (open) document.exitPointerLock && document.exitPointerLock();
+    else if (mode !== 'menu') requestLock();
+  }
+  function toggleBoard() { setBoard($('board').classList.contains('hidden')); }
 
   // ---------- 指针锁定与输入 ----------
   function requestLock() {
@@ -961,14 +970,15 @@
   }
   document.addEventListener('pointerlockchange', () => {
     if (!document.pointerLockElement && lockWanted && (mode === 'play' || mode === 'spec')
-      && $('shop').classList.contains('hidden') && $('pause').classList.contains('hidden') && !NOLOCK && !TOUCH) {
-      openPause();
+      && $('shop').classList.contains('hidden') && $('pause').classList.contains('hidden')
+      && $('board').classList.contains('hidden') && !NOLOCK && !TOUCH) {
+      openPause();   // 因排行榜打开而解锁的不算，避免弹出暂停
     }
   });
   canvas.addEventListener('click', () => {
     G.audio.init();
-    if (!TOUCH && mode !== 'menu' && !document.pointerLockElement
-      && $('pause').classList.contains('hidden') && $('shop').classList.contains('hidden')) requestLock();
+    if (!TOUCH && mode !== 'menu' && !document.pointerLockElement && $('pause').classList.contains('hidden')
+      && $('shop').classList.contains('hidden') && $('board').classList.contains('hidden')) requestLock();
   });
   $('btnResume').onclick = () => closePause();
   $('btnToMenu').onclick = () => { send({ type: 'leave' }); rejoinWanted = false; lockWanted = false; backToMenu(); };
@@ -1082,9 +1092,9 @@
   $('specViewBtn').onclick = () => { specView = specView === 'tp' ? 'fp' : 'tp'; updateSpecBar(); };
   $('specJoinBtn').onclick = () => joinFromSpec();
   $('tMenu').onclick = () => { if (mode === 'play' || mode === 'spec') openPause(); };
-  $('tBoard').onclick = () => { $('board').classList.toggle('hidden'); };
+  $('tBoard').onclick = () => toggleBoard();
   $('tChat').onclick = () => { if (mode === 'play') openChat(); };
-  $('boardClose').onclick = () => { $('board').classList.add('hidden'); };
+  $('boardClose').onclick = () => setBoard(false);
   $('shopClose').onclick = () => toggleShop(false);
   // 武器栏点按切换（桌面鼠标点击同样生效，无副作用）；再点已激活的枪械栏 = 换弹
   $('slotMelee').onclick = () => switchSlot('melee');
@@ -1121,10 +1131,11 @@
   function isTyping() { return document.activeElement === $('chatInput') || document.activeElement === $('nameInput'); }
 
   document.addEventListener('keydown', e => {
-    if (e.code === 'Tab') { e.preventDefault(); if (mode !== 'menu' && !isTyping()) $('board').classList.remove('hidden'); return; }
+    if (e.code === 'Tab') { e.preventDefault(); if (!e.repeat && mode !== 'menu' && !isTyping()) toggleBoard(); return; }
     if (e.code === 'Escape') {
       if (!$('shop').classList.contains('hidden')) { toggleShop(false); return; }
       if (!$('pause').classList.contains('hidden')) { closePause(); return; }
+      if (!$('board').classList.contains('hidden')) { setBoard(false); return; }
       if (mode === 'play' || mode === 'spec') openPause();
       return;
     }
@@ -1150,7 +1161,7 @@
     }
   });
   document.addEventListener('keyup', e => {
-    if (e.code === 'Tab') { e.preventDefault(); $('board').classList.add('hidden'); return; }
+    if (e.code === 'Tab') { e.preventDefault(); return; }   // 开关式：松开不再关闭
     keys[e.code] = false;
   });
 
