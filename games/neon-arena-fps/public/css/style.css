@@ -244,16 +244,21 @@ body.chat-focus #chatBox { bottom: 44vh; }
 .spec-keys b { color: var(--gold); cursor: pointer; }
 /* 手机观战触屏控件：桌面隐藏（走键位提示），手机显示按钮组 */
 .spec-touch { display: none; }
-body.mobile .spec-touch { display: flex; gap: 8px; justify-content: center; align-items: center; margin-top: 8px; flex-wrap: wrap; }
+body.mobile .spec-touch { display: flex; gap: 5px; justify-content: center; align-items: center; margin-top: 4px; flex-wrap: wrap; }
 body.mobile #specKeys { display: none; }
-.spec-btn { min-width: 46px; height: 46px; padding: 0 12px; font-size: 15px; font-weight: 700; font-family: inherit;
-  color: #dff6ff; background: rgba(53,224,255,.14); border: 1px solid var(--line); border-radius: 10px;
+/* 观战是"看比赛"，控件尽量小、半透明、贴底，别挡视野 */
+body.mobile #specBar { padding: 4px 9px; bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+  background: rgba(8,12,22,.42); border-radius: 9px; }
+body.mobile #specMode { font-size: 9px; letter-spacing: .5px; }
+body.mobile #specTarget { font-size: 11.5px; font-weight: 700; margin: 0; min-height: 14px; }
+.spec-btn { min-width: 34px; height: 32px; padding: 0 7px; font-size: 12px; font-weight: 700; font-family: inherit;
+  color: #dff6ff; background: rgba(53,224,255,.12); border: 1px solid var(--line); border-radius: 7px;
   cursor: pointer; -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
 .spec-btn:active { background: rgba(53,224,255,.34); }
-.spec-btn.wide { min-width: 78px; }
-.spec-btn.active { background: rgba(53,224,255,.34); border-color: var(--neon); color: #fff; }
-.spec-btn.join { color: #05202c; background: var(--gold); border-color: var(--gold); }
-.spec-btn:disabled { opacity: .35; }
+.spec-btn.wide { min-width: 50px; }
+.spec-btn.active { background: rgba(53,224,255,.3); border-color: var(--neon); color: #fff; }
+.spec-btn.join { color: #05202c; background: rgba(255,210,60,.9); border-color: var(--gold); }
+.spec-btn:disabled { opacity: .3; }
 
 /* ============================================================
    移动端触控层：摇杆 / 视角拖拽区 / 功能按钮
@@ -286,9 +291,10 @@ body.mobile #specKeys { display: none; }
 .tJump { width: 60px; height: 60px; right: calc(118px + env(safe-area-inset-right, 0px)); bottom: calc(44px + env(safe-area-inset-bottom, 0px)); }
 .tScope { width: 56px; height: 56px; right: calc(34px + env(safe-area-inset-right, 0px)); bottom: calc(122px + env(safe-area-inset-bottom, 0px));
   border-color: rgba(255,210,60,.5); font-size: 24px; }
-/* 观战自由飞行升降键：右下竖排 */
-.tUp   { width: 62px; height: 62px; right: calc(30px + env(safe-area-inset-right, 0px)); bottom: calc(118px + env(safe-area-inset-bottom, 0px)); font-size: 26px; }
-.tDown { width: 62px; height: 62px; right: calc(30px + env(safe-area-inset-right, 0px)); bottom: calc(44px + env(safe-area-inset-bottom, 0px)); font-size: 26px; }
+/* 观战自由飞行升降键：右下竖排，小而半透明，不挡视野 */
+.tUp   { width: 44px; height: 44px; right: calc(14px + env(safe-area-inset-right, 0px)); bottom: calc(84px + env(safe-area-inset-bottom, 0px)); font-size: 19px; opacity: .55; }
+.tDown { width: 44px; height: 44px; right: calc(14px + env(safe-area-inset-right, 0px)); bottom: calc(36px + env(safe-area-inset-bottom, 0px)); font-size: 19px; opacity: .55; }
+.tUp:active, .tDown:active { opacity: .95; }
 .tMenu, .tBoard, .tChat { width: 42px; height: 42px; font-size: 18px; top: calc(8px + env(safe-area-inset-top, 0px)); }
 .tMenu { right: calc(12px + env(safe-area-inset-right, 0px)); }
 .tBoard { right: calc(60px + env(safe-area-inset-right, 0px)); }

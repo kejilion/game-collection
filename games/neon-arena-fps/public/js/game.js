@@ -107,7 +107,7 @@
   let vm = null;
   let vmSwingT = 9, vmKick = 0, vmThrowT = 9;
   let myModel = null;           // 第三人称下渲染自己的模型
-  let specFollow = -1, specFree = { pos: V3(0, 18, 30) }, specView = 'tp', specSpeed = 1;
+  let specFollowId = null, specFree = { pos: V3(0, 18, 30) }, specView = 'tp', specSpeed = 1;   // 跟随用玩家 id（不是数组下标），避免目标死亡/进出场导致跟随对象乱跳
   let shopPre = null, hoverEq = null;
   let lastBeatAt = 0;
   let blindUntil = 0, blindTotal = 1;   // 闪光弹致盲：结束时间戳 + 本次总时长（算白屏淡出曲线用）
@@ -609,7 +609,7 @@
   function updateTouchLayout() {
     if (!TOUCH) return;
     const play = mode === 'play', spec = mode === 'spec';
-    const specFree = spec && specFollow < 0;
+    const specFree = spec && !isFollowing();
     const show = (id, on) => $(id).classList.toggle('hidden', !on);
     $('touchLayer').classList.toggle('hidden', !(play || spec));   // 菜单态整体收起
     show('tFire', play);
@@ -641,7 +641,7 @@
     $('chatBox').classList.remove('hidden');
     $('specBar').classList.remove('hidden');
     mySnap = null; myId = 0;
-    specFollow = -1; specView = 'tp';
+    specFollowId = null; specView = 'tp';
     specFree.pos = camera.position.clone();
     updateSpecBar();
     updateTouchLayout();
@@ -984,7 +984,7 @@
     $('joyStick').style.transform = 'translate(0px,0px)';
   }
   // 可自由驱动镜头：游戏中，或观战自由飞行。观战跟随时镜头锁定目标玩家，忽略摇杆/拖拽
-  function canDriveCam() { return mode === 'play' || (mode === 'spec' && specFollow < 0); }
+  function canDriveCam() { return mode === 'play' || (mode === 'spec' && !isFollowing()); }
   canvas.addEventListener('touchstart', e => {
     if (!canDriveCam() || isTyping()) return;
     for (const t of e.changedTouches) {
@@ -1050,7 +1050,7 @@
   // 观战触屏按钮组
   $('specPrev').onclick = () => cycleSpec(-1);
   $('specNext').onclick = () => cycleSpec(1);
-  $('specFollowBtn').onclick = () => { specFollow = specFollow === -1 ? 0 : -1; updateSpecBar(); updateTouchLayout(); };
+  $('specFollowBtn').onclick = () => setFollow(!isFollowing());
   $('specViewBtn').onclick = () => { specView = specView === 'tp' ? 'fp' : 'tp'; updateSpecBar(); };
   $('specJoinBtn').onclick = () => joinFromSpec();
   $('tMenu').onclick = () => { if (mode === 'play' || mode === 'spec') openPause(); };
@@ -1073,7 +1073,7 @@
     if (isTyping() || !$('shop').classList.contains('hidden')) return;
     if (mode === 'play' && mySnap && mySnap.al) {
       cycleWeapon(e.deltaY > 0 ? 1 : -1);
-    } else if (mode === 'spec' && specFollow === -1) {
+    } else if (mode === 'spec' && !isFollowing()) {
       specSpeed = Math.max(0.3, Math.min(4, specSpeed * (e.deltaY > 0 ? 0.85 : 1.18)));
     }
   }, { passive: true });
@@ -1116,7 +1116,7 @@
       if (e.code === 'KeyE') tryInteract();
     }
     if (mode === 'spec') {
-      if (e.code === 'KeyF') { specFollow = specFollow === -1 ? 0 : -1; updateSpecBar(); }
+      if (e.code === 'KeyF') setFollow(!isFollowing());
       if (e.code === 'ArrowLeft') cycleSpec(-1);
       if (e.code === 'ArrowRight') cycleSpec(1);
     }
@@ -1191,38 +1191,45 @@
   }
 
   // ---------- 观战 ----------
-  function specTargets() { return [...ents.values()].filter(e => e.cur && e.cur.al); }
-  function specTarget() {
-    const ts = specTargets();
-    if (specFollow < 0 || !ts.length) return null;
-    return ts[Math.min(specFollow, ts.length - 1)];
-  }
+  // 在场玩家（存活+暂时死亡都算——跟随一个人他死了也继续跟着看重生，不跳到别人）
+  function specList() { return [...ents.values()].filter(e => e.cur); }
+  function isFollowing() { return specFollowId != null && ents.has(specFollowId); }
+  // 用稳定 id 取跟随目标：目标死亡仍返回（看重生），只有离场才回退 null（自由视角）
+  function specTarget() { return specFollowId != null ? (ents.get(specFollowId) || null) : null; }
   function cycleSpec(d) {
-    const ts = specTargets();
-    if (!ts.length) { specFollow = -1; updateSpecBar(); updateTouchLayout(); return; }
-    if (specFollow === -1) specFollow = 0;                    // 自由态下按切换键 = 进入跟随
-    else specFollow = (specFollow + d + ts.length) % ts.length;
+    const list = specList();
+    if (!list.length) { specFollowId = null; updateSpecBar(); updateTouchLayout(); return; }
+    let idx = list.findIndex(e => e.id === specFollowId);
+    if (idx < 0) idx = d > 0 ? -1 : 0;                       // 自由态/目标已离场：正向从头、反向从尾
+    specFollowId = list[(idx + d + list.length) % list.length].id;
+    updateSpecBar();
+    updateTouchLayout();
+  }
+  function setFollow(on) {                                    // F键 / 跟随按钮 共用
+    if (on) { const list = specList(); if (list.length) specFollowId = list[0].id; }
+    else specFollowId = null;
     updateSpecBar();
     updateTouchLayout();
   }
   function updateSpecBar() {
-    const ts = specTargets();
+    if (specFollowId != null && !ents.has(specFollowId)) specFollowId = null;   // 目标离场 → 回自由
     const e = specTarget();
     const following = !!e;
     if (!following) {
       $('specMode').textContent = '自由视角';
-      $('specTarget').textContent = ts.length ? (TOUCH ? '点 跟随 或 ◀▶ 选择玩家' : '按 F 跟随玩家') : '暂无玩家在场';
+      $('specTarget').textContent = ents.size ? (TOUCH ? '点 跟随 或 ◀▶ 选择玩家' : '按 F 跟随玩家') : '暂无玩家在场';
     } else {
       $('specMode').textContent = `跟随视角 · ${specView === 'tp' ? '第三人称' : '第一人称'}`;
-      $('specTarget').innerHTML = `<span style="color:${e.color}">${esc(e.name)}</span> · ❤️${e.cur.hp}`;
+      const st = e.cur.al ? `❤️${e.cur.hp}` : '💀 阵亡·等待重生';
+      $('specTarget').innerHTML = `<span style="color:${e.color}">${esc(e.name)}</span> · ${st}`;
     }
     // 触屏按钮态
     const fb = $('specFollowBtn');
     fb.textContent = following ? '自由' : '跟随';
     fb.classList.toggle('active', following);
-    const noTargets = ts.length === 0;
-    $('specPrev').disabled = noTargets;
-    $('specNext').disabled = noTargets;
+    const noOne = specList().length === 0;
+    $('specPrev').disabled = noOne;
+    $('specNext').disabled = noOne;
     $('specViewBtn').disabled = !following;                   // 视角切换仅跟随时有意义
   }
 
@@ -1719,7 +1726,6 @@
           camera.position.copy(eye);
           camera.rotation.set(pi, e.disp.ya, 0);
         }
-        if (Math.floor(perfNow / 500) !== Math.floor((perfNow - dt * 1000) / 500)) updateSpecBar();
       } else {
         let spd = 14 * specSpeed * (keys.ShiftLeft ? 2.2 : 1);
         const d = camDir();
@@ -1736,6 +1742,8 @@
         camera.position.copy(specFree.pos);
         camera.rotation.set(me.pitch, me.yaw, 0);
       }
+      // 每 500ms 刷新观战条（含跟随目标离场后回退自由的处理），跟随/自由两态都覆盖
+      if (Math.floor(perfNow / 500) !== Math.floor((perfNow - dt * 1000) / 500)) updateSpecBar();
     } else if (mode === 'menu' && worldBuilt) {
       const a = perfNow / 9000;
       camera.position.set(Math.cos(a) * 38, 16, Math.sin(a) * 38);
