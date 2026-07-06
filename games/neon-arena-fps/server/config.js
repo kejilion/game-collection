@@ -208,4 +208,14 @@ const RULES = {
   tickRate: 30, broadcastRate: 20,
 };
 
-module.exports = { MAP, WEAPONS, EQUIPS, BUFFS, PICKUP_POOLS, BOSS, BOSSES, SHOP, SHOP_SLOTS, RULES };
+// 玩家举报封禁：N 个不同举报者（按 IP 去重）在窗口内举报同一人 → 临时封禁
+// minReporters 是"最低在场人数门槛"——房间人太少时举报无意义（也更易被少数人串通），
+// 达不到就只记票不封，等人多了票仍有效（在 windowMs 内）
+const REPORT = {
+  threshold: 3,            // 触发封禁所需的不同举报者数
+  windowMs: 5 * 60000,     // 举报有效窗口 5 分钟
+  banMinutes: 10,          // 封禁时长
+  minReporters: 4,         // 房间在场（含观战）至少这么多人，举报才可能触发封禁
+};
+
+module.exports = { MAP, WEAPONS, EQUIPS, BUFFS, PICKUP_POOLS, BOSS, BOSSES, SHOP, SHOP_SLOTS, RULES, REPORT };

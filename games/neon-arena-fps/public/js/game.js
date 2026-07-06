@@ -77,6 +77,7 @@
   let ws = null, wsOk = false, defs = null, worldBuilt = false;
   let mode = 'menu';            // menu | play | spec
   let myId = 0, myName = localStorage.getItem('na_name') || '';
+  const reportedIds = new Set();   // 本局已举报过的玩家 id（用于榜单按钮显"✓已举报"）
   let you = { coins: 0, owned: [], eq: { head: null, face: null, back: null, fx: null } };
   let mySnap = null;
   let lastKillerText = '';
@@ -179,6 +180,9 @@
       case 'dry':   // 弹药/投掷物用光：只提示，玩家自己去武器点获取新武器（不自动切武器）
         G.audio.dryFire();
         notice(`⚠️ ${m.name}用光了 · 去武器点获取新武器`, true);
+        break;
+      case 'reported':   // 举报回执：显示当前进度（同一 IP 反复举报不叠加）
+        notice(`🚩 已举报 ${esc(m.name)}（${m.count}/${m.need}）· 达标将自动封禁`, false);
         break;
       case 'pong': pingMs = now() - m.t; break;
     }
@@ -792,10 +796,16 @@
       const col5 = isRt ? '得分' : 'BOSS';
       let html = `<div class="brow head"><span>#</span><span>玩家</span><span class="num">击杀</span><span class="num">死亡</span><span class="num">${col5}</span><span class="num">连杀</span></div>`;
       rows.forEach((r, i) => {
-        const meCls = (isRt && r.i === myId) || (!isRt && r.n === myName) ? ' me' : '';
+        const isMe = (isRt && r.i === myId) || (!isRt && r.n === myName);
+        const meCls = isMe ? ' me' : '';
         const streakVal = isRt ? (r.st | 0) : (r.bs | 0);
         const streakCls = streakVal >= 3 ? ' streak-hot' : '';
-        html += `<div class="brow${meCls}"><span class="rank r${i + 1}">${i + 1}</span><span style="color:${r.c || '#cfe6f5'}">${esc(r.n)}</span><span class="num">${r.k}</span><span class="num">${r.d}</span><span class="num">${isRt ? (r.s | 0) : (r.bk | 0)}</span><span class="num${streakCls}">${streakVal > 0 ? '🔥' + streakVal : '-'}</span></div>`;
+        // 举报按钮：仅实时榜、仅自己在场游戏时、且不是自己那行
+        const canReport = isRt && mode === 'play' && !isMe && r.i;
+        const rb = canReport
+          ? `<button class="report-btn${reportedIds.has(r.i) ? ' done' : ''}" data-rid="${r.i}" title="举报该玩家（多人举报将被封禁）">${reportedIds.has(r.i) ? '✓已举报' : '🚩举报'}</button>`
+          : '';
+        html += `<div class="brow${meCls}"><span class="rank r${i + 1}">${i + 1}</span><span class="pcell" style="color:${r.c || '#cfe6f5'}">${esc(r.n)}${rb}</span><span class="num">${r.k}</span><span class="num">${r.d}</span><span class="num">${isRt ? (r.s | 0) : (r.bk | 0)}</span><span class="num${streakCls}">${streakVal > 0 ? '🔥' + streakVal : '-'}</span></div>`;
       });
       if (!rows.length) html += '<div class="brow"><span></span><span style="color:#7591ad">暂无数据</span></div>';
       return html;
@@ -804,6 +814,16 @@
     $('boardHist').innerHTML = mkRows(m.hist, false);
     $('menuHist').innerHTML = mkRows(m.hist.slice(0, 10), false);   // 首页历史榜显示前 10
   }
+  // 举报按钮（事件委托：榜单每 2s 重渲染，监听挂在稳定容器上）
+  $('boardRt').addEventListener('click', (e) => {
+    const btn = e.target.closest('.report-btn');
+    if (!btn) return;
+    const rid = +btn.dataset.rid;
+    if (!rid || rid === myId || mode !== 'play') return;
+    send({ type: 'report', id: rid });
+    reportedIds.add(rid);
+    btn.classList.add('done'); btn.textContent = '✓已举报';
+  });
   $('tabRt').onclick = () => { $('tabRt').classList.add('active'); $('tabHist').classList.remove('active'); $('boardRt').classList.remove('hidden'); $('boardHist').classList.add('hidden'); };
   $('tabHist').onclick = () => { $('tabHist').classList.add('active'); $('tabRt').classList.remove('active'); $('boardHist').classList.remove('hidden'); $('boardRt').classList.add('hidden'); };
 

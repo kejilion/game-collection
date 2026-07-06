@@ -62,7 +62,10 @@ const ac = new AntiCheat(fpsPreset({
     const label = action === 'ban'
       ? `你已被临时封禁：${reason}`
       : `你已被移出对局：${reason}`;
-    if (p) broadcast({ type: 'sys', style: 'streak', text: `🚫 ${p.name} 因异常行为被系统${action === 'ban' ? '封禁' : '移出'}` });
+    if (p) {
+      const how = /举报/.test(reason || '') ? '因多名玩家举报被' : '因异常行为被系统';
+      broadcast({ type: 'sys', style: 'streak', text: `🚫 ${p.name} ${how}${action === 'ban' ? '封禁' : '移出'}` });
+    }
     if (ws) {
       rawSend(ws, JSON.stringify({ type: 'kicked', text: label }));
       setTimeout(() => { try { ws.close(4001, 'anticheat'); } catch (_) { /* 忽略 */ } }, 60);
@@ -70,9 +73,8 @@ const ac = new AntiCheat(fpsPreset({
   },
   log: e => console.warn(`[anticheat] ${e.name || e.key} ${e.rule} ${e.detail} → score=${e.score}`),
 }));
-setInterval(() => ac.tick(1), 1000);
-
 const world = new World(broadcast, sendTo, ac);
+setInterval(() => { ac.tick(1); world.reportVote.sweep(); }, 1000);   // 违规分衰减 + 举报票 GC
 
 // 下发给新连接的静态定义（地图/武器/道具/商店），两端共用一份数据
 const DEFS = {
@@ -152,6 +154,7 @@ wss.on('connection', (ws, req) => {
       case 'switch': if (p) world.handleSwitch(p, m); break;
       case 'pickup': if (p) world.handlePickup(p, m); break;
       case 'chat':   if (p) world.handleChat(p, m); break;
+      case 'report': if (p) world.handleReport(p, m); break;
       case 'buy':    if (p) world.handleBuy(p, m); break;
       case 'equip':  if (p) world.handleEquipCos(p, m); break;
       case 'ping':   rawSend(ws, JSON.stringify({ type: 'pong', t: m.t })); break;

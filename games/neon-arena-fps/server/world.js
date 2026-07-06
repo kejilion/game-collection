@@ -1,7 +1,8 @@
 // 权威游戏世界：所有伤害/拾取/购买/BOSS/油桶均在服务端判定，客户端只上报输入与位置
 'use strict';
-const { MAP, WEAPONS, EQUIPS, BUFFS, PICKUP_POOLS, BOSS, BOSSES, SHOP, RULES } = require('./config');
+const { MAP, WEAPONS, EQUIPS, BUFFS, PICKUP_POOLS, BOSS, BOSSES, SHOP, RULES, REPORT } = require('./config');
 const board = require('./leaderboard');
+const { ReportVote } = require('./anticheat');
 
 const now = () => Date.now();
 const rand = (a, b) => a + Math.random() * (b - a);
@@ -73,6 +74,7 @@ class World {
     this.blasts = [];        // 巫妖延迟爆破 {pos, at, dmg, r, bossName}
     this.grenades = [];
     this.entId = 1;
+    this.reportVote = new ReportVote({ threshold: REPORT.threshold, windowMs: REPORT.windowMs });
   }
 
   // 射线被障碍物/存活油桶挡住的最近距离
@@ -436,6 +438,23 @@ class World {
     if (!text) return;
     p.lastChatAt = t;
     this.broadcast({ type: 'chat', from: p.name, color: p.color, text });
+  }
+
+  // 玩家举报：不同举报者（按 IP 去重）在窗口内达阈值 → 投票封禁（复用反作弊封禁出口）
+  handleReport(reporter, m) {
+    const target = this.players.get(m.id | 0);
+    if (!target || target.id === reporter.id) return;         // 目标不存在 / 不能举报自己
+    if (target.mon && target.mon.kicked) return;               // 已被处置，忽略
+    const reporterKey = 'ip:' + (reporter.mon.meta.ip || reporter.id);
+    const res = this.reportVote.report(target.id, reporterKey);
+    // 反馈举报者当前进度（去重后，同一 IP 反复点不涨）
+    this.sendTo(reporter.id, { type: 'reported', name: target.name, count: res.count, need: res.threshold });
+    // 达阈值 + 房间人数够（太小的房间不触发，防少数人串通/无意义举报）→ 封禁
+    if (res.triggered && this.players.size >= REPORT.minReporters) {
+      if (this.ac.banByVote(target.mon, REPORT.banMinutes, `多名玩家举报（${res.count} 人）`)) {
+        this.reportVote.clear(target.id);
+      }
+    }
   }
 
   handleBuy(p, m) {

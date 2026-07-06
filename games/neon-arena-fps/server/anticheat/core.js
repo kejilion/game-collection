@@ -375,6 +375,16 @@ class AntiCheat {
     this.totalBans++;
   }
 
+  // 外部裁决封禁（如玩家投票举报）：复用同一套封禁持久化 + onAction 处置链路（发通知/踢连接）。
+  // mon 为目标的 Monitor（提供 idents 与 key）；与自动违规封禁走同一出口，接入方无需另写踢人逻辑。
+  banByVote(mon, minutes, reason) {
+    if (!mon || mon.kicked) return false;
+    mon.kicked = true;
+    this.registerBan(mon.idents(), minutes, reason);
+    this._action(mon, 'ban', reason);
+    return true;
+  }
+
   // 每秒调用：违规分衰减
   tick(dtSec) {
     const decay = this.opts.decayPerSec * (dtSec || 1);
