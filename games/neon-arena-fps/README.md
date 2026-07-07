@@ -96,10 +96,12 @@ location / {
     proxy_set_header Upgrade $http_upgrade;
     proxy_set_header Connection "upgrade";
     proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
 }
 ```
 
-页面走 HTTPS 时客户端会自动使用 `wss://`，无需额外配置。
+页面走 HTTPS 时客户端会自动使用 `wss://`，无需额外配置。反代不在本机回环地址时，服务端需设置 `TRUST_PROXY=1` 才会信任 `X-Forwarded-For` 并按真实玩家 IP 做封禁。
 
 ## 反作弊
 
@@ -109,10 +111,11 @@ location / {
 - **网络尖峰豁免（防误封）**：包间隔异常大（丢包/卡顿恢复）时，那一包只回拉位置、**不计违规分**——卡顿玩家不被冤枉，外挂即便刻意慢发也照样被回拉、超豁免额度后照样被抓。瞬移阈值随包间隔动态放大，弹跳/疾速道具的高度和速度边界也做了宽限，人多网络波动不再误触封禁。
 - **射速校验**：冷却时序收口，连点宏/射速外挂无效
 - **限速**：分消息类型令牌桶，抵御洪泛
+- **WS 连接突刺封禁**：同一 IP 在 1 秒内涌入大量 WebSocket 连接会直接写入反作弊 IP 封禁，并关闭该 IP 已建立的连接
 - **瞄准统计**：爆头率/命中率/甩枪特征滚动窗口分析（阈值保守，只抓离谱者）
 - **阶梯处置**：纠正 → 警告 → 踢出 → 封禁（IP+昵称，24h 内多次被踢自动升级封禁，持久化落盘）
 
-`GET /health` 暴露 `anticheat` 实时指标（flags/kicks/bans）。设 `AC_MODE=off` 可关闭惩罚（用于压测/调试，冷却与数值等功能校验仍生效）。封禁记录在 `data/anticheat.json`，删除对应键即手动解封。
+`GET /health` 暴露 `anticheat` 与 `wsGuard` 实时指标（flags/kicks/bans、连接突刺封禁数等）。设 `AC_MODE=off` 可关闭惩罚（用于压测/调试，冷却与数值等功能校验仍生效）。封禁记录在 `data/anticheat.json`，删除对应键即手动解封。
 
 引擎已抽象为**零依赖、可移植的通用库**（`server/anticheat/`），可直接复制到任何 Node 多人对战服务器复用，接入方法、API 与调参 checklist 见 [server/anticheat/README.md](server/anticheat/README.md)。
 
@@ -123,6 +126,11 @@ location / {
 | `PORT` | 3000 | 监听端口 |
 | `DATA_DIR` | `./data` | 排行榜/档案/封禁记录存储目录 |
 | `AC_MODE` | `on` | 设 `off` 关闭反作弊惩罚 |
+| `TRUST_PROXY` | `off` | 设 `1`/`true` 后信任反向代理传入的 `X-Forwarded-For` / `X-Real-IP` |
+| `WS_FLOOD_MAX_PER_SECOND` | 12 | 同一 IP 在 1 秒窗口内允许的最大 WS 连接数，超过即封禁 |
+| `WS_FLOOD_BAN_MINUTES` | 60 | WS 连接突刺触发后的基础 IP 封禁分钟数，重复封禁会按反作弊历史升级 |
+| `WS_FLOOD_WINDOW_MS` | 1000 | WS 连接突刺检测窗口 |
+| `IP_MAX_CONCURRENT` | 4 | 同一 IP 最大并发 WebSocket 连接数 |
 
 游戏数值（武器伤害、BUFF 时长、BOSS 属性、商店价格、地图布局等）集中在 [server/config.js](server/config.js)，服务端加入时会把配置下发给客户端，改一处两端同步生效。
 

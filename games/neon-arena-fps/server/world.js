@@ -113,6 +113,7 @@ class World {
       ammo: 0, ammoReserve: 0, nadeLeft: 0, reloadUntil: 0, lastFire: {}, lastNade: 0,
       boots: 0, buffs: {},
       kills: 0, deaths: 0, score: 0, streak: 0,
+      ip,
       coins: prof.coins, owned: prof.owned.slice(), eq: Object.assign({ head: null, face: null, back: null, fx: null }, prof.eq),
       lastChatAt: 0, lastSpawnIdx: -1,
       acKillPace: { kills: [], flags: {} },
@@ -289,6 +290,7 @@ class World {
     }
     if (!p.mon.cooldown('fire_' + p.gun, def.cd * 1000 * 0.8)) return;
     p.ammo--;
+    p.mon.recordShot();
     if (p.ammo <= 0) {
       if (p.ammoReserve > 0) p.reloadUntil = t + def.reload * 1000;   // 打空当前匣、有备弹 → 自动换弹
       else this.outOfAmmo(p);                                          // 打出最后一发、无备弹 → 切近战
@@ -526,6 +528,7 @@ class World {
     let kInfo = null;
     if (attacker && attacker !== victim) {
       this.recordKillPace(attacker, victim, wp, bossName);
+      if (attacker.mon) attacker.mon.recordKill(wp);
       attacker.kills++; attacker.score += RULES.killScore; attacker.coins += RULES.killCoins;
       attacker.hp = Math.min(RULES.maxHp, attacker.hp + RULES.killHeal);
       attacker.streak++;

@@ -35,6 +35,7 @@ const DEFAULTS = {
     rate: 0.5,     // 消息洪泛（每 10 次丢弃计 1 次）
     cooldown: 2,   // 冷却滥用（连点宏，达到统计阈值后计）
     aim: 8,        // 瞄准统计异常
+    spk: 15,       // shots-per-kill 异常低
     range: 0.5,    // 远距离探测类请求
     protocol: 3,   // 其他协议违规
   },
@@ -73,7 +74,15 @@ const DEFAULTS = {
   },
   // 冷却滥用统计
   cdAbuse: { severeRatio: 0.4, countWindowMs: 10000, countMax: 6 },
+  // shots-per-kill 检测
+  spk: {
+    evalKills: 8,              // 每累计 N 次击杀评估一次
+    spkMin: 3.5,               // 平均弹药消耗低于此值触发
+    minGunKills: 5,             // 枪械击杀至少达到此数才评估
+  },
   logSize: 200,
+  // 累计 flag 自动升级：5分钟内触发超过15次直接踢
+  flagBurst: { windowMs: 300000, maxFlags: 15 },
   onAction: null,                // (key, action, reason, monitor) => {}  action: warn|kick|ban
   log: null,                     // (entry) => {}
   store: null,                   // 持久化适配器：{ getBan, setBan, addKick, kickCount, save }
@@ -125,6 +134,8 @@ class Monitor {
     this._cdAbuse = new Map();       // cooldown 滥用滑动计数
     this._mv = null;                 // movement 状态
     this._aim = { shots: 0, hits: 0, hs: 0, snaps: 0 };
+    this._spk = { shotsFired: 0, killRecords: [] };
+    this._flagTimes = [];
     this.stats = { corrections: 0, teleports: 0, dropped: 0 };
   }
   get enabled() { return this.engine.opts.enabled; }
@@ -146,6 +157,18 @@ class Monitor {
     this.violations.push(entry);
     if (this.violations.length > 30) this.violations.shift();
     this.engine._log(entry);
+    // flagBurst: 累计 flag 次数过多直接踢出
+    const fb = this.engine.opts.flagBurst;
+    if (fb) {
+      const cutoff = now() - fb.windowMs;
+      this._flagTimes.push(now());
+      this._flagTimes = this._flagTimes.filter(t => t > cutoff);
+      if (this._flagTimes.length >= fb.maxFlags) {
+        this._flagTimes = [];
+        this.engine._punish(this, 'kick', '持续异常行为');
+        return;
+      }
+    }
     this.engine._evaluate(this);
   }
 
@@ -336,6 +359,29 @@ class Monitor {
       a.hs = (a.hs / 2) | 0; a.snaps = (a.snaps / 2) | 0;
     }
   }
+
+  // ---- shots-per-kill 检测 ----
+  recordKill(wp) {
+    if (!this.enabled || this.kicked) return;
+    const S = this.engine.opts.spk;
+    if (!S) return;
+    const s = this._spk;
+    const isGun = wp && wp !== 'fist' && wp !== 'knife' && wp !== 'sword' && wp !== 'hammer' && wp !== 'nade' && wp !== 'barrel';
+    s.killRecords.push({ shots: s.shotsFired, gun: isGun });
+    s.shotsFired = 0;
+    if (s.killRecords.length >= S.evalKills) {
+      const gunKills = s.killRecords.filter(k => k.gun);
+      if (gunKills.length >= S.minGunKills) {
+        const totalShots = gunKills.reduce((sum, k) => sum + k.shots, 0);
+        const avgSpk = totalShots / gunKills.length;
+        if (avgSpk < S.spkMin) {
+          this.flag('spk', undefined, `平均 ${avgSpk.toFixed(1)} 发/杀 (最近 ${gunKills.length} 次枪械击杀)`);
+        }
+      }
+      s.killRecords = s.killRecords.slice(Math.floor(s.killRecords.length / 2));
+    }
+  }
+  recordShot() { this._spk.shotsFired++; }
 }
 
 // ---------------------------------------------------------------------------
@@ -405,7 +451,7 @@ class AntiCheat {
       flags: this.totalFlags,
       kicks: this.totalKicks,
       bans: this.totalBans,
-      recent: this.recentLog.slice(-10),
+      recent: this.recentLog.slice(-10).map(e => ({ t: e.t, key: e.key, name: e.name })),
     };
   }
 
@@ -414,9 +460,9 @@ class AntiCheat {
     const T = this.opts.thresholds;
     if (mon.kicked) return;
     if (mon.score >= T.ban) {
-      this._punish(mon, 'ban', `违规分 ${Math.round(mon.score)} 达封禁阈值`);
+      this._punish(mon, 'ban', '异常行为封禁');
     } else if (mon.score >= T.kick) {
-      this._punish(mon, 'kick', `违规分 ${Math.round(mon.score)} 达踢出阈值`);
+      this._punish(mon, 'kick', '异常行为移出');
     } else if (mon.score >= T.warn) {
       const t = now();
       if (t - mon.lastWarnAt > this.opts.warnCooldownMs) {
@@ -442,7 +488,7 @@ class AntiCheat {
         const escMin = this._escalatedMinutes(mon.idents(), this.opts.banMinutes);
         const escLabel = escMin === 0 ? '永封' : (escMin + '分钟');
         this.registerBan(mon.idents(), this.opts.banMinutes, `24h 内被踢出 ${this.opts.kicksToBan} 次`);
-        this._action(mon, 'ban', `多次被踢，封禁 ${escLabel}`);
+        this._action(mon, 'ban', '多次违规封禁');
       } else {
         this._action(mon, 'kick', reason);
       }

@@ -19,6 +19,7 @@ app.get('/health', (req, res) => {
     ok: true, players: world.players.size, spectators: countSpectators(),
     uptime: Math.round(process.uptime()),
     anticheat: ac.status(),
+    wsGuard: connGuardStatus(),
   });
 });
 
@@ -60,8 +61,8 @@ const ac = new AntiCheat(fpsPreset({
       return;
     }
     const label = action === 'ban'
-      ? `你已被临时封禁：${reason}`
-      : `你已被移出对局：${reason}`;
+      ? '你已被临时封禁，请规范游戏行为'
+      : '你已被移出对局，请规范游戏行为';
     if (p) broadcast({ type: 'sys', style: 'streak', text: `🚫 ${p.name} 因异常行为被系统${action === 'ban' ? '封禁' : '移出'}` });
     if (ws) {
       rawSend(ws, JSON.stringify({ type: 'kicked', text: label }));
@@ -70,30 +71,6 @@ const ac = new AntiCheat(fpsPreset({
   },
   log: e => console.warn(`[anticheat] ${e.name || e.key} ${e.rule} ${e.detail} → score=${e.score}`),
 }));
-
-// ---- 底层 TCP 瞬间涌入丢弃与自动封禁 (防大并发卡顿) ----
-const tcpConnHistory = new Map(); // ip -> [timestamps]
-server.on('connection', (socket) => {
-  const rawIp = socket.remoteAddress;
-  if (!rawIp) return;
-  const ip = rawIp.replace(/^::ffff:/, '');
-  const ipKey = 'ip:' + rawIp;
-  const ban = ac.isBanned([ipKey]);
-  if (ban) {
-    socket.destroy();
-    return;
-  }
-  const now = Date.now();
-  let times = tcpConnHistory.get(ip) || [];
-  times = times.filter(t => now - t < 2000);
-  times.push(now);
-  tcpConnHistory.set(ip, times);
-  if (times.length > 6) {
-    console.log(`[TCP-SURGE] IP ${ip} 瞬间涌入攻击，直接销毁并封禁。`);
-    ac.registerBan([ipKey], 15, 'TCP 瞬间涌入攻击');
-    socket.destroy();
-  }
-});
 setInterval(() => ac.tick(1), 1000);
 
 const world = new World(broadcast, sendTo, ac);
@@ -115,39 +92,144 @@ const DEFS = {
     [k, { name: b.name, radius: b.radius, yc: b.yc, color: b.color }])),
 };
 
-// ---- 连接防刷：同 IP 短时间内大量连接直接拒绝 ----
-const connTracker = new Map();  // ip -> { times: [timestamps], blocked: until }
-const CONN_WINDOW = 10000;      // 10 秒窗口
-const CONN_MAX = 8;             // 窗口内最大连接数
-const CONN_BLOCK_BASE = 30000;  // 首次封堵 30 秒
-const CONN_BLOCK_MAX = 600000;  // 最高封堵 10 分钟
+function envFlag(name) {
+  return /^(1|true|yes|on)$/i.test(String(process.env[name] || '').trim());
+}
+function envInt(name, fallback, min) {
+  const v = Number.parseInt(process.env[name] || '', 10);
+  return Number.isFinite(v) && v >= min ? v : fallback;
+}
+function normalizeIp(raw) {
+  let ip = String(raw || '').trim();
+  if (!ip) return 'unknown';
+  if (ip.includes(',')) ip = ip.split(',')[0].trim();
+  if (ip.startsWith('::ffff:')) ip = ip.slice(7);
+  if (ip.startsWith('[')) {
+    const end = ip.indexOf(']');
+    if (end > 0) ip = ip.slice(1, end);
+  } else if (/^\d{1,3}(?:\.\d{1,3}){3}:\d+$/.test(ip)) {
+    ip = ip.replace(/:\d+$/, '');
+  }
+  return ip || 'unknown';
+}
+function isLoopbackIp(ip) {
+  return ip === '127.0.0.1' || ip === '::1' || ip === 'localhost';
+}
+function firstHeaderValue(value) {
+  if (Array.isArray(value)) value = value[0];
+  return typeof value === 'string' ? value.split(',')[0].trim() : '';
+}
+function forwardedIp(req) {
+  const xff = firstHeaderValue(req.headers['x-forwarded-for']);
+  if (xff) return xff;
+  const real = firstHeaderValue(req.headers['x-real-ip']);
+  if (real) return real;
+  const fwd = firstHeaderValue(req.headers.forwarded);
+  const m = /(?:^|;\s*)for="?([^";,]+)"?/i.exec(fwd);
+  return m ? m[1] : '';
+}
+function clientIpFromReq(req) {
+  const remote = normalizeIp(req.socket.remoteAddress);
+  if (TRUST_PROXY || isLoopbackIp(remote)) {
+    const forwarded = normalizeIp(forwardedIp(req));
+    if (forwarded !== 'unknown') return forwarded;
+  }
+  return remote;
+}
+function ipIdent(ip) {
+  return ip && ip !== 'unknown' ? 'ip:' + ip : null;
+}
+function windowLabel(ms) {
+  return ms % 1000 === 0 ? `${ms / 1000}秒` : `${ms}ms`;
+}
+
+// ---- 连接防刷：同 IP 1 秒内大量 WS 连接写入反作弊封禁 ----
+const TRUST_PROXY = envFlag('TRUST_PROXY');
+const CONN_WINDOW = envInt('WS_FLOOD_WINDOW_MS', 1000, 250);
+const CONN_MAX = envInt('WS_FLOOD_MAX_PER_SECOND', 12, 2);
+const CONN_BAN_MINUTES = envInt('WS_FLOOD_BAN_MINUTES', 60, 1);
+const CONN_SOFT_BLOCK_MS = envInt('WS_FLOOD_SOFT_BLOCK_MS', 30000, 1000);
+const connTracker = new Map();  // ip -> { times: [timestamps], blockedUntil, lastSeen }
+const connFloodStats = { bans: 0, rejects: 0, lastBan: null };
 function checkConnFlood(ip) {
   const now = Date.now();
+  const ident = ipIdent(ip);
+  if (ident) {
+    const ban = ac.isBanned([ident]);
+    if (ban) {
+      connFloodStats.rejects++;
+      return { ok: false, reason: 'ip banned', ban };
+    }
+  }
+
   let rec = connTracker.get(ip);
-  if (!rec) { rec = { times: [], blocked: 0, strikes: 0 }; connTracker.set(ip, rec); }
-  if (rec.blocked > now) return false;
+  if (!rec) { rec = { times: [], blockedUntil: 0, lastSeen: now }; connTracker.set(ip, rec); }
+  rec.lastSeen = now;
+  if (rec.blockedUntil > now) {
+    connFloodStats.rejects++;
+    return { ok: false, reason: 'too many connections' };
+  }
+
   rec.times = rec.times.filter(t => now - t < CONN_WINDOW);
   rec.times.push(now);
   if (rec.times.length > CONN_MAX) {
-    rec.strikes++;
-    const blockMs = Math.min(CONN_BLOCK_BASE * Math.pow(2, rec.strikes - 1), CONN_BLOCK_MAX);
-    rec.blocked = now + blockMs;
+    const count = rec.times.length;
     rec.times = [];
-    console.log(`[conn-flood] IP ${ip} blocked for ${Math.round(blockMs/1000)}s (strike #${rec.strikes})`);
-    return false;
+    connFloodStats.rejects++;
+
+    if (ident) {
+      const reason = `${windowLabel(CONN_WINDOW)}内涌入 ${count} 个 WebSocket 连接`;
+      ac.registerBan([ident], CONN_BAN_MINUTES, reason);
+      if (ac.opts.store && typeof ac.opts.store.save === 'function') ac.opts.store.save();
+      const ban = ac.isBanned([ident]);
+      connFloodStats.bans++;
+      connFloodStats.lastBan = { ip, count, at: now, until: ban ? ban.until : now + CONN_BAN_MINUTES * 60000 };
+      console.warn(`[conn-flood] banned ${ip}: ${reason}`);
+      closeIpConnections(ip, 4429, 'ws flood ban');
+      return { ok: false, reason: 'ws flood banned', ban };
+    }
+
+    rec.blockedUntil = now + CONN_SOFT_BLOCK_MS;
+    console.warn(`[conn-flood] soft-blocked unknown IP for ${Math.round(CONN_SOFT_BLOCK_MS / 1000)}s`);
+    return { ok: false, reason: 'too many connections' };
   }
-  return true;
+  return { ok: true };
+}
+function closeIpConnections(ip, code, reason) {
+  for (const client of wss.clients) {
+    if (client.ip !== ip || client.readyState > 1) continue;
+    try {
+      if (client.readyState === 1) rawSend(client, JSON.stringify({ type: 'kicked', text: '连接异常，请稍后再试' }));
+      client.close(code, reason);
+    } catch (_) {
+      try { client.terminate(); } catch (_) { /* 忽略 */ }
+    }
+  }
+}
+function connGuardStatus() {
+  return {
+    trackedIps: connTracker.size,
+    concurrentIps: ipConns.size,
+    trustProxy: TRUST_PROXY,
+    floodWindowMs: CONN_WINDOW,
+    floodMaxPerSecond: CONN_MAX,
+    floodBanMinutes: CONN_BAN_MINUTES,
+    floodBans: connFloodStats.bans,
+    rejected: connFloodStats.rejects,
+    lastBan: connFloodStats.lastBan,
+  };
 }
 // 定时清理过期记录（每 60 秒）
 setInterval(() => {
   const now = Date.now();
   for (const [ip, rec] of connTracker) {
-    if (rec.blocked < now && rec.times.length === 0) connTracker.delete(ip);
+    rec.times = rec.times.filter(t => now - t < CONN_WINDOW);
+    if (rec.blockedUntil < now && rec.times.length === 0 && now - rec.lastSeen > 60000) connTracker.delete(ip);
   }
 }, 60000);
 
 // ---- 同IP并发连接限制 ----
-const IP_MAX_CONCURRENT = 4;
+const IP_MAX_CONCURRENT = envInt('IP_MAX_CONCURRENT', 4, 1);
 const ipConns = new Map();  // ip -> count
 function ipConnAdd(ip) {
   const c = (ipConns.get(ip) || 0) + 1;
@@ -195,9 +277,14 @@ wss.on('connection', (ws, req) => {
   ws.isAlive = true;
   ws.spectator = false;
   ws.playerId = 0;
-  ws.ip = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim()
-    || req.socket.remoteAddress || 'unknown';
-  if (!checkConnFlood(ws.ip)) { ws.close(4429, 'too many connections'); return; }
+  ws.ip = clientIpFromReq(req);
+  const connCheck = checkConnFlood(ws.ip);
+  if (!connCheck.ok) {
+    const text = connCheck.ban ? `连接异常，请稍后再试` : '连接过于频繁，请稍后再试';
+    rawSend(ws, JSON.stringify({ type: 'err', text }));
+    ws.close(4429, connCheck.reason);
+    return;
+  }
   if (ipConnAdd(ws.ip) > IP_MAX_CONCURRENT) { ipConnDel(ws.ip); ws.close(4429, 'too many concurrent'); return; }
   ws.preBucket = new TokenBucket(6, 12);   // 加入前的连接级限速
   ws.on('pong', () => { ws.isAlive = true; });
@@ -228,7 +315,7 @@ wss.on('connection', (ws, req) => {
         const ban = ac.isBanned(['ip:' + ws.ip, 'name:' + cleanName]);
         if (ban) {
           const mins = Math.max(1, Math.ceil((ban.until - Date.now()) / 60000));
-          rawSend(ws, JSON.stringify({ type: 'err', text: `你已被临时封禁（${ban.reason}），剩余约 ${mins} 分钟` }));
+          rawSend(ws, JSON.stringify({ type: 'err', text: `你已被临时封禁，剩余约 ${mins} 分钟` }));
           return;
         }
         ws.spectator = false;
