@@ -159,7 +159,6 @@ G.audio = (function () {
       tone('sine', 90, 30, big ? 0.8 : 0.5, 0.5);
     },
     throwNade() { burst(0.1, 900, 0.16, 0.09, 'bandpass'); },
-    flashPop() { burst(0.32, 5000, 0.7, 0.06, 'highpass'); tone('sine', 3200, 200, 0.3, 0.4); burst(0.4, 200, 0.5, 0.35); },
     smokePop() { burst(0.5, 500, 0.35, 0.4); tone('sine', 180, 90, 0.35, 0.2); },
     flashPop() {   // 闪光弹：炸响 + 高频耳鸣余音
       burst(0.25, 3000, 0.5, 0.2, 'highpass');
@@ -184,6 +183,13 @@ G.audio = (function () {
     step() { burst(0.05, 500, 0.06, 0.045, 'bandpass'); },
     land() { burst(0.09, 350, 0.22, 0.08); tone('sine', 130, 70, 0.1, 0.16); },
     heartbeat() { tone('sine', 62, 45, 0.12, 0.3); tone('sine', 58, 42, 0.1, 0.24, 0.18); },
+    sysNotice() { tone('sine', 900, 1300, 0.15, 0.18); tone('sine', 1300, 1600, 0.12, 0.14, 0.12); },
     ui() { tone('sine', 800, 950, 0.05, 0.1); },
+    airplane() {
+      // 飞机飞过的轰鸣：低频噪声 + 扫频
+      burst(2.5, 250, 0.55, 2.0);
+      tone('sawtooth', 120, 55, 2.5, 0.35);
+      tone('sine', 80, 40, 2.5, 0.45);
+    },
   };
 })();

@@ -2,16 +2,54 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
+const EVENT_LIMIT = 500;
+
+function cleanEvent(entry) {
+  const out = {
+    type: entry.type || 'flag', t: Number(entry.t) || Date.now(),
+    key: entry.key, name: entry.name, rule: entry.rule, channel: entry.channel,
+    action: entry.action, reason: entry.reason, detail: entry.detail,
+    w: entry.w, score: entry.score, scores: entry.scores,
+    identity: entry.identity, players: entry.players,
+    persistent: !!entry.persistent, movementOnly: !!entry.movementOnly,
+  };
+  for (const key of Object.keys(out)) if (out[key] === undefined || out[key] === '') delete out[key];
+  return out;
+}
+
+function ensureEventData(data) {
+  if (!Array.isArray(data.events)) data.events = [];
+  if (!data.eventStats || typeof data.eventStats !== 'object') data.eventStats = {};
+  for (const key of ['flags', 'observations', 'actions']) {
+    if (!data.eventStats[key] || typeof data.eventStats[key] !== 'object') data.eventStats[key] = {};
+  }
+}
+
+function appendEvent(data, entry) {
+  ensureEventData(data);
+  const row = cleanEvent(entry);
+  data.events.push(row);
+  if (data.events.length > EVENT_LIMIT) data.events.splice(0, data.events.length - EVENT_LIMIT);
+  const bucket = row.type === 'action'
+    ? data.eventStats.actions
+    : (row.type === 'observe' ? data.eventStats.observations : data.eventStats.flags);
+  const key = row.type === 'action' ? row.action : row.rule;
+  if (key) bucket[key] = (bucket[key] || 0) + 1;
+}
 
 function createJsonStore(file) {
   let data = { bans: {}, kicks: {} };
   let timer = null;
   try {
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    if (fs.existsSync(file)) data = Object.assign(data, JSON.parse(fs.readFileSync(file, 'utf8')));
+    if (fs.existsSync(file)) {
+      const raw = fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '');
+      data = Object.assign(data, JSON.parse(raw));
+    }
   } catch (e) {
     console.error('[anticheat/store] 读取失败，使用空数据:', e.message);
   }
+  ensureEventData(data);
   const save = () => {
     if (timer) return;
     timer = setTimeout(() => {
@@ -53,13 +91,22 @@ function createJsonStore(file) {
       const t = Date.now();
       return (data.kicks[ident] || []).filter(ts => t - ts < windowMs).length;
     },
+    addEvent(entry) { appendEvent(data, entry); save(); },
+    recentEvents(limit) { return data.events.slice(-Math.max(0, limit || 20)); },
+    eventStats() {
+      return {
+        flags: Object.assign({}, data.eventStats.flags),
+        observations: Object.assign({}, data.eventStats.observations),
+        actions: Object.assign({}, data.eventStats.actions),
+      };
+    },
     save: saveNow,
   };
 }
 
 // 无持久化（内存版）：适合测试或无落盘环境
 function createMemoryStore() {
-  const data = { bans: {}, kicks: {} };
+  const data = { bans: {}, kicks: {}, events: [], eventStats: { flags: {}, observations: {}, actions: {} } };
   return {
     getBan(ident) {
       const b = data.bans[ident];
@@ -85,6 +132,15 @@ function createMemoryStore() {
     kickCount(ident, windowMs) {
       const t = Date.now();
       return (data.kicks[ident] || []).filter(ts => t - ts < windowMs).length;
+    },
+    addEvent(entry) { appendEvent(data, entry); },
+    recentEvents(limit) { return data.events.slice(-Math.max(0, limit || 20)); },
+    eventStats() {
+      return {
+        flags: Object.assign({}, data.eventStats.flags),
+        observations: Object.assign({}, data.eventStats.observations),
+        actions: Object.assign({}, data.eventStats.actions),
+      };
     },
     save() { /* 内存版无需落盘 */ },
   };

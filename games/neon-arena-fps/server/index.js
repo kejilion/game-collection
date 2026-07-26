@@ -8,10 +8,22 @@ const { WebSocketServer } = require('ws');
 const World = require('./world');
 const board = require('./leaderboard');
 const cfg = require('./config');
-const { AntiCheat, fpsPreset, createJsonStore, TokenBucket, RATE_PRESETS } = require('./anticheat');
+const { createChatFilter } = require('./chat-filter');
+const { createChatHistory } = require('./chat-history');
+const { AntiCheat, fpsPreset, createJsonStore, createAuditLog, TokenBucket, RATE_PRESETS } = require('./anticheat');
 
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
+const audit = createAuditLog({
+  enabled: process.env.AC_AUDIT_MODE !== 'off',
+  dataDir: DATA_DIR,
+  retentionDays: Number(process.env.AC_AUDIT_RETENTION_DAYS) || 30,
+});
+const chatFilter = createChatFilter({
+  enabled: process.env.CHAT_FILTER_MODE !== 'off',
+  filePath: process.env.CHAT_FILTER_FILE || path.join(__dirname, 'sensitive-words.txt'),
+});
+const chatHistory = createChatHistory({ filePath: path.join(DATA_DIR, 'chat-history.jsonl') });
 const app = express();
 app.use(express.static(path.join(__dirname, '..', 'public')));
 app.get('/health', (req, res) => {
@@ -19,12 +31,33 @@ app.get('/health', (req, res) => {
     ok: true, players: world.players.size, spectators: countSpectators(),
     uptime: Math.round(process.uptime()),
     anticheat: ac.status(),
+    audit: audit.status(),
     wsGuard: connGuardStatus(),
+    websocket: {
+      compression: wsCompressionEnabled ? 'permessage-deflate' : 'off',
+      compressionThreshold: wsCompressionEnabled ? wsCompression.threshold : null,
+    },
+    chatFilter: chatFilter.status(),
+    chatHistory: chatHistory.status(),
   });
 });
 
 const server = http.createServer(app);
-const wss = new WebSocketServer({ server, maxPayload: 4096 });
+const wsCompressionEnabled = envFlag('WS_COMPRESSION');
+const wsCompression = wsCompressionEnabled ? {
+  serverNoContextTakeover: true,
+  clientNoContextTakeover: true,
+  threshold: envInt('WS_COMPRESSION_THRESHOLD', 1024, 0),
+  concurrencyLimit: envInt('WS_COMPRESSION_CONCURRENCY', 5, 1),
+  zlibDeflateOptions: {
+    level: Math.min(9, envInt('WS_COMPRESSION_LEVEL', 3, 0)),
+  },
+} : false;
+const wss = new WebSocketServer({
+  server,
+  maxPayload: 4096,
+  perMessageDeflate: wsCompression,
+});
 
 // ---------- 广播 ----------
 function countSpectators() {
@@ -53,9 +86,15 @@ const acStore = createJsonStore(path.join(DATA_DIR, 'anticheat.json'));
 const ac = new AntiCheat(fpsPreset({
   enabled: process.env.AC_MODE !== 'off',
   store: acStore,
-  onAction(key, action, reason) {
+  audit,
+  onAction(key, action, reason, monitor) {
     const ws = sockets.get(key);
     const p = world.players.get(key);
+    const ruleCounts = {};
+    for (const entry of (monitor && monitor.violations) || []) ruleCounts[entry.rule] = (ruleCounts[entry.rule] || 0) + 1;
+    const rtt = monitor && monitor.networkRtt !== null ? `${Math.round(monitor.networkRtt)}ms` : 'unknown';
+    const scores = monitor && typeof monitor.scoreSnapshot === 'function' ? monitor.scoreSnapshot() : {};
+    console.warn(`[anticheat-action] ${(p && p.name) || key} ${action} score=${monitor ? Math.round(monitor.score) : 0} channels=${JSON.stringify(scores)} rtt=${rtt} rules=${JSON.stringify(ruleCounts)} reason=${reason}`);
     if (action === 'warn') {
       sendTo(key, { type: 'acwarn', text: '⚠️ 检测到异常操作，请规范游戏行为' });
       return;
@@ -64,22 +103,39 @@ const ac = new AntiCheat(fpsPreset({
       ? '你已被临时封禁，请规范游戏行为'
       : '你已被移出对局，请规范游戏行为';
     if (p) broadcast({ type: 'sys', style: 'streak', text: `🚫 ${p.name} 因异常行为被系统${action === 'ban' ? '封禁' : '移出'}` });
+    // 踢出与封禁统一清空完整档案；断线时再次清理，避免会话收尾把档案重新写回。
+    if ((action === 'kick' || action === 'ban') && p && p.name) {
+      p.purgeProfile = true;
+      board.clearHistory(p.name);
+    }
     if (ws) {
       rawSend(ws, JSON.stringify({ type: 'kicked', text: label }));
       setTimeout(() => { try { ws.close(4001, 'anticheat'); } catch (_) { /* 忽略 */ } }, 60);
     }
   },
-  log: e => console.warn(`[anticheat] ${e.name || e.key} ${e.rule} ${e.detail} → score=${e.score}`),
+  log: e => console.warn(`[anticheat] ${e.name || e.key} ${e.rule}/${e.channel} ${e.detail} → score=${e.score}`),
 }));
 setInterval(() => ac.tick(1), 1000);
 
-const world = new World(broadcast, sendTo, ac);
+const world = new World(broadcast, sendTo, ac, chatFilter, chatHistory, audit);
+audit.write({
+  type: 'startup',
+  port: Number(PORT),
+  thresholds: ac.opts.thresholds,
+  channelDecayPerSec: ac.opts.channelDecayPerSec,
+  movementBanContribution: ac.opts.movementBanContribution,
+  movementKicksToBan: ac.opts.movementKicksToBan,
+  kicksToBan: ac.opts.kicksToBan,
+  weights: ac.opts.weights,
+  ruleChannels: ac.opts.ruleChannels,
+  ruleConfig: world.auditRuleConfig(),
+});
 
 // 下发给新连接的静态定义（地图/武器/道具/商店），两端共用一份数据
 const DEFS = {
   type: 'defs',
   map: cfg.MAP, weapons: cfg.WEAPONS, equips: cfg.EQUIPS, buffs: cfg.BUFFS,
-  shop: cfg.SHOP, shopSlots: cfg.SHOP_SLOTS,
+  shop: cfg.SHOP, shopSlots: cfg.SHOP_SLOTS, airdrops: cfg.AIRDROPS,
   rules: {
     maxHp: cfg.RULES.maxHp, maxArmor: cfg.RULES.maxArmor, baseSpeed: cfg.RULES.baseSpeed,
     jumpVel: cfg.RULES.jumpVel, gravity: cfg.RULES.gravity, eyeH: cfg.RULES.eyeH,
@@ -180,6 +236,10 @@ function checkConnFlood(ip) {
     if (ident) {
       const reason = `${windowLabel(CONN_WINDOW)}内涌入 ${count} 个 WebSocket 连接`;
       ac.registerBan([ident], CONN_BAN_MINUTES, reason);
+      audit.write({
+        type: 'action', action: 'ban', rule: 'connflood', reason,
+        identity: audit.identityHash(ip), players: world.players.size,
+      });
       if (ac.opts.store && typeof ac.opts.store.save === 'function') ac.opts.store.save();
       const ban = ac.isBanned([ident]);
       connFloodStats.bans++;
@@ -249,7 +309,9 @@ const NAME_BLACKLIST = [
   /毛泽[东西]/,
 ];
 function isNameBlocked(name) {
-  return NAME_BLACKLIST.some(re => re.test(name));
+  const blocked = NAME_BLACKLIST.some(re => re.test(name)) || chatFilter.contains(name);
+  if (blocked) chatFilter.noteBlockedName();
+  return blocked;
 }
 
 // ---- 挂机/纯送死检测 ----
@@ -260,6 +322,7 @@ setInterval(() => {
     if (p.kills === 0 && p.deaths >= AFK_DEATH_THRESHOLD) {
       const ws = sockets.get(id);
       console.log(`[anti-grief] 踢出纯送死玩家: ${p.name} (0杀/${p.deaths}死)`);
+      p.purgeProfile = true;
       world.removePlayer(id);
       sockets.delete(id);
       if (ws) {
@@ -291,6 +354,7 @@ wss.on('connection', (ws, req) => {
   rawSend(ws, JSON.stringify(DEFS));
   rawSend(ws, JSON.stringify(world.boardMsg()));
   rawSend(ws, JSON.stringify(world.snapshot()));
+  rawSend(ws, JSON.stringify({ type: 'chatHistory', items: chatHistory.recent(40) }));
 
   ws.on('message', (data) => {
     let m;
@@ -347,7 +411,10 @@ wss.on('connection', (ws, req) => {
       case 'chat':   if (p) world.handleChat(p, m); break;
       case 'buy':    if (p) world.handleBuy(p, m); break;
       case 'equip':  if (p) world.handleEquipCos(p, m); break;
-      case 'ping':   rawSend(ws, JSON.stringify({ type: 'pong', t: m.t })); break;
+      case 'ping':
+        if (p && p.mon) p.mon.noteRtt(m.rtt);
+        rawSend(ws, JSON.stringify({ type: 'pong', t: m.t }));
+        break;
     }
   });
 
@@ -392,6 +459,16 @@ server.listen(PORT, () => {
   console.log(`[霓虹竞技场] 服务已启动: http://0.0.0.0:${PORT}  (单房间, 最多 ${cfg.RULES.maxPlayers} 人, 反作弊${ac.status().enabled ? '开启' : '关闭'})`);
 });
 
+let shuttingDown = false;
 for (const sig of ['SIGINT', 'SIGTERM']) {
-  process.on(sig, () => { board.saveNow(); acStore.save(); process.exit(0); });
+  process.on(sig, async () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    world.flushAuditSessions('shutdown');
+    audit.write({ type: 'shutdown', signal: sig, players: world.players.size });
+    board.saveNow();
+    acStore.save();
+    await audit.close();
+    process.exit(0);
+  });
 }

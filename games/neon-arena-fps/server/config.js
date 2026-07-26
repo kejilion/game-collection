@@ -103,16 +103,16 @@ const MAP = {
 };
 
 // ---------- 武器 ----------
-// 无限子弹：枪械弹匣打空自动换弹（reload 秒），近战为挥击冷却，手雷为投掷冷却
+// 有限弹药：枪械弹匣打空后消耗备弹自动换弹（reload 秒），备弹耗尽切回近战
 const WEAPONS = {
   fist:   { slot: 'melee', name: '拳头',   dmg: 15,  range: 2.4, cd: 0.4  },
   knife:  { slot: 'melee', name: '小刀',   dmg: 26,  range: 2.6, cd: 0.32 },
   sword:  { slot: 'melee', name: '长刀',   dmg: 42,  range: 3.5, cd: 0.65 },
   hammer: { slot: 'melee', name: '铁锤',   dmg: 70,  range: 3.0, cd: 1.15, sweep: true },
   // reserveMags = 首个弹匣外可换弹的匣数（越强的枪越少）；打光备弹自动切近战，拾取武器补满
-  pistol: { slot: 'gun',   name: '手枪',   dmg: 22,  range: 80,  cd: 0.27, mag: 12, reload: 1.3, auto: false, spread: 0.014, reserveMags: 12 },
-  mg:     { slot: 'gun',   name: '机枪',   dmg: 13,  range: 65,  cd: 0.09, mag: 40, reload: 2.4, auto: true,  spread: 0.05,  reserveMags: 8  },
-  sniper: { slot: 'gun',   name: '狙击枪', dmg: 95,  range: 220, cd: 1.4,  mag: 5,  reload: 2.8, auto: false, spread: 0.002, zoom: true, reserveMags: 6 },
+  pistol: { slot: 'gun', name: '手枪', dmg: 22, range: 80, cd: 0.27, mag: 12, reload: 1.3, auto: false, spread: 0.014, moveSpreadMul: 1.45, bloomPerShot: 0.002, maxBloom: 0.004, bloomDecay: 0.025, recoil: 0.009, reserveMags: 8 },
+  mg: { slot: 'gun', name: '机枪', dmg: 13, range: 65, cd: 0.09, mag: 40, reload: 2.4, auto: true, spread: 0.03, moveSpreadMul: 1.4, bloomPerShot: 0.002, maxBloom: 0.012, bloomDecay: 0.018, recoil: 0.004, reserveMags: 6 },
+  sniper: { slot: 'gun', name: '狙击枪', dmg: 95, range: 220, cd: 1.4, mag: 5, reload: 2.8, auto: false, spread: 0.03, scopedSpread: 0.0005, moveSpreadMul: 1.8, bloomPerShot: 0.003, maxBloom: 0.004, bloomDecay: 0.02, recoil: 0.02, zoom: true, reserveMags: 4 },
   // count = 携带个数（拾取补满，投完切近战）
   nade:   { slot: 'nade',  name: '手雷',   dmg: 105, radius: 6.5, fuse: 2.2, cd: 2.0, kind: 'frag',  count: 5 },
   flash:  { slot: 'nade',  name: '闪光弹', radius: 14,  fuse: 1.3, cd: 1.6, kind: 'flash', blindMax: 5.0, blindRadius: 14, count: 6 },
@@ -147,6 +147,20 @@ const PICKUP_POOLS = {
 // ---------- BOSS（多种类型，随机降临，同场仅一只） ----------
 const BOSS = {
   aggro: 48,
+  disengage: 58,
+  hpMul: 1.2,
+  retargetMs: 500,
+  targetLockMs: 3000,
+  switchAdvantage: 10,
+  currentTargetBonus: 6,
+  rankMinPlayers: 4,
+  rankBonus: [24, 14, 8],
+  lowPopulationRankBonus: 10,
+  streakWeight: 1.25,
+  streakCap: 12,
+  damageThreatScale: 0.06,
+  damageThreatMax: 600,
+  damageThreatDecayPerSec: 35,
   killScore: 100, assistCoins: 60, assistMin: 80,
   respawnMin: 40, respawnMax: 90,   // 秒
   firstDelay: 25,                   // 开服后首个 BOSS 延迟
@@ -201,6 +215,8 @@ const RULES = {
   shieldHp: 100,
   pickupDist: 3.4, merchantDist: 5,
   pickupRespawnMin: 12, pickupRespawnMax: 22, // 秒
+  deathLootLifetimeMs: 15000, deathLootPickupDelayMs: 800,
+  deathLootMax: 18, deathLootScatterMin: 0.8, deathLootScatterMax: 1.35,
   barrelHp: 30, barrelDmg: 55, barrelRadius: 4.5,
   barrelRespawnMin: 30, barrelRespawnMax: 45, // 秒
   dayMs: 600000,                              // 10 分钟一昼夜
@@ -208,4 +224,46 @@ const RULES = {
   tickRate: 30, broadcastRate: 20,
 };
 
-module.exports = { MAP, WEAPONS, EQUIPS, BUFFS, PICKUP_POOLS, BOSS, BOSSES, SHOP, SHOP_SLOTS, RULES };
+// ---------- 空投系统 ----------
+// 平均每 5 分钟一次，±90s 浮动；同场最多一架飞机，生成前 30s 全场广播航线，
+// 飞抵航线中点后自动投放，飞出地图后离场。飞机无敌不可击落。
+const AIRDROPS = {
+  intervalMs: 5 * 60 * 1000,       // 基础间隔 5 分钟
+  varMs: 90 * 1000,                 // ±90 秒浮动
+  warnMs: 30 * 1000,                // 提前 30 秒预告
+  altitude: 22,                     // 飞行高度（足够低，大机体影子清晰投到地面）
+  speed: 6.2,                        // 飞行速度（米/秒，慢速便于观赏）
+  firstDelay: 60,                   // 开服后首个空投延迟（秒）
+  types: ['missile', 'supply', 'special'],
+  colors: { missile: '#ff3b3b', supply: '#3bff72', special: '#ffd23c' },
+  names: { missile: '赤红制裁', supply: '翡翠补给', special: '黄金特种' },
+  // 红色导弹机：飞抵后投放集束导弹，延迟引爆，落地后留灼烧区域
+  missile: {
+    count: 4, spreadR: 14, delayMs: 1800, radius: 8, dmg: 90, falloff: 0.55,
+    targetClusterRadius: 24, targetJitter: 3,
+    // 落地灼烧：爆炸后留 burnSec 秒火焰区域，范围内持续伤害
+    burnSec: 30, burnR: 6, burnDmgPerSec: 18, burnTickMs: 500,
+  },
+  // 绿色补给机：投下补给箱，靠近自动拾取；也可被打爆（满血发放）
+  supply: {
+    crateHp: 80, pickupDist: 3.6,
+    // 奖励：医疗 + 护甲 + 随机武器满弹 + 随机BUFF
+    rewardsHp: 60, rewardsArmor: 60,
+  },
+  // 黄色特种机：投放一群丧尸小怪（4-10 只），追人啃咬，成群才有威胁
+  special: {
+    minCount: 4, maxCount: 10,
+    hp: 220, speed: 5.6, radius: 0.5, yc: 1.0, color: '#9bff4d',
+    meleeDmg: 14, meleeRange: 1.8, meleeCd: 0.9,
+    aggro: 28, disengage: 36,
+    retargetMs: 450, targetLockMs: 2000, switchAdvantage: 5, currentTargetBonus: 4,
+    damageThreatScale: 0.15, damageThreatMax: 200, damageThreatDecayPerSec: 18,
+    targetCrowdBonus: 50, highGroundPenalty: 14,
+    surroundRadius: 1.3, chargeDistance: 8, chargeSpeedMul: 1.12, meleeStaggerMs: 90,
+    homeRadius: 10, wanderRadius: 6, wanderMs: 3500,
+    killCoins: 10, killHeal: 8,
+    lifeSec: 300,  // 自动消散时间（秒）：到期未被击杀的噬魂尸自动死亡，防止堆积
+  },
+};
+
+module.exports = { MAP, WEAPONS, EQUIPS, BUFFS, PICKUP_POOLS, BOSS, BOSSES, SHOP, SHOP_SLOTS, RULES, AIRDROPS };

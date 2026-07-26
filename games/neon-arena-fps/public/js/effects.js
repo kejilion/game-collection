@@ -14,7 +14,7 @@ G.fx = (function () {
     x.fillStyle = g; x.fillRect(0, 0, 64, 64);
     return new T.CanvasTexture(c);
   }
-  let sparkTex, smokeTex;
+  let sparkTex, smokeTex, fireTex;
 
   // ---------- 粒子池（Sprite） ----------
   const P_MAX = 160;
@@ -96,6 +96,7 @@ G.fx = (function () {
   let shakeAmt = 0;
   let muzzleFlashT = 999;
   const smokes = [];   // 长效烟雾云团（持续数秒，跟其他短命特效分开管理）
+  const burnFields = [];   // 赤红制裁落地灼烧区（持续火焰，长效）
 
   // ---------- 镜头冲击力（弹簧阻尼，比纯随机抖动更有"扎实一顶"的手感） ----------
   const kickPos = new T.Vector3(), kickVel = new T.Vector3();
@@ -113,6 +114,8 @@ G.fx = (function () {
     scene = sc;
     sparkTex = radialTex('rgba(255,255,255,1)', 'rgba(255,255,255,0)');
     smokeTex = radialTex('rgba(160,160,170,.7)', 'rgba(120,120,130,0)');
+    // 灼烧火焰贴图：中心亮黄→橙红→透明（所有灼烧区共享，省纹理省 draw call）
+    fireTex = radialTex('rgba(255,220,120,1)', 'rgba(255,60,0,0)');
     for (let i = 0; i < P_MAX; i++) {
       const spr = new T.Sprite(new T.SpriteMaterial({ map: sparkTex, transparent: true, depthWrite: false, blending: T.AdditiveBlending }));
       spr.visible = false; scene.add(spr);
@@ -265,6 +268,25 @@ G.fx = (function () {
     smokes.push({ sprites, t: 0, dur: Math.max(1, (durMs || 9000) / 1000) });
   }
 
+  // 赤红制裁落地灼烧：用共享火焰贴图 Sprite 拼火焰柱（省资源、比逐帧粒子更像火）
+  function burnField(pos, r, sec) {
+    const dur = Math.max(1, sec || 30);
+    // 沿半径铺 N 个火焰 Sprite，各自浮动/闪烁/缩放，模拟一簇火焰
+    const n = Math.min(5, Math.max(3, Math.round(r * 0.7)));
+    const sprs = [];
+    for (let i = 0; i < n; i++) {
+      const spr = new T.Sprite(new T.SpriteMaterial({ map: fireTex, color: 0xff5a10, transparent: true, opacity: 0, depthWrite: false, blending: T.AdditiveBlending, fog: false }));
+      const a = (i / n) * Math.PI * 2 + Math.random() * 0.5;
+      const rr = (0.2 + Math.random() * 0.7) * r;
+      spr.position.set(pos[0] + Math.cos(a) * rr, 0.5, pos[2] + Math.sin(a) * rr);
+      const size = r * (0.5 + Math.random() * 0.4);
+      spr.scale.set(size, size * 1.6, 1);   // 拉高成火焰柱
+      scene.add(spr);
+      sprs.push({ spr, px: spr.position.x, pz: spr.position.z, size, phase: Math.random() * 6.28, speed: 2.5 + Math.random() * 2 });
+    }
+    burnFields.push({ pos: [pos[0], pos[2]], r, sprs, t: 0, dur });
+  }
+
   function roarWave(pos) {
     const ring = new T.Mesh(new T.TorusGeometry(1, 0.12, 6, 32),
       new T.MeshBasicMaterial({ color: 0xff4020, transparent: true, opacity: 0.9, blending: T.AdditiveBlending, depthWrite: false }));
@@ -336,6 +358,23 @@ G.fx = (function () {
       for (const spr of s.sprites) { spr.position.addScaledVector(spr.userData.drift, dt); spr.material.opacity = op; }
       if (s.t >= s.dur) { for (const spr of s.sprites) scene.remove(spr); smokes.splice(i, 1); }
     }
+    // 赤红制裁灼烧区：火焰 Sprite 浮动/闪烁/缩放，到时淡出移除
+    for (let i = burnFields.length - 1; i >= 0; i--) {
+      const b = burnFields[i];
+      b.t += dt;
+      const k = b.t / b.dur;
+      if (k >= 1) { for (const s of b.sprs) { scene.remove(s.spr); s.spr.material.dispose(); } burnFields.splice(i, 1); continue; }
+      // 末尾 2s 淡出
+      const fade = k > (b.dur - 2) / b.dur ? Math.max(0, 1 - (k * b.dur - (b.dur - 2)) / 2) : 1;
+      for (const s of b.sprs) {
+        const fl = Math.sin(b.t * s.speed + s.phase);
+        const op = (0.55 + fl * 0.2) * fade;            // 闪烁
+        s.spr.material.opacity = Math.max(0, op);
+        const sc = s.size * (0.92 + fl * 0.12);          // 缩放呼吸
+        s.spr.scale.set(sc, sc * 1.6, 1);
+        s.spr.position.y = 0.5 + Math.abs(fl) * 0.5;     // 上下跳动
+      }
+    }
   }
 
   function getShake() {
@@ -344,9 +383,59 @@ G.fx = (function () {
     return { x: (Math.random() - 0.5) * a, y: (Math.random() - 0.5) * a, z: (Math.random() - 0.5) * a * 0.5 };
   }
 
+  // 空投飞机尾焰：持续喷射的短寿命粒子
+  function airdropTrail(pos, color) {
+    const base = V(pos[0], pos[1], pos[2]);
+    const back = V(-Math.cos(pos[3] || 0), 0, Math.sin(pos[3] || 0)).normalize().multiplyScalar(2.2);
+    for (let i = 0; i < 4; i++) {
+      const off = back.clone().multiplyScalar(0.4 + i * 0.25);
+      const v = back.clone().multiplyScalar(-(3 + Math.random() * 2)).add(V((Math.random() - 0.5), 0.3 + Math.random() * 0.5, (Math.random() - 0.5)));
+      spawnP(base.clone().add(off), v, color || '#ff9c5c', 0.6 + Math.random() * 0.4, 0.5 + Math.random() * 0.3, { smoke: true, grav: -1.5, grow: 1.2 });
+    }
+  }
+
+  // 空投地面落点标记：闪烁的圆环
+  function dropMarker(pos, color, progress) {
+    const p = V(pos[0], 0.06, pos[1]);
+    const ring = new T.Mesh(new T.TorusGeometry(1, 0.06, 6, 32),
+      new T.MeshBasicMaterial({ color, transparent: true, opacity: 0.85, blending: T.AdditiveBlending, depthWrite: false }));
+    ring.rotation.x = Math.PI / 2; ring.position.copy(p); ring.scale.setScalar(1 + progress * 5);
+    spawnBlob(ring, 0.15, 1 + progress * 5, true);
+    // 垂直光束
+    const beam = new T.Mesh(new T.CylinderGeometry(0.08, 0.3, 18, 8, 1, true),
+      new T.MeshBasicMaterial({ color, transparent: true, opacity: 0.18, blending: T.AdditiveBlending, depthWrite: false, side: T.DoubleSide }));
+    beam.position.set(p.x, 9, p.z);
+    spawnBlob(beam, 0.15, 1, false);
+  }
+
+  // 补给箱光环
+  function crateSparkle(pos, color) {
+    sparkle([pos[0], pos[1] + 0.8, pos[2]], color || '#3bff72');
+  }
+
+  // 特种怪出生特效
+  function spawnBurst(pos, color) {
+    const p = V(pos[0], pos[1], pos[2]);
+    burst(p, 24, color || '#ffd23c', 5, 0.3, 0.8);
+    burst(p, 10, '#fff', 3, 0.2, 0.5);
+    shakeAmt = Math.min(1.2, shakeAmt + 0.35);
+  }
+
+  function airdropWarnLine(from, to, color) {
+    const p1 = V(from[0], 0.2, from[1]);
+    const p2 = V(to[0], 0.2, to[1]);
+    const mid = p1.clone().add(p2).multiplyScalar(0.5);
+    const len = p1.distanceTo(p2);
+    const line = new T.Mesh(new T.BoxGeometry(0.15, 0.04, len),
+      new T.MeshBasicMaterial({ color, transparent: true, opacity: 0.5, blending: T.AdditiveBlending, depthWrite: false }));
+    line.position.copy(mid);
+    line.lookAt(p2);
+    spawnBlob(line, 30, 1, false);
+  }
+
   return {
     init, update, tracer, muzzle, impact, impactSpark, blood, explosion, telegraph, dustPuff, slam, die, respawnBeam, sparkle, roarWave, damageText,
-    flashPop, smokeCloud,
+    flashPop, smokeCloud, airdropTrail, dropMarker, crateSparkle, spawnBurst, airdropWarnLine, burnField,
     getShake, shake: a => { shakeAmt = Math.min(1.2, shakeAmt + a); },
     punch, getKick,
   };

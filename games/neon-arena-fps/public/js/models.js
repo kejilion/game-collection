@@ -634,6 +634,178 @@ G.models = (function () {
     return g;
   }
 
+  // ---------- 空投飞机 ----------
+  function makeAirdropPlane(type, color) {
+    const g = new T.Group();
+    const bodyColor = color || '#ffffff';
+    const bodyMat = std(bodyColor, { metalness: 0.5, roughness: 0.4 });
+    const darkMat = std('#2e3238', { metalness: 0.6, roughness: 0.5 });
+    const glowMat = new T.MeshStandardMaterial({ color: bodyColor, emissive: bodyColor, emissiveIntensity: 1.2 });
+
+    // 机身
+    const body = new T.Mesh(new T.CylinderGeometry(0.35, 0.45, 2.6, 10), bodyMat);
+    body.rotation.x = Math.PI / 2;
+    body.castShadow = true;
+    g.add(body);
+
+    // 机翼
+    const wing = new T.Mesh(new T.BoxGeometry(3.6, 0.12, 0.7), bodyMat);
+    wing.position.set(0, 0, 0.2);
+    wing.castShadow = true;
+    g.add(wing);
+
+    // 尾翼
+    const tail = new T.Mesh(new T.BoxGeometry(1.0, 0.1, 0.5), bodyMat);
+    tail.position.set(0, 0, 1.3);
+    tail.castShadow = true;
+    const tailFin = new T.Mesh(new T.BoxGeometry(0.12, 0.7, 0.5), bodyMat);
+    tailFin.position.set(0, 0.35, 1.3);
+    tailFin.castShadow = true;
+    g.add(tail, tailFin);
+
+    // 引擎/发光尾焰
+    const engineL = cylZ(0.16, 0.2, 0.5, darkMat, 10);
+    engineL.position.set(-1.1, -0.05, 0.2);
+    const engineR = engineL.clone();
+    engineR.position.x = 1.1;
+    g.add(engineL, engineR);
+
+    const flameL = new T.Mesh(new T.ConeGeometry(0.12, 0.6, 8), glowMat);
+    flameL.rotation.x = -Math.PI / 2;
+    flameL.position.set(-1.1, -0.05, 0.8);
+    const flameR = flameL.clone();
+    flameR.position.x = 1.1;
+    g.add(flameL, flameR);
+
+    // 类型标识：导弹机加弹舱、补给机加货舱、特种机加尖刺
+    if (type === 'missile') {
+      for (let s of [-1, 1]) {
+        const rack = new T.Mesh(new T.BoxGeometry(0.18, 0.18, 1.2), std('#5a5a5a', { metalness: 0.7 }));
+        rack.position.set(s * 1.4, -0.2, 0.1);
+        g.add(rack);
+        for (let i = 0; i < 3; i++) {
+          const m = new T.Mesh(new T.CylinderGeometry(0.05, 0.05, 0.35, 6), std('#3a3a3a'));
+          m.rotation.x = Math.PI / 2;
+          m.position.set(s * 1.55, -0.2, -0.3 + i * 0.3);
+          g.add(m);
+        }
+      }
+    } else if (type === 'supply') {
+      const cargo = new T.Mesh(new T.BoxGeometry(0.9, 0.7, 0.9), std('#4a6b4a', { roughness: 0.7 }));
+      cargo.position.set(0, -0.2, -0.2);
+      cargo.castShadow = true;
+      const band = new T.Mesh(new T.BoxGeometry(0.95, 0.12, 0.95), glowMat);
+      band.position.set(0, -0.2, -0.2);
+      g.add(cargo, band);
+    } else if (type === 'special') {
+      for (let i = 0; i < 4; i++) {
+        const spike = new T.Mesh(new T.ConeGeometry(0.06, 0.5, 6), glowMat);
+        const ang = i / 4 * Math.PI * 2;
+        spike.position.set(Math.cos(ang) * 0.55, 0.25, Math.sin(ang) * 0.55 - 0.2);
+        spike.rotation.z = Math.PI;
+        g.add(spike);
+      }
+    }
+
+    // 航迹灯：去掉 PointLight（高空对地面无影响且会增 shader variant），靠发光尾焰表现即可
+
+    // 整体放大：大机体在高空才有足够大、足够清晰的地面投影
+    g.scale.setScalar(2.8);
+    // 大尺寸下补齐阴影：除自发光件（emissive 颜色非黑，如尾焰）外所有 mesh 都投影
+    // 注意：MeshStandardMaterial 默认 emissiveIntensity=1 但 emissive=黑色，必须查 emissive 颜色而非 intensity
+    // 飞机材质关闭雾，保证从地图外飞入到飞离全程清晰可见，不被距离雾糊掉
+    const _emis = new T.Color();
+    g.traverse(o => {
+      if (!o.isMesh || o.material == null) return;
+      o.material.fog = false;
+      _emis.copy(o.material.emissive || _emis.set(0, 0, 0));
+      if (_emis.r + _emis.g + _emis.b > 0.05) return;   // 自发光件不投影，避免火焰在地上留黑斑
+      o.castShadow = true;
+    });
+
+    return { group: g, flameL, flameR, glowMat };
+  }
+
+  // ---------- 空投补给箱 ----------
+  function makeCrate() {
+    const g = new T.Group();
+    const bodyMat = std('#2f4f2f', { roughness: 0.7 });
+    const bandMat = new T.MeshStandardMaterial({ color: '#3bff72', emissive: '#3bff72', emissiveIntensity: 0.8 });
+    const body = new T.Mesh(new T.BoxGeometry(1.0, 0.85, 1.0), bodyMat);
+    body.position.y = 0.42;
+    body.castShadow = true;
+    const bandV = new T.Mesh(new T.BoxGeometry(1.06, 0.18, 1.06), bandMat);
+    bandV.position.y = 0.42;
+    const bandH = new T.Mesh(new T.BoxGeometry(1.06, 0.85, 0.18), bandMat);
+    bandH.position.y = 0.42;
+    const light = new T.PointLight('#3bff72', 0.8, 6);
+    light.position.set(0, 0.8, 0);
+    g.add(body, bandV, bandH, light);
+    // 降落伞（还在空中时显示）
+    const chuteMat = new T.MeshStandardMaterial({ color: '#6bff9a', side: T.DoubleSide, transparent: true, opacity: 0.85 });
+    const chute = new T.Mesh(new T.SphereGeometry(1.4, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), chuteMat);
+    chute.position.y = 2.4;
+    chute.scale.y = 0.45;
+    const cordMat = new T.LineBasicMaterial({ color: '#6bff9a', transparent: true, opacity: 0.6 });
+    const cords = new T.Group();
+    for (let i = 0; i < 4; i++) {
+      const ang = i / 4 * Math.PI * 2 + Math.PI / 4;
+      const geo = new T.BufferGeometry().setFromPoints([
+        new T.Vector3(Math.cos(ang) * 1.0, 2.2, Math.sin(ang) * 1.0),
+        new T.Vector3(Math.cos(ang) * 0.45, 0.85, Math.sin(ang) * 0.45),
+      ]);
+      cords.add(new T.Line(geo, cordMat));
+    }
+    g.add(chute, cords);
+    return { group: g, chute, cords };
+  }
+
+  // ---------- 空投丧尸小怪（成群投放，追人啃咬） ----------
+  // 几何体/材质/名牌贴图全部缓存：丧尸群一次 4-10 只，共享同一份资源，
+  // shader 只编译一次、无重复 canvas，消除投放卡顿
+  let _zCache = null;
+  function zombieCache() {
+    if (_zCache) return _zCache;
+    const skinMat = std('#b8a01a', { roughness: 0.9 });      // 枯黄皮肤
+    const darkMat = std('#5e4a0a', { roughness: 0.9 });      // 深褐暗部
+    const eyeMat = new T.MeshStandardMaterial({ color: '#000', emissive: '#ff3b3b', emissiveIntensity: 2 });   // 血红双眼
+    const legGeo = new T.BoxGeometry(0.18, 0.62, 0.2); legGeo.translate(0, -0.31, 0);
+    const bodyGeo = new T.BoxGeometry(0.5, 0.56, 0.34);
+    const headGeo = new T.BoxGeometry(0.34, 0.34, 0.34);
+    const eyeGeo = new T.SphereGeometry(0.04, 6, 5);
+    const armGeo = new T.BoxGeometry(0.13, 0.46, 0.13); armGeo.translate(0, -0.21, -0.12);
+    const clawGeo = new T.ConeGeometry(0.04, 0.18, 5);
+    // 静态名牌：所有丧尸共享一张贴图（丧尸血少，不显示个体血条，省 canvas）
+    const pc = document.createElement('canvas'); pc.width = 128; pc.height = 48;
+    const px = pc.getContext('2d');
+    px.font = 'bold 28px "Microsoft YaHei", sans-serif'; px.textAlign = 'center'; px.textBaseline = 'middle';
+    px.shadowColor = 'rgba(0,0,0,.9)'; px.shadowBlur = 6; px.fillStyle = '#ffce3b';
+    px.fillText('🧟 噬魂尸', 64, 24);
+    const plateTex = new T.CanvasTexture(pc);
+    const plateMat = new T.SpriteMaterial({ map: plateTex, depthWrite: false });
+    _zCache = { skinMat, darkMat, eyeMat, legGeo, bodyGeo, headGeo, eyeGeo, armGeo, clawGeo, plateMat };
+    return _zCache;
+  }
+  function makeSpecialMob() {
+    const c = zombieCache();
+    const g = new T.Group();
+    const legL = new T.Mesh(c.legGeo, c.darkMat); legL.castShadow = true; legL.position.set(-0.14, 0.62, 0);
+    const legR = new T.Mesh(c.legGeo, c.darkMat); legR.castShadow = true; legR.position.set(0.14, 0.62, 0);
+    const body = new T.Mesh(c.bodyGeo, c.skinMat); body.position.y = 0.93; body.castShadow = true;
+    const head = new T.Mesh(c.headGeo, c.skinMat); head.position.y = 1.38; head.castShadow = true;
+    const eL = new T.Mesh(c.eyeGeo, c.eyeMat); eL.position.set(-0.09, 1.4, -0.18);
+    const eR = new T.Mesh(c.eyeGeo, c.eyeMat); eR.position.set(0.09, 1.4, -0.18);
+    const armL = new T.Mesh(c.armGeo, c.skinMat); armL.castShadow = true; armL.position.set(-0.32, 1.16, 0); armL.rotation.x = -1.2;
+    const armR = new T.Mesh(c.armGeo, c.skinMat); armR.castShadow = true; armR.position.set(0.32, 1.16, 0); armR.rotation.x = -1.2;
+    const clawL = new T.Mesh(c.clawGeo, c.darkMat); clawL.rotation.x = -Math.PI / 2; clawL.position.set(0, -0.42, -0.08); armL.add(clawL);
+    const clawR = new T.Mesh(c.clawGeo, c.darkMat); clawR.rotation.x = -Math.PI / 2; clawR.position.set(0, -0.42, -0.08); armR.add(clawR);
+    const plate = new T.Sprite(c.plateMat.clone());   // clone material 以便单独显隐，但共享 map 贴图
+    plate.position.y = 1.85; plate.scale.set(1.8, 0.45, 1);
+
+    g.add(legL, legR, body, head, eL, eR, armL, armR, plate);
+    return { group: g, legL, legR, armL, armR, head, plate, walkT: 0, attackT: 9 };
+  }
+
   // ---------- 第一人称视角模型 ----------
   function makeViewModel() {
     const g = new T.Group();
@@ -684,5 +856,6 @@ G.models = (function () {
     makePlayer, animatePlayer, setPlayerWeapon, setOpacity, tintZombie,
     applyCosmetics, applyWeaponFx, buildWeapon, makePickup, makeBoss, setBossOpacity,
     makeBarrel, makeMerchant, makeViewModel, setViewWeapon, makeNameplate, textSprite, std,
+    makeAirdropPlane, makeCrate, makeSpecialMob,
   };
 })();

@@ -53,13 +53,16 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: #05070d;
 #optSens { width: 120px; accent-color: var(--neon); }
 
 /* ---------- 准星 / 命中 ---------- */
-#crosshair { position: fixed; left: 50%; top: 50%; z-index: 10; pointer-events: none; }
+#crosshair { position: fixed; left: 50%; top: 50%; z-index: 10; pointer-events: none; --sp: 0px; --gap: 3px; --len: 9px; --dot-op: 1; }
+#crosshair.w-pistol { --gap: 4px; --len: 8px; }
+#crosshair.w-mg { --gap: 6px; --len: 11px; }
+#crosshair.w-sniper { --gap: 11px; --len: 7px; --dot-op: .35; }
 .ch { position: absolute; background: var(--neon); box-shadow: 0 0 4px rgba(53,224,255,.9); }
-.ch.t { width: 2px; height: 9px; left: -1px; top: calc(-11px - var(--sp, 0px)); }
-.ch.b { width: 2px; height: 9px; left: -1px; top: calc(3px + var(--sp, 0px)); }
-.ch.l { width: 9px; height: 2px; top: -1px; left: calc(-11px - var(--sp, 0px)); }
-.ch.r { width: 9px; height: 2px; top: -1px; left: calc(3px + var(--sp, 0px)); }
-.ch.dot { width: 2px; height: 2px; left: -1px; top: -1px; border-radius: 50%; }
+.ch.t { width: 2px; height: var(--len); left: -1px; top: calc(0px - var(--gap) - var(--len) - var(--sp)); }
+.ch.b { width: 2px; height: var(--len); left: -1px; top: calc(var(--gap) + var(--sp)); }
+.ch.l { width: var(--len); height: 2px; top: -1px; left: calc(0px - var(--gap) - var(--len) - var(--sp)); }
+.ch.r { width: var(--len); height: 2px; top: -1px; left: calc(var(--gap) + var(--sp)); }
+.ch.dot { width: 2px; height: 2px; left: -1px; top: -1px; border-radius: 50%; opacity: var(--dot-op); }
 #hitmarker { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%) scale(.6); z-index: 11;
   font-size: 30px; font-weight: 900; color: #fff; opacity: 0; pointer-events: none; text-shadow: 0 0 8px #fff; }
 #hitmarker.crit { color: var(--gold); }
@@ -109,7 +112,15 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: #05070d;
   background: var(--bg); border: 1px solid rgba(255,210,60,.4); border-radius: 8px; }
 #dayChip { padding: 6px 12px; font-size: 13px; font-weight: 700; color: #bfd9f0;
   background: var(--bg); border: 1px solid rgba(150,190,230,.3); border-radius: 8px; }
+#pingChip { padding: 6px 11px; font-size: 13px; font-weight: 800; color: #91e6b0;
+  background: var(--bg); border: 1px solid rgba(105,219,124,.38); border-radius: 8px; min-width: 72px; text-align: center; }
+#pingChip.warn { color: #ffd85c; border-color: rgba(255,216,92,.5); }
+#pingChip.bad { color: #ff7b7b; border-color: rgba(255,90,90,.55); }
+#pingChip.unknown { color: #9cb4c8; border-color: rgba(150,190,230,.25); }
 #buffRow { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; max-width: 320px; }
+.airdrop-hint { margin-top: 6px; padding: 5px 12px; font-size: 13px; font-weight: 800;
+  background: rgba(8,12,22,.78); border: 1px solid rgba(255,255,255,.18); border-radius: 18px;
+  color: #cfe6f5; text-shadow: 0 1px 2px #000; animation: noticeIn 2.6s forwards; }
 .buff-chip { display: flex; align-items: center; gap: 5px; padding: 4px 9px; font-size: 12px; font-weight: 700;
   background: var(--bg); border: 1px solid var(--bc, var(--line)); border-radius: 20px; color: var(--bc, #fff);
   box-shadow: 0 0 10px color-mix(in srgb, var(--bc, #35e0ff) 40%, transparent); }
@@ -169,15 +180,16 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: #05070d;
 
 /* ---------- 聊天 ---------- */
 #chatBox { position: fixed; left: calc(20px + env(safe-area-inset-left, 0px)); bottom: 110px; z-index: 11; width: 340px; max-width: 45vw; transition: bottom .15s; }
-#chatMsgs { display: flex; flex-direction: column; gap: 3px; max-height: 200px; overflow: hidden; justify-content: flex-end; }
+#chatMsgs { display: flex; flex-direction: column; gap: 3px; max-height: 200px; overflow: hidden; justify-content: flex-end; pointer-events: none; }
 .cmsg { font-size: 13px; padding: 3px 9px; background: rgba(6,10,18,.62); border-radius: 5px; line-height: 1.45;
   word-break: break-all; animation: kfIn .15s ease-out; }
 .cmsg .cname { font-weight: 700; }
 .cmsg.sys { color: #8fb8d8; font-style: italic; }
 .cmsg.sys.boss { color: #ffb45c; font-weight: 700; font-style: normal; }
 .cmsg.sys.streak { color: var(--gold); font-weight: 700; font-style: normal; }
+.cmsg.sys.airdrop { color: #3bff72; font-weight: 700; font-style: normal; }
 .cmsg.sys.shop { color: #d0a9ff; }
-#chatInputRow { margin-top: 6px; display: flex; gap: 6px; }
+#chatInputRow { margin-top: 6px; display: flex; gap: 6px; pointer-events: auto; }
 #chatInput { flex: 1; min-width: 0; padding: 8px 12px; font-size: 14px; color: #fff; background: rgba(8,14,26,.85);
   border: 1px solid var(--neon); border-radius: 6px; outline: none; font-family: inherit; }
 #chatSendBtn { flex: 0 0 auto; padding: 8px 16px; font-size: 13px; font-weight: 700; color: #05202c;
@@ -303,10 +315,25 @@ body.mobile #specTarget { font-size: 11.5px; font-weight: 700; margin: 0; min-he
 .tChat { right: calc(108px + env(safe-area-inset-right, 0px)); }
 
 /* 触屏下武器栏挪高，避开右下角按钮群；生命条略微收窄 */
-body.mobile #weaponPanel { bottom: calc(150px + env(safe-area-inset-bottom, 0px)); }
+body.mobile #weaponPanel { right: calc(8px + env(safe-area-inset-right, 0px)); bottom: calc(150px + env(safe-area-inset-bottom, 0px)); gap: 4px; pointer-events: none; }
 body.mobile #vitals { width: 210px; }
 body.mobile #interactHint { bottom: 34%; }
-body.mobile .wslot { min-width: 150px; padding: 6px 9px; font-size: 12px; }
+body.mobile #weaponPanel .wslot { width: 92px; min-width: 92px; min-height: 38px; box-sizing: border-box; padding: 4px 7px; gap: 5px; border-radius: 7px; font-size: 11px; pointer-events: auto; touch-action: manipulation; }
+body.mobile #weaponPanel .wslot.empty { display: none; }
+body.mobile #weaponPanel .wkey, body.mobile #weaponPanel .wname { display: none; }
+body.mobile #weaponPanel .wico { font-size: 16px; }
+body.mobile #weaponPanel .wammo { margin-left: auto; font-size: 11px; white-space: nowrap; }
+body.mobile #reloadBar { width: 92px; height: 12px; }
+body.mobile #reloadText { font-size: 8px; }
+
+body.mobile #chatBox { left: calc(10px + env(safe-area-inset-left, 0px)); bottom: calc(104px + env(safe-area-inset-bottom, 0px)); width: min(270px, 44vw); max-width: none; pointer-events: none; }
+body.mobile #chatMsgs { max-height: none; gap: 2px; }
+body.mobile #chatMsgs .cmsg { display: none; overflow: hidden; padding: 2px 7px; font-size: 11px; line-height: 1.3; text-overflow: ellipsis; white-space: nowrap; }
+body.mobile #chatMsgs .cmsg:nth-last-child(-n+2) { display: block; }
+body.mobile #chatInputRow { pointer-events: auto; }
+body.mobile.chat-focus #chatBox { width: min(420px, 88vw); }
+body.mobile #chatInput { padding: 7px 9px; font-size: 13px; }
+body.mobile #chatSendBtn { padding: 7px 12px; }
 
 /* 触屏 / 窄屏：菜单与提示收缩，避免溢出小屏 */
 @media (pointer: coarse), (max-width: 720px) {
@@ -320,6 +347,7 @@ body.mobile .wslot { min-width: 150px; padding: 6px 9px; font-size: 12px; }
 }
 @media (max-width: 480px) {
   #vitals, #weaponPanel { width: auto; min-width: 0; }
-  .wslot { min-width: 120px; }
+  body.mobile #weaponPanel .wslot { width: 86px; min-width: 86px; }
+  body.mobile #reloadBar { width: 86px; }
   #bossBar { width: 260px; }
 }

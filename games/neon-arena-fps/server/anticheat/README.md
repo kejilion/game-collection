@@ -1,189 +1,135 @@
-# 通用反作弊引擎（anticheat）
+# 通用反作弊引擎
 
-零依赖、可移植的多人在线对战反作弊模块。在「霓虹竞技场」中实装验证，可直接复制 `anticheat/` 目录到任何 Node.js 游戏服务器（ws / socket.io / uWS 均可，引擎不绑定网络库）。
+零依赖、可移植的 Node.js 多人对战反作弊模块。核心原则是服务端权威、先拒绝非法收益、再依据多维证据处罚。
 
-```
-anticheat/
-├── core.js    引擎：违规计分/衰减、限速、冷却、移动校验、瞄准统计、阶梯处置
-├── store.js   封禁持久化适配器（JSON 文件版 + 内存版，可自行实现 Redis 版）
-├── index.js   入口与体裁预设（fpsPreset / turnBasedPreset / RATE_PRESETS）
-└── README.md  本文档
-```
+## 架构
 
-## 一、设计理念
+| 通道 | 规则 | 默认衰减 | 作用 |
+| --- | --- | --- | --- |
+| `movement` | `teleport` `speed` `fly` `clip` | 1 分/秒 | 位置即时回拉；可警告/踢出，不能单独直接封禁 |
+| `combat` | `cooldown` `aim` `hipsniper` `spk` `killpace` `streak` `preaim` `dominance` | 0.25 分/秒 | 检测射速、枪法、隔墙预瞄和击杀节奏 |
+| `integrity` | `badvec` `range` 及未知自定义规则 | 0.25 分/秒 | 检测非法数值和越权请求 |
 
-1. **服务端权威**：浏览器/客户端代码可被任意篡改，一切校验只信服务器自己看到的状态；客户端消息一律视为"请求"而非"事实"。
-2. **计分 + 衰减，而非一票否决**：网络抖动、丢包重发都会产生零星异常。每条规则违规只累计分数（可配权重），分数随时间衰减；只有持续作弊才会积分越阈。
-3. **阶梯处置**：`纠正(回拉) → 警告 → 踢出 → 封禁`。位置违规当场回拉修正（其他玩家永远看到合法位置），积分越阈才升级处置；24h 内被踢 N 次自动升级临时封禁。
-4. **引擎与游戏解耦**：引擎只实现通用数学与流程；地面高度、实体碰撞、最大速度公式等游戏差异，通过**每次调用时传入的回调/参数**注入。换游戏不改引擎。
+默认引擎阈值为 `20/45/90`，`fpsPreset()` 使用 `15/35/70`。只有临时战斗或完整性证据存在时才允许直接封禁；混合判定中移动分最多贡献 15 分。连杀辅助分不衰减，由游戏在死亡时清零；30 连杀在至少两人在线时达到现有踢出阈值，用于阻断低人数刷榜。
 
-### 校验分两类
+消息洪泛使用令牌桶直接丢弃，只记 `observe` 审计事件，不累计处罚分。这样防护仍生效，但不会因为客户端重发或网络拥塞叠分。
 
-| 类别 | 方法 | `enabled=false` 时 |
-| --- | --- | --- |
-| 功能校验（游戏正确性） | `cooldown` `vec3` `num` | **仍然生效**（只是不计分） |
-| 惩罚校验（反作弊） | `movement` `rate` `aimShot` `flag` | 直通不处置 |
+## 能力边界
 
-这样 `AC_MODE=off` 用于开发调试/压测时，游戏基础规则（射速、数值合法性）依然成立。
+| 行为 | 服务端处理 |
+| --- | --- |
+| 瞬移、加速、飞天、穿墙 | 拒绝位置并回拉，持续异常再计分 |
+| 射速/连点宏 | 冷却内请求直接拒绝，严重连续提前才计分 |
+| 非法向量、远距拾取 | 请求拒绝并按冷却计完整性分 |
+| 自瞄/静默瞄准 | PvP 命中率、爆头率、视角夹角滚动统计 |
+| 未开镜狙击 | 结合命中率、距离、目标数、移动/爆头特征分档计分 |
+| 每杀耗弹异常 | 足够手枪/机枪击杀样本后计分；狙击枪正常单发击杀不进入该统计 |
+| 慢速自瞄/透视 | 榜首玩家隔墙持续贴准后快速命中多个不同目标，再与长期统治力交叉验证 |
+| 消息洪泛 | 超出令牌桶的消息直接丢弃并记录观察事件 |
+| 封禁绕过 | IP + 昵称双标识持久化拦截 |
 
-## 二、能防住什么
+K/D 不作为处罚规则：它高度依赖玩家水平、对局人数和弱势目标，与击杀节奏、命中率、每杀耗弹重复，容易放大误伤。
 
-| 作弊手段 | 检测方式 | 处置 |
-| --- | --- | --- |
-| 瞬移 | 单包位移 > `teleportDist` | 立即回拉 + 计分（权重 8） |
-| 加速外挂 | 超速漏桶（容忍抖动，溢出才判） | 回拉 + 计分 |
-| 飞天/悬浮 | 位置持续高于支撑面 `maxAboveFloor` | 回拉 + 计分 |
-| 穿墙/卡体 | 连续 N 包处于实体几何内 | 回拉 + 计分 |
-| 连点宏/射速外挂 | 冷却校验 + 严重提前统计 | 拒绝执行 + 计分 |
-| 消息洪泛 | 分类型令牌桶限速 | 丢弃消息 + 计分 |
-| 协议篡改（NaN/超长/未归一化向量） | 数值清洗 | 拒绝 + 计分（权重 4） |
-| 自瞄/静默瞄准 | 统计窗口：爆头率、命中率、开火方向与视线夹角(snap) | 缓慢计分（只对离谱者生效） |
-| 封禁绕过 | IP + 昵称双标识封禁，持久化落盘 | 加入时拦截 |
-
-**边界诚实说明**：透视（ESP）类作弊在"全量状态广播"架构下无法从服务端根除，缓解手段是兴趣管理（只下发视野内实体）；自瞄检测是统计学手段，阈值故意保守，抓的是"离谱的"而非"疑似的"。
-
-## 三、快速接入（任意 ws 游戏，约 40 行）
+## 快速接入
 
 ```js
 const { AntiCheat, fpsPreset, createJsonStore, RATE_PRESETS } = require('./anticheat');
 
 const ac = new AntiCheat(fpsPreset({
-  enabled: process.env.AC_MODE !== 'off',
   store: createJsonStore('./data/anticheat.json'),
-  onAction(playerId, action, reason) {          // 阶梯处置回调
-    const ws = sockets.get(playerId);
-    if (action === 'warn') send(ws, { type: 'acwarn', text: '检测到异常操作' });
-    if (action === 'kick' || action === 'ban') {
-      send(ws, { type: 'kicked', text: reason });
-      ws.close(4001, 'anticheat');
-    }
+  onAction(playerId, action, reason, monitor) {
+    if (action === 'warn') return send(playerId, { type: 'acwarn', text: reason });
+    send(playerId, { type: 'kicked', text: reason });
+    closePlayer(playerId);
   },
-  log: e => console.warn('[AC]', e.name, e.rule, e.detail, `score=${e.score}`),
+  log(entry) {
+    console.warn('[AC]', entry.name, entry.rule, entry.channel, entry.score, entry.detail);
+  },
 }));
-setInterval(() => ac.tick(1), 1000);            // 违规分每秒衰减
 
-wss.on('connection', (ws, req) => {
-  ws.ip = (req.headers['x-forwarded-for'] || '').split(',')[0].trim()
-       || req.socket.remoteAddress;
+setInterval(() => ac.tick(1), 1000);
 
-  ws.on('message', raw => {
-    const m = JSON.parse(raw);
-    // ① 加入前：封禁门
-    if (m.type === 'join') {
-      const ban = ac.isBanned([`ip:${ws.ip}`, `name:${m.name}`]);
-      if (ban) return send(ws, { type: 'err', text: `封禁中，剩余 ${Math.ceil((ban.until - Date.now()) / 60000)} 分钟` });
-      const player = world.addPlayer(m.name);
-      player.mon = ac.attach(player.id, { ip: ws.ip, name: player.name });
-      player.mon.resetPos(player.pos);          // 出生点作为移动基线
-      return;
-    }
-    const mon = player && player.mon;
-    if (!mon) return;
-    // ② 分类型限速（false = 丢弃）
-    if (!mon.rate(m.type, ...(RATE_PRESETS[m.type] || RATE_PRESETS.default))) return;
-    // ③ 业务处理内按需调用 movement / cooldown / vec3 / aimShot（见下）
-    world.handle(player, m);
-  });
-
-  ws.on('close', () => player && ac.detach(player.id));
-});
-```
-
-### 移动校验（客户端权威移动的收口）
-
-```js
-handleMove(p, m) {
-  const nx = +m.p[0], ny = +m.p[1], nz = +m.p[2];
-  if (!isFinite(nx + ny + nz)) return p.mon.flag('badvec', 4, '非法坐标');
-  const cand = clampToArena({ x: nx, y: ny, z: nz });
-  const res = p.mon.movement(cand, {
-    maxSpeed: this.maxSpeedOf(p),      // 游戏自己的速度公式（含 buff）
-    floorY: this.floorAt(cand),        // 游戏自己的支撑面查询
-    maxAboveFloor: 7,                  // 跳跃高度 + 最高平台 + 余量
-    inSolid: q => this.inSolid(q),     // 游戏自己的实体几何查询（可省略）
-  });
-  p.pos = res.pos;                     // 违规时 res.pos 已回拉到最后合法位置
+function onJoin(player) {
+  const ban = ac.isBanned([`ip:${player.ip}`, `name:${player.name}`]);
+  if (ban) return false;
+  player.mon = ac.attach(player.id, { ip: player.ip, name: player.name });
+  player.mon.resetPos(player.pos);
+  return true;
 }
-// 合法传送（出生/复活/闪现技能）后必须重置基线，否则会误判瞬移：
-respawn(p) { ...; p.mon.resetPos(p.pos); }
-```
 
-### 冷却与数值收口
-
-```js
-handleFire(p, m) {
-  if (!p.mon.cooldown('fire_' + p.gun, weapon.cd * 1000 * 0.8)) return; // 0.8 = 网络抖动容忍
-  const d = p.mon.vec3(m.d, { unit: true });   // 方向必须是单位向量
-  if (!d) return;
-  const result = raycast(...);
-  p.mon.aimShot({ dir: d, view: viewVectorOf(p), hit: result.hit, headshot: result.hs });
+function onMessage(player, message) {
+  const limits = RATE_PRESETS[message.type] || RATE_PRESETS.default;
+  if (!player.mon.rate(message.type, ...limits)) return;
+  // 再进入游戏逻辑
 }
 ```
 
-## 四、API 参考
+## API
 
-### `new AntiCheat(opts)`
+### `AntiCheat`
 
-| 字段 | 默认 | 说明 |
-| --- | --- | --- |
-| `enabled` | `true` | 关闭时惩罚类直通、功能类保留 |
-| `thresholds` | `{warn:20, kick:45, ban:90}` | 违规分阈值 |
-| `decayPerSec` | `0.8` | 每秒衰减分 |
-| `weights` | 见 core.js | 各规则计分权重 |
-| `movement` | 见 core.js | 移动校验参数（瞬移距离、漏桶容量等） |
-| `aim` | 见 core.js | 瞄准统计阈值 |
-| `banMinutes` / `kicksToBan` | `10` / `3` | 封禁时长；24h 被踢 N 次自动封禁 |
-| `store` | `null` | 持久化适配器（不传则封禁功能停用） |
-| `onAction(key, action, reason, mon)` | — | `warn`/`kick`/`ban` 处置回调（网络断连由接入方执行） |
-| `log(entry)` | — | 每条违规明细回调 |
+- `attach(key, { ip, name })`：创建玩家监控器。
+- `detach(key)`：移除在线监控器。
+- `tick(dtSec)`：按通道衰减临时分。
+- `isBanned(idents)`：检查 IP/昵称封禁。
+- `registerBan(idents, minutes, reason)`：手动登记封禁。
+- `status()`：返回会话规则计数、处置计数、在线通道最高分及持久审计汇总。
 
-方法：`attach(key, {ip, name}) → Monitor`、`detach(key)`、`isBanned(idents[])`、`registerBan(idents[], minutes, reason)`（手动封禁/管理后台可用）、`tick(dtSec)`、`status()`。
+### `Monitor`
 
-### `Monitor`（每玩家一个）
+- `rate(tag, perSec, burst)`：令牌桶限速，`false` 表示丢弃。
+- `cooldown(tag, cdMs)`：服务端冷却裁决，冷却内返回 `false`。
+- `num()` / `vec3()`：数值和向量清洗。
+- `movement(pos, ctx)`：移动裁决，异常返回服务端安全位置。
+- `resetPos(pos)`：出生、复活和合法传送后重置移动基线。
+- `aimShot()` / `hipSniperShot()`：喂入服务端确认的 PvP 射击结果。
+- `recordShot()` / `recordKill(weapon)`：喂入每杀耗弹样本。
+- `flag(rule, weight?, detail?)`：上报计分证据；未知规则默认归入 `integrity`。
+- `observe(rule, detail?)`：只审计，不计分。
+- `setPersistentScore(rule, value, detail?)`：设置由游戏事件清零的辅助分。
 
-| 方法 | 类别 | 说明 |
-| --- | --- | --- |
-| `rate(tag, perSec, burst) → bool` | 惩罚 | 令牌桶限速，false=丢弃该消息 |
-| `cooldown(tag, cdMs) → bool` | 功能 | true=允许执行并记时；内置连点宏统计 |
-| `vec3(arr, {unit}) → [x,y,z]\|null` | 功能 | NaN/Inf/未归一化 → null 并计分 |
-| `num(v, min, max) → number\|null` | 功能 | 数值清洗 |
-| `movement(pos, ctx) → {ok, pos, reason}` | 惩罚 | 瞬移/超速/飞天/穿墙，违规回拉 |
-| `resetPos(pos)` | — | 合法传送后重置基线（**必须调用**） |
-| `aimShot({dir, view, hit, headshot})` | 惩罚 | 喂入每次开火，窗口满自动评估 |
-| `flag(rule, weight?, detail?)` | 惩罚 | 手动上报自定义违规 |
+`score` 是兼容旧接线的总分；`scoreSnapshot()` 返回三个通道的当前分数。
 
-属性：`score`（当前违规分）、`violations`（最近明细）、`stats`（corrections/teleports/dropped）。
+## 持久化审计
 
-## 五、调参指南（新游戏接入 checklist）
+JSON store 保留封禁、踢出记录，以及最近 500 条结构化反作弊事件：
 
-1. **算出你的理论极限速度**：基础速度 × 所有增益叠乘的最大值。`movement.speedSlack`(1.25) 已含容忍，不要拿平均速度当上限。
-2. **`maxAboveFloor` = 最大跳跃高度 + 最高可站立差 + 1~2m 余量**。跳跃高度 = `jumpVel² / (2·gravity)`。
-3. **每一处合法传送都要 `resetPos`**：出生、复活、传送门、位移技能、载具上下——漏一处就是误杀。
-4. **冷却传"已含容忍的值"**：推荐 `实际冷却 × 0.8`，容忍客户端预测与网络抖动。
-5. **限速值 ≥ 客户端正常频率 × 2**：如客户端 15Hz 发位置，限 40/s。
-6. **瞄准统计只抓离谱者**：先用默认阈值跑一周，看 `log` 输出的分布再收紧；永远不要单靠 aim 规则直接封禁（权重设计上单次不越 kick 阈）。
-7. **上线前先 `enabled:false` 灰度**：功能校验照跑，观察 `status()` 与日志里"如果开启会罚谁"，确认无误杀再打开。
-8. **回拉要广播**：违规后服务器持有的合法位置要照常进快照广播，其他玩家看到的永远是合法位置——这是"纠正优先于惩罚"的关键。
+- `events`：`flag`、`observe`、`action` 事件。
+- `eventStats.flags`：累计规则计分次数。
+- `eventStats.observations`：累计只观察次数。
+- `eventStats.actions`：累计警告、踢出、封禁次数。
 
-## 六、扩展自定义规则
+健康接口不返回玩家昵称，只返回规则与处置汇总；详细复盘直接读取受保护的数据文件。
 
-任何游戏私有规则用 `flag` 上报即可复用计分/处置链路：
+项目接入 `createAuditLog()` 后，还会按天写入 `data/anticheat-audit-YYYY-MM-DD.jsonl`：
 
-```js
-// 例：经济系统防刷 —— 单局金币增速异常
-if (p.coinsGainedThisMinute > 2000) p.mon.flag('economy', 6, `金币增速 ${p.coinsGainedThisMinute}/min`);
-// 例：回合制游戏 —— 非本回合出牌
-if (game.turn !== p.id) return p.mon.flag('protocol', 3, '非本回合操作');
+- 反作弊计分、观察、警告、踢出、封禁事件完整保留 30 天。
+- 玩家会话每 5 分钟及离线时汇总 KPM、K/D、命中率、爆头率、每杀耗弹、武器分布、RTT 和规则命中次数。
+- IP 不落明文，只保存由本机随机盐生成的稳定匿名哈希；部署版本与规则版本随每条记录写入。
+- 写入采用 1 秒内存缓冲，避免每次射击同步写盘；队列、错误和丢弃数可在 `/health.audit` 查看。
+
+生成最近 7 天报告：
+
+```bash
+node server/tools/anticheat-report.js --days 7 --data-dir ./data
 ```
 
-权重建议：确定性篡改（协议/数值）4~8 分；统计性怀疑 ≤ 权重和不足以单独触发 kick；体验型骚扰（刷屏）0.5~2 分。
+加 `--json` 可输出机器可读结果。报告会按会话去重，只使用每个会话最新的一条累计汇总，避免周期记录重复统计。
 
-## 七、在霓虹竞技场中的实装位置
+## 调参原则
 
-| 文件 | 接入点 |
-| --- | --- |
-| `server/index.js` | 引擎实例化、封禁门、分类型限速、处置回调、`/health` 指标、`AC_MODE` 开关 |
-| `server/world.js` | `handleMove` 移动校验（`floorAtSrv`/`inSolidSrv`/`maxSpeedOf`）、fire/melee/nade 冷却收口与方向清洗、`aimShot` 喂入、出生/复活 `resetPos` |
-| `public/js/game.js` | `kicked`（断线原因展示）与 `acwarn`（警告提示）消息处理 |
+1. 每处合法传送都必须调用 `resetPos()`。
+2. 移动规则优先回拉，不依赖提高分数解决作弊收益。
+3. 统计规则至少需要足够样本、稳定目标身份和计分冷却；同一网络身份换名或重连仍按同一受害者统计。
+4. PvP 命中率不能混入 BOSS、怪物、箱子或场景物件。
+5. 单一弱证据不应越过踢出线；确定性强证据才允许高权重。
+6. 上线前先用历史样本回放，再观察 `eventStats` 调参。
+7. `preaim` 和 `dominance` 必须作为组合证据：高延迟、位置回拉、出生保护、近距离和已交火目标不进入预瞄样本，高战绩本身只观察不计分。
 
-运行时观测：`GET /health` 返回 `anticheat: { players, flags, kicks, bans, recent }`；封禁数据在 `data/anticheat.json`，删除对应键即可手动解封。
+本项目的历史样本统计、规则取舍与固定回归项见 `server/anticheat/REVIEW.md`。
+
+## 项目接线
+
+- `server/index.js`：引擎实例化、限速、封禁门、处置回调和 `/health`。
+- `server/world.js`：移动、冷却、PvP 命中、击杀节奏与每杀耗弹。
+- `server/anticheat/store.js`：封禁、踢出和结构化事件持久化。

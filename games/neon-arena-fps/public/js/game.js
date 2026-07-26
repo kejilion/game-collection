@@ -34,6 +34,27 @@
 
   const WICON = { fist: '👊', knife: '🔪', sword: '⚔️', hammer: '🔨', pistol: '🔫', mg: '💥', sniper: '🎯', nade: '🧨', flash: '🔆', smoke: '💨', boss: '👹', barrel: '🛢️' };
   const COS_ICON = { hat_cowboy: '🤠', hat_beret: '🧢', hat_horns: '😈', hat_crown: '👑', face_shades: '🕶️', face_visor: '🥽', back_cape: '🦸', back_jet: '🚀', back_wings: '👼', fx_ice: '❄️', fx_gold: '✨', fx_rainbow: '🌈' };
+  const CROSSHAIR = {
+    pistol: { cls: 'w-pistol', base: 1, move: 3, max: 8 },
+    mg: { cls: 'w-mg', base: 3, move: 6, max: 14 },
+    sniper: { cls: 'w-sniper', base: 8, move: 8, max: 10 },
+    default: { cls: '', base: 2, move: 4, max: 10 },
+  };
+  const crosshairCfg = w => CROSSHAIR[w] || CROSSHAIR.default;
+  function renderCrosshair(weapon, moving, spread, visible) {
+    const ch = crosshairCfg(weapon);
+    const crosshair = $('crosshair');
+    crosshair.style.setProperty('--sp', ch.base + spread + (moving ? ch.move : 0) + 'px');
+    crosshair.classList.remove('w-pistol', 'w-mg', 'w-sniper');
+    if (ch.cls) crosshair.classList.add(ch.cls);
+    crosshair.classList.toggle('hidden', !visible);
+    return ch;
+  }
+  function resetSharedOverlays() {
+    $('crosshair').classList.add('hidden');
+    $('scope').classList.add('hidden');
+    $('flashWhite').style.opacity = 0;
+  }
 
   // ---------- 渲染器 ----------
   const canvas = $('cv');
@@ -57,12 +78,16 @@
   });
 
   // ---------- 设置（持久化） ----------
+  const SENS_RANGE_PCT = TOUCH ? { min: 20, max: 400 } : { min: 30, max: 200 };
+  const storedSens = parseFloat(localStorage.getItem('na_sens'));
   const settings = {
     music: localStorage.getItem('na_music') !== '0',
     sfx: localStorage.getItem('na_sfx') !== '0',
-    sens: parseFloat(localStorage.getItem('na_sens')) || 1,
+    sens: Math.max(SENS_RANGE_PCT.min / 100, Math.min(SENS_RANGE_PCT.max / 100, Number.isFinite(storedSens) ? storedSens : 1)),
     view: localStorage.getItem('na_view') === 'tp' ? 'tp' : 'fp',
   };
+  $('optSens').min = SENS_RANGE_PCT.min;
+  $('optSens').max = SENS_RANGE_PCT.max;
   G.audio.setMusic(settings.music);
   G.audio.setSfx(settings.sfx);
   G.audio.setLite(TOUCH);   // 轻量BGM：移动端减少同时发声的振荡器数量
@@ -89,11 +114,13 @@
     pos: V3(0, 0, 0), vy: 0, grounded: true, yaw: 0, pitch: 0,
     active: 'melee', ammoL: 0, reserve: 0, nadeLeft: 0, reloadUntil: 0, reloadDur: 1,
     lastMelee: 0, lastShot: 0, lastNade: -99999, lastSwitch: 0,
-    moving: false, zoom: 0, stepT: 0, spread: 0, fallV: 0,
+    moving: false, zoom: 0, stepT: 0, bloom: 0, bloomWeapon: null, fallV: 0, recoilPitch: 0,
     swayX: 0, swayY: 0,
   };
   const keys = {};
   let mouseDown = false, rmbDown = false, lockWanted = false;
+  const LOOK_RESUME_GUARD_MS = 90, MAX_MOUSE_DELTA = 240;
+  let lookInputReadyAt = 0;
   // 触屏摇杆/视角状态：joyX/joyZ 为 -1..1 模拟量（movement() 里与键盘输入二选一）
   const touch = { joyId: null, joyBaseX: 0, joyBaseY: 0, joyX: 0, joyZ: 0, lookId: null };
   const activeTouches = new Map();   // touch identifier -> {role:'joy'|'look', ...}
@@ -101,16 +128,27 @@
   const ents = new Map();
   let bossEnt = null;
   let pickupMeshes = [];
+  const lootMeshes = new Map();   // 玩家死亡散落武器 id -> {item,mesh,x,y,z,availableAt,lastTry,bornAt}
   let projMeshes = [];          // {id, kind, g, target, vel, netAt}
   let nadeMeshes = [];          // {id, g, target, vel, netAt}
   let merchant = null;
   let vm = null;
   let vmSwingT = 9, vmKick = 0, vmThrowT = 9;
+  const RESPAWN_CAMERA_BLEND_MS = 180;
+  const respawnCameraPos = V3(0, 0, 0), respawnCameraQuat = new T.Quaternion();
+  let respawnCameraUntil = 0;
   let myModel = null;           // 第三人称下渲染自己的模型
   let specFollowId = null, specFree = { pos: V3(0, 18, 30) }, specView = 'tp', specSpeed = 1;   // 跟随用玩家 id（不是数组下标），避免目标死亡/进出场导致跟随对象乱跳
   let shopPre = null, hoverEq = null;
   let lastBeatAt = 0;
   let blindUntil = 0, blindTotal = 1;   // 闪光弹致盲：结束时间戳 + 本次总时长（算白屏淡出曲线用）
+
+  // 空投系统客户端状态
+  let airdropEnt = null;        // { id, type, model, from, to, startAt, endAt, color }
+  let airdropWarn = null;       // { type, color, from, to, arriveAt }
+  let airdropCrate = null;      // { id, model, mesh, hp, mx }
+  let specialMobs = new Map();  // id -> { model, disp, cur }
+  let airdropSoundPlayed = false;
 
   // ---------- 网络 ----------
   function connect() {
@@ -159,11 +197,19 @@
       case 'you': you = { coins: m.coins, owned: m.owned, eq: m.eq }; renderShop(); break;
       case 'fx': onFx(m); break;
       case 'kill': onKill(m); break;
+      case 'chatHistory':
+        $('chatMsgs').textContent = '';
+        if (Array.isArray(m.items)) {
+          for (const item of m.items.slice(-40))
+            addChat(`<span class="cname" style="color:${item.color}">${esc(item.from)}</span>：${esc(item.text)}`, 'history');
+        }
+        break;
       case 'chat': addChat(`<span class="cname" style="color:${m.color}">${esc(m.from)}</span>：${esc(m.text)}`); if (m.from !== myName) G.audio.chat(); break;
       case 'sys': onSys(m); break;
       case 'pk': onPk(m); break;
       case 'got': onGot(m); break;
       case 'board': renderBoard(m); break;
+      case 'airdrop': onAirdrop(m); break;
       case 'shopmsg': shopMsg(m.text, m.ok); if (m.ok) G.audio.buy(); else G.audio.deny(); break;
       case 'err': $('menuErr').textContent = m.text; break;
       case 'kicked': kickedText = m.text || '你已被移出对局'; rejoinWanted = false; break;
@@ -179,6 +225,13 @@
       case 'dry':   // 弹药/投掷物用光：只提示，玩家自己去武器点获取新武器（不自动切武器）
         G.audio.dryFire();
         notice(`⚠️ ${m.name}用光了 · 去武器点获取新武器`, true);
+        break;
+      case 'posfix':
+        if (Array.isArray(m.p) && m.p.length >= 3 && m.p.every(Number.isFinite)) {
+          me.pos.set(m.p[0], m.p[1], m.p[2]);
+          me.vy = 0;
+          if (mySnap) mySnap.p = [m.p[0], m.p[1], m.p[2]];
+        }
         break;
       case 'pong': pingMs = now() - m.t; break;
     }
@@ -203,7 +256,76 @@
       buildShopTabs();
       camera.position.set(0, 14, 42);
       camera.lookAt(0, 0, 0);
+      // 预热：提前构建并销毁游戏中"首次出现"才会创建的模型，
+      // 强制纹理上传与 shader 编译在加载期完成，避免首杀 BOSS / 首次空投时的卡顿
+      warmupModels();
     }
+  }
+
+  // 空投飞机/补给箱原型缓存：预热时构建并渲染一次编译 shader，之后实战直接 clone 共享几何体/材质，零编译开销
+  const planeProto = {};   // tp -> group
+  let crateProto = null;
+  const bossProto = {};    // tp -> model（含 update 闭包），实战直接复用
+
+  function warmupModels() {
+    // BOSS 各类型：渲染编译并保留原型（不 dispose），实战直接复用原型，零几何体上传零 shader 编译
+    if (defs.bosses) {
+      for (const [tp, info] of Object.entries(defs.bosses)) {
+        const m = G.models.makeBoss(tp, info.name, info.color);
+        m.group.position.set(0, -999, 0);
+        scene.add(m.group);
+        renderer.render(scene, camera);
+        scene.remove(m.group);
+        bossProto[tp] = m;   // 保留原型（含 update 闭包/plate），onState 直接用
+      }
+    }
+    // 空投全套要素「同时」在场渲染一帧：让 GPU 一次性上传所有几何体 buffer、
+    // 编译所有 shader variant（含 crate 的 PointLight 光照变体、丧尸群、光柱）。
+    // 之后再保留飞机/crate/丧尸的几何体材质缓存，实战 clone 复用，零编译零上传。
+    if (defs.airdrops) {
+      const warmupObjs = [];
+      const addWarmup = (grp, x, y, z) => { grp.position.set(x, y, z); scene.add(grp); warmupObjs.push(grp); };
+      // 三种飞机原型（保留不 dispose）
+      for (const tp of (defs.airdrops.types || [])) {
+        const m = G.models.makeAirdropPlane(tp, defs.airdrops.colors[tp]);
+        addWarmup(m.group, -30, -999, 0);
+        planeProto[tp] = m.group;
+      }
+      // 补给箱原型（保留不 dispose）
+      const crate = G.models.makeCrate();
+      addWarmup(crate.group, 10, -999, 10);
+      crateProto = crate.group;
+      // 10 只丧尸：触发 zombieCache 填充共享几何体/材质，并上传 buffer（移除但不 dispose 共享缓存）
+      const mobs = [];
+      for (let i = 0; i < 10; i++) {
+        const m = G.models.makeSpecialMob();
+        addWarmup(m.group, -10 + i * 2, -999, -10);
+        mobs.push(m);
+      }
+      // 落点光柱（dropMarker 内部 spawnBlob 新建几何体，预热让它首次上传发生在加载期）
+      G.fx.dropMarker([5, 5], defs.airdrops.colors.supply, 0);
+      // 关键：一次 render 编译/上传所有组合
+      renderer.render(scene, camera);
+      renderer.render(scene, camera);
+      // 移除实例（飞机/crate 原型保留引用；丧尸只 remove 不 dispose——
+      // 因为丧尸 mesh 直接引用 zombieCache 的共享 geometry/material，dispose 会把缓存资源一起释放，抵消预热效果）
+      for (const g of warmupObjs) scene.remove(g);
+    }
+    renderer.render(scene, camera);   // 复位一帧，清掉预热残影
+  }
+
+  // 递归释放 group 下所有几何体/材质，避免预热占用显存
+  function disposeGroup(obj) {
+    obj.traverse(o => {
+      if (o.geometry) o.geometry.dispose && o.geometry.dispose();
+      if (o.material) {
+        const mats = Array.isArray(o.material) ? o.material : [o.material];
+        for (const mm of mats) {
+          if (mm.map && mm.map.dispose) mm.map.dispose();
+          mm.dispose && mm.dispose();
+        }
+      }
+    });
   }
 
   // ---------- 状态同步 ----------
@@ -232,7 +354,8 @@
       if (!bossEnt || bossEnt.tp !== m.boss.tp) {
         if (bossEnt) scene.remove(bossEnt.model.group);
         const info = (defs.bosses && defs.bosses[m.boss.tp]) || { color: '#ff6a1a' };
-        const model = G.models.makeBoss(m.boss.tp, m.boss.nm, info.color);
+        // 优先复用预热缓存的原型（几何体已上传/shader 已编译，零首杀卡顿）；无缓存再 makeBoss
+        const model = bossProto[m.boss.tp] || G.models.makeBoss(m.boss.tp, m.boss.nm, info.color);
         scene.add(model.group);
         bossEnt = { tp: m.boss.tp, model, disp: { x: m.boss.p[0], z: m.boss.p[2], ya: m.boss.ya }, lastIv: -1 };
         $('bossBar').classList.remove('hidden');
@@ -259,6 +382,11 @@
     syncProjs(m.fb);
     syncNades(m.gd);
     if (m.br) G.world.setBarrels(m.br);
+    // 空投
+    syncAirdrop(m.ad);
+    syncAirdropCrate(m.ac);
+    syncSpecialMobs(m.sm);
+    updateAirdropHud(m.ad, m.na);
     // 拾取点
     for (let i = 0; i < pickupMeshes.length; i++) {
       const pm = pickupMeshes[i], item = m.pk[i];
@@ -271,6 +399,36 @@
           scene.add(pm.mesh);
         }
       }
+    }
+    syncLootDrops(m.ld || []);
+  }
+
+  function syncLootDrops(rows) {
+    const seen = new Set();
+    for (const row of rows) {
+      if (!Array.isArray(row) || row.length < 7) continue;
+      const id = row[0] | 0, item = row[1];
+      if (id <= 0 || !defs.weapons[item]) continue;
+      seen.add(id);
+      let drop = lootMeshes.get(id);
+      if (drop && drop.item !== item) {
+        scene.remove(drop.mesh); disposeGroup(drop.mesh); lootMeshes.delete(id); drop = null;
+      }
+      if (!drop) {
+        const mesh = G.models.makePickup(item, defs);
+        const ring = mesh.children[mesh.children.length - 1];
+        if (ring && ring.material && ring.material.color) ring.material.color.set('#ffb84d');
+        scene.add(mesh);
+        drop = { id, item, mesh, x: +row[2], y: +row[3], z: +row[4], availableAt: 0, lastTry: 0, bornAt: performance.now() };
+        lootMeshes.set(id, drop);
+      }
+      drop.x = +row[2]; drop.y = +row[3]; drop.z = +row[4];
+      drop.availableAt = now() + Math.max(0, +row[5] || 0);
+      drop.mesh.position.set(drop.x, drop.y, drop.z);
+    }
+    for (const [id, drop] of lootMeshes) {
+      if (seen.has(id)) continue;
+      scene.remove(drop.mesh); disposeGroup(drop.mesh); lootMeshes.delete(id);
     }
   }
   function makeProjMesh(kind) {
@@ -373,6 +531,138 @@
     advanceMoving(nadeMeshes, dt, true);
   }
 
+  // ---------- 空投同步与渲染 ----------
+  function syncAirdrop(ad) {
+    if (!ad) {
+      if (airdropEnt) {
+        scene.remove(airdropEnt.model.group);
+        airdropEnt = null;
+        airdropSoundPlayed = false;
+      }
+      return;
+    }
+    if (!airdropEnt || airdropEnt.id !== ad.id || airdropEnt.type !== ad.tp) {
+      if (airdropEnt) scene.remove(airdropEnt.model.group);
+      // 从预热缓存的原型 clone，共享几何体/材质，零 shader 编译（消除出现卡顿）
+      const proto = planeProto[ad.tp];
+      const group = proto ? proto.clone(true) : G.models.makeAirdropPlane(ad.tp, ad.color).group;
+      scene.add(group);
+      const model = { group };
+      // 直接用服务端权威位置初始化，避免从错误的本地时基推算导致"凭空出现"
+      airdropEnt = {
+        id: ad.id, type: ad.tp, model, color: ad.color, from: ad.from, to: ad.to,
+        target: V3(ad.p[0], ad.p[1], ad.p[2]), lastX: ad.p[0], lastZ: ad.p[2],
+      };
+      model.group.position.set(ad.p[0], ad.p[1], ad.p[2]);
+      airdropSoundPlayed = false;
+    }
+    // 每帧用服务端实时位置作为插值目标
+    airdropEnt.target.set(ad.p[0], ad.p[1], ad.p[2]);
+  }
+
+  function syncAirdropCrate(ac) {
+    if (!ac) {
+      if (airdropCrate) { scene.remove(airdropCrate.mesh.group); airdropCrate = null; }
+      return;
+    }
+    if (!airdropCrate || airdropCrate.id !== ac.id) {
+      if (airdropCrate) scene.remove(airdropCrate.mesh.group);
+      // 从预热原型 clone，共享几何体/材质零编译（消除投放卡顿）
+      const group = crateProto ? crateProto.clone(true) : G.models.makeCrate().group;
+      const mesh = { group };
+      mesh.group.position.set(ac.p[0], 0, ac.p[2]);
+      scene.add(mesh.group);
+      airdropCrate = { id: ac.id, mesh, hp: ac.hp, mx: ac.mx };
+    }
+    airdropCrate.hp = ac.hp; airdropCrate.mx = ac.mx;
+  }
+
+  function syncSpecialMobs(smArr) {
+    const seen = new Set();
+    for (const s of smArr || []) {
+      seen.add(s.id);
+      let e = specialMobs.get(s.id);
+      if (!e) {
+        const model = G.models.makeSpecialMob();
+        scene.add(model.group);
+        e = { id: s.id, model, cur: null, disp: { x: s.p[0], z: s.p[2], ya: s.ya } };
+        specialMobs.set(s.id, e);
+      }
+      e.cur = s;
+    }
+    for (const [id, e] of specialMobs) {
+      if (!seen.has(id)) { scene.remove(e.model.group); specialMobs.delete(id); }
+    }
+  }
+
+  function updateAirdropRender(dt) {
+    if (airdropWarn) {
+      const remain = (airdropWarn.until - perfNow) / 1000;
+      if (remain <= 0) airdropWarn = null;
+      // 预告只走 HUD 文字提示，不再画地面长亮线（避免场景里残留白线）
+    }
+    if (!airdropEnt) return;
+    const ad = airdropEnt;
+    // 用服务端权威位置做平滑插值（不再用本地时基 startAt/perfNow 推算，避免时区错位导致的"凭空出现"）
+    const k = 1 - Math.exp(-dt * 8);
+    ad.model.group.position.lerp(ad.target, k);
+    const px = ad.model.group.position.x, pz = ad.model.group.position.z;
+    // 朝向：优先用实际移动方向，否则用航线方向
+    const mvx = px - ad.lastX, mvz = pz - ad.lastZ;
+    if (Math.hypot(mvx, mvz) > 0.001) ad.model.group.rotation.y = Math.atan2(mvx, mvz);
+    else ad.model.group.rotation.y = Math.atan2(ad.to[0] - ad.from[0], ad.to[1] - ad.from[1]);
+    ad.lastX = px; ad.lastZ = pz;
+    // 引擎声：飞机较近时播放一次
+    if (!airdropSoundPlayed) {
+      const dist = Math.hypot(px - camera.position.x, pz - camera.position.z);
+      if (dist < 140) { G.audio.airplane(); airdropSoundPlayed = true; }
+    }
+    // 尾焰
+    G.fx.airdropTrail([px, ad.target.y, pz, ad.model.group.rotation.y], ad.color);
+  }
+
+  function renderSpecialMobs(dt) {
+    const k = 1 - Math.exp(-dt * 14);
+    for (const e of specialMobs.values()) {
+      const s = e.cur; if (!s) continue;
+      e.disp.x += (s.p[0] - e.disp.x) * k;
+      e.disp.z += (s.p[2] - e.disp.z) * k;
+      let dy = s.ya - e.disp.ya;
+      while (dy > Math.PI) dy -= Math.PI * 2;
+      while (dy < -Math.PI) dy += Math.PI * 2;
+      e.disp.ya += dy * k;
+      e.model.group.position.set(e.disp.x, 0, e.disp.z);
+      e.model.group.rotation.y = e.disp.ya;
+      const moving = Math.hypot(s.p[0] - e.disp.x, s.p[2] - e.disp.z) > 0.12;
+      e.model.walkT += dt * (moving ? 11 : 1.5);
+      const sw = Math.sin(e.model.walkT) * 0.7;
+      e.model.legL.rotation.x = sw; e.model.legR.rotation.x = -sw;
+      // 攻击动画：双爪快速前扑挥击（覆盖走路手臂动作）
+      e.model.attackT += dt;
+      if (e.model.attackT < 0.35) {
+        const k = e.model.attackT / 0.35;
+        const swing = Math.sin(k * Math.PI);          // 0→1→0 抛物
+        e.model.armL.rotation.x = -1.2 - swing * 1.1;  // 从前伸进一步猛扑下
+        e.model.armR.rotation.x = -1.2 - swing * 1.1;
+        e.model.armL.rotation.z = swing * 0.3;
+        e.model.armR.rotation.z = -swing * 0.3;
+      } else {
+        e.model.armL.rotation.x = -0.5 + Math.sin(e.model.walkT) * 0.3;
+        e.model.armR.rotation.x = -0.5 - Math.sin(e.model.walkT) * 0.3;
+        e.model.armL.rotation.z = 0;
+        e.model.armR.rotation.z = 0;
+      }
+      // 丧尸群共享静态名牌，不显示个体血条（共享贴图省 canvas，消除投放卡顿）
+    }
+  }
+
+  function airdropDirText(from, to) {
+    const dx = to[0] - from[0], dz = to[1] - from[1];
+    const horiz = Math.abs(dx) > Math.abs(dz);
+    if (horiz) return dx > 0 ? '自西向东' : '自东向西';
+    return dz > 0 ? '自南向北' : '自北向南';
+  }
+
   function onMySnap(s) {
     const wasAlive = mySnap ? mySnap.al : 1;
     mySnap = s;
@@ -387,8 +677,11 @@
     if (wasAlive && !s.al) onMyDeath();
     if (!wasAlive && s.al && mode === 'play') {
       $('death').classList.add('hidden');
+      respawnCameraPos.copy(camera.position);
+      respawnCameraQuat.copy(camera.quaternion);
+      respawnCameraUntil = performance.now() + RESPAWN_CAMERA_BLEND_MS;
       me.pos.set(s.p[0], s.p[1], s.p[2]);
-      me.vy = 0;
+      me.vy = 0; me.recoilPitch = 0;
       G.audio.respawn();
     }
     const d2 = (me.pos.x - s.p[0]) ** 2 + (me.pos.z - s.p[2]) ** 2;
@@ -522,6 +815,12 @@
       case 'respawn': G.fx.respawnBeam(m.pos); break;
       case 'slam': G.fx.slam(m.pos, m.r); if (bossEnt) bossEnt.model.slamT = 0; if (distToMe(m.pos) < 70) G.audio.slam(); break;
       case 'slash': G.fx.impact(m.pos, '#ff4060'); if (bossEnt) bossEnt.model.slamT = 0; if (distToMe(m.pos) < 50) G.audio.melee('knife'); break;
+      case 'mobatk': {   // 丧尸挥爪攻击动画：触发对应丧尸的手臂挥击
+        const zm = specialMobs.get(m.id);
+        if (zm) zm.model.attackT = 0;
+        break;
+      }
+      case 'burnfield': G.fx.burnField(m.pos, m.r, m.sec); break;   // 赤红制裁落地灼烧火焰
       case 'blink':
         G.fx.sparkle(m.from, '#b46bff'); G.fx.sparkle(m.to, '#b46bff');
         if (distToMe(m.to) < 60) G.audio.blink();
@@ -546,6 +845,39 @@
       case 'barrelup': {
         const br = G.world.barrelAt(m.id);
         if (br) { br.group.visible = true; G.fx.sparkle([br.x, 0.8, br.z], '#ffb02e'); }
+        break;
+      }
+      // 空投事件
+      case 'airdrop_warn': {
+        airdropWarn = { type: m.tp, color: m.color, from: m.from, to: m.to, until: perfNow + (m.ms || 0) };
+        break;
+      }
+      case 'airdrop_spawn': {
+        airdropWarn = null;
+        break;
+      }
+      case 'airdrop_drop': {
+        G.fx.dropMarker(m.pos, m.color, 0);
+        if (m.tp === 'missile') {
+          G.audio.airplane();
+        } else if (m.tp === 'supply') {
+          G.audio.pickup();
+        } else if (m.tp === 'special') {
+          G.fx.spawnBurst([m.pos[0], 0, m.pos[1]], m.color);
+          G.audio.roar();
+        }
+        break;
+      }
+      case 'airdrop_target': {
+        G.fx.telegraph([m.pos[0], 0.1, m.pos[1]], 2, m.ms);
+        break;
+      }
+      case 'crate_break': {
+        G.fx.explosion(m.pos, 3, { fire: false });
+        if (airdropCrate && airdropCrate.id === m.id) {
+          scene.remove(airdropCrate.mesh.group);
+          airdropCrate = null;
+        }
         break;
       }
     }
@@ -580,7 +912,7 @@
 
   function onSys(m) {
     addChat(`<span class="sys-text">${esc(m.text)}</span>`, 'sys ' + (m.style || ''));
-    if (m.style === 'boss' || m.style === 'streak') bigNotice(m.text);
+    if (m.style === 'boss' || m.style === 'streak' || m.style === 'airdrop') bigNotice(m.text);
     if (m.style === 'boss' && m.text.includes('降临')) {
       G.audio.roar();
       const bf = $('bossFlash');
@@ -628,6 +960,7 @@
   }
   function enterPlay() {
     mode = 'play';
+    resetSharedOverlays();
     $('menu').classList.add('hidden');
     $('hud').classList.remove('hidden');
     $('chatBox').classList.remove('hidden');
@@ -640,6 +973,7 @@
   }
   function enterSpec() {
     mode = 'spec';
+    resetSharedOverlays();
     $('menu').classList.add('hidden');
     $('hud').classList.add('hidden');
     $('death').classList.add('hidden');
@@ -654,8 +988,15 @@
   }
   function backToMenu() {
     mode = 'menu';
+    resetSharedOverlays();
     mySnap = null; myId = 0;
     if (myModel) myModel.group.visible = false;
+    // 清理空投渲染
+    if (airdropEnt) { scene.remove(airdropEnt.model.group); airdropEnt = null; }
+    if (airdropCrate) { scene.remove(airdropCrate.mesh.group); airdropCrate = null; }
+    for (const e of specialMobs.values()) scene.remove(e.model.group);
+    specialMobs.clear();
+    airdropWarn = null;
     $('menu').classList.remove('hidden');
     $('hud').classList.add('hidden');
     $('specBar').classList.add('hidden');
@@ -668,7 +1009,7 @@
   function onMyDeath() {
     $('death').classList.remove('hidden');
     $('deathBy').innerHTML = lastKillerText || '';
-    me.zoom = 0;
+    me.zoom = 0; me.recoilPitch = 0; me.bloom = 0;
   }
 
   // ---------- UI 工具 ----------
@@ -735,6 +1076,25 @@
   }
 
   // ---------- HUD ----------
+  function updateAirdropHud(ad, nextMs) {
+    const el = $('airdropHint');
+    if (!el) return;
+    if (ad) {
+      const cfg = defs.airdrops;
+      const dir = airdropDirText(ad.from, ad.to);
+      el.textContent = `✈️ ${cfg.names[ad.tp]} 正在飞越 · 航线${dir}`;
+      el.style.color = cfg.colors[ad.tp];
+      el.classList.remove('hidden');
+    } else if (nextMs > 0) {
+      const sec = Math.ceil(nextMs / 1000);
+      el.textContent = `✈️ 下一次空投约 ${sec}s 后抵达`;
+      el.style.color = '#cfe6f5';
+      el.classList.remove('hidden');
+    } else {
+      el.classList.add('hidden');
+    }
+  }
+
   function updateHud() {
     if (!mySnap || mode !== 'play') return;
     const s = mySnap;
@@ -787,28 +1147,181 @@
 
   // ---------- 排行榜（含首页历史榜） ----------
   function renderBoard(m) {
-    const mkRows = (rows, isRt) => {
-      // 6 列：# 玩家 击杀 死亡 得分/BOSS 连杀。连杀列(实时=当前连杀/历史=最高连杀)参与排序，服务端已排好
-      const col5 = isRt ? '得分' : 'BOSS';
-      let html = `<div class="brow head"><span>#</span><span>玩家</span><span class="num">击杀</span><span class="num">死亡</span><span class="num">${col5}</span><span class="num">连杀</span></div>`;
+    // 实时榜：6 列（# 玩家 击杀 死亡 得分 连杀）—— 本次会话实时数据
+    const mkRt = (rows) => {
+      let html = `<div class="brow head"><span>#</span><span>玩家</span><span class="num">击杀</span><span class="num">死亡</span><span class="num">得分</span><span class="num">连杀</span></div>`;
       rows.forEach((r, i) => {
-        const meCls = (isRt && r.i === myId) || (!isRt && r.n === myName) ? ' me' : '';
-        const streakVal = isRt ? (r.st | 0) : (r.bs | 0);
-        const streakCls = streakVal >= 3 ? ' streak-hot' : '';
-        html += `<div class="brow${meCls}"><span class="rank r${i + 1}">${i + 1}</span><span style="color:${r.c || '#cfe6f5'}">${esc(r.n)}</span><span class="num">${r.k}</span><span class="num">${r.d}</span><span class="num">${isRt ? (r.s | 0) : (r.bk | 0)}</span><span class="num${streakCls}">${streakVal > 0 ? '🔥' + streakVal : '-'}</span></div>`;
+        const meCls = r.i === myId ? ' me' : '';
+        const st = r.st | 0;
+        html += `<div class="brow${meCls}"><span class="rank r${i + 1}">${i + 1}</span><span style="color:${r.c || '#cfe6f5'}">${esc(r.n)}</span><span class="num">${r.k}</span><span class="num">${r.d}</span><span class="num">${r.s | 0}</span><span class="num${st >= 3 ? ' streak-hot' : ''}">${st > 0 ? '🔥' + st : '-'}</span></div>`;
       });
       if (!rows.length) html += '<div class="brow"><span></span><span style="color:#7591ad">暂无数据</span></div>';
       return html;
     };
-    $('boardRt').innerHTML = mkRows(m.rt, true);
-    $('boardHist').innerHTML = mkRows(m.hist, false);
-    $('menuHist').innerHTML = mkRows(m.hist.slice(0, 10), false);   // 首页历史榜显示前 10
+    // 历史榜：6 列（# 玩家 击杀 死亡 得分 连杀）—— 历史最好单会话成绩，表头与实时榜一致
+    const mkHist = (rows) => {
+      let html = `<div class="brow head"><span>#</span><span>玩家</span><span class="num">击杀</span><span class="num">死亡</span><span class="num">得分</span><span class="num">连杀</span></div>`;
+      rows.forEach((r, i) => {
+        const meCls = r.n === myName ? ' me' : '';
+        const bs = r.bs | 0;
+        html += `<div class="brow${meCls}"><span class="rank r${i + 1}">${i + 1}</span><span style="color:${r.c || '#cfe6f5'}">${esc(r.n)}</span><span class="num">${r.k}</span><span class="num">${r.d | 0}</span><span class="num">${r.s | 0}</span><span class="num${bs >= 3 ? ' streak-hot' : ''}">${bs > 0 ? '🔥' + bs : '-'}</span></div>`;
+      });
+      if (!rows.length) html += '<div class="brow"><span></span><span style="color:#7591ad">暂无数据</span></div>';
+      return html;
+    };
+    $('boardRt').innerHTML = mkRt(m.rt);
+    $('boardHist').innerHTML = mkHist(m.hist);
+    $('menuHist').innerHTML = mkHist(m.hist.slice(0, 10));   // 首页历史榜显示前 10
   }
   $('tabRt').onclick = () => { $('tabRt').classList.add('active'); $('tabHist').classList.remove('active'); $('boardRt').classList.remove('hidden'); $('boardHist').classList.add('hidden'); };
   $('tabHist').onclick = () => { $('tabHist').classList.add('active'); $('tabRt').classList.remove('active'); $('boardHist').classList.remove('hidden'); $('boardRt').classList.add('hidden'); };
 
   // ---------- 商店（含 3D 试穿预览） ----------
   let shopTab = 'head';
+  // ---------- ???? ----------
+  let airdropState = null;
+  let airdropPlane = null;
+  let airdropBox = null;
+  let airdropMarker = null;
+
+  function onAirdrop(m) {
+    if (m.ev === "incoming") {
+      airdropState = {
+        kind: m.kind, skin: m.skin, planeId: m.planeId,
+        sx: m.startX, sz: m.startZ, ex: m.endX, ez: m.endZ,
+        dx: m.dropX, dz: m.dropZ, alt: m.alt || 35,
+        born: now(), flyDuration: m.flyDuration, phase: "incoming",
+        boxId: 0, boxBorn: 0, landX: 0, landZ: 0, fuseMs: 0,
+        supplyItems: [], monsterId: 0,
+      };
+      addChat("<span class=\"sys-text\">?? " + esc(m.name) + " ????</span>", "sys streak");
+      if (G.audio.sysNotice) G.audio.sysNotice();
+
+    } else if (m.ev === "drop") {
+      if (airdropState) {
+        airdropState.phase = "falling";
+        airdropState.boxId = m.boxId;
+        airdropState.boxBorn = now();
+        airdropState.landX = m.x;
+        airdropState.landZ = m.z;
+        airdropState.descendMs = m.descendMs;
+      }
+
+    } else if (m.ev === "landed") {
+      if (airdropState) {
+        airdropState.phase = "landed";
+        airdropState.landX = m.x;
+        airdropState.landZ = m.z;
+        if (m.fuseMs) airdropState.fuseMs = m.fuseMs;
+        if (m.items) airdropState.supplyItems = m.items;
+        if (m.monsterId) airdropState.monsterId = m.monsterId;
+        airdropState.landedAt = now();
+      }
+
+    } else if (m.ev === "explode") {
+      if (typeof G.fx !== "undefined" && G.fx.explosion) G.fx.explosion(V3(m.x, 0.5, m.z), m.r || 6.5, "#ff6000");
+      if (G.audio.explosion) G.audio.explosion();
+      airdropState = null;
+
+    } else if (m.ev === "done") {
+      airdropState = null;
+    }
+  }
+
+  function renderAirdrop() {
+    if (!airdropState) {
+      if (airdropPlane) { scene.remove(airdropPlane); airdropPlane = null; }
+      if (airdropBox) { scene.remove(airdropBox); airdropBox = null; }
+      if (airdropMarker) { scene.remove(airdropMarker); airdropMarker = null; }
+      return;
+    }
+    var as = airdropState;
+    var elapsed = now() - as.born;
+    var progress = Math.min(1, elapsed / as.flyDuration);
+
+    // --- ?? ---
+    if (!airdropPlane && progress < 0.55) {
+      var T = THREE;
+      var grp = new T.Group();
+      var body = new T.Mesh(new T.BoxGeometry(0.8, 0.6, 2.8), new T.MeshPhongMaterial({ color: new T.Color(as.skin), emissive: new T.Color(as.skin), emissiveIntensity: 0.3 }));
+      body.position.set(0, 0, 0);
+      grp.add(body);
+      var wing = new T.Mesh(new T.BoxGeometry(3.2, 0.1, 0.8), new T.MeshPhongMaterial({ color: 0xcccccc }));
+      wing.position.set(0, 0, 0.4);
+      grp.add(wing);
+      var tail = new T.Mesh(new T.BoxGeometry(0.3, 0.5, 0.6), new T.MeshPhongMaterial({ color: 0xcccccc }));
+      tail.position.set(0, 0.1, -1.5);
+      grp.add(tail);
+      airdropPlane = grp;
+      scene.add(airdropPlane);
+    }
+
+    if (airdropPlane) {
+      if (progress > 0.55) {
+        scene.remove(airdropPlane);
+        airdropPlane = null;
+      } else {
+        var px = as.sx + (as.ex - as.sx) * progress;
+        var pz = as.sz + (as.ez - as.sz) * progress;
+        airdropPlane.position.set(px, as.alt, pz);
+        var angle = Math.atan2(as.ex - as.sx, as.ez - as.sz);
+        airdropPlane.rotation.y = angle;
+      }
+    }
+
+    // --- ??? + ??? ---
+    if (as.phase === "falling" || as.phase === "landed") {
+      var fallElapsed = now() - as.boxBorn;
+      var descendProgress = Math.min(1, fallElapsed / (as.descendMs || 2500));
+      var yPos = as.alt * (1 - descendProgress) + 0.5 * descendProgress;
+
+      if (!airdropBox && descendProgress < 1) {
+        var T3 = THREE;
+        var bg = new T.Group();
+        var bx = new T.Mesh(new T.BoxGeometry(1.0, 1.0, 1.0), new T.MeshPhongMaterial({ color: 0x885522 }));
+        bx.position.set(0, 0, 0);
+        bg.add(bx);
+        var ch = new T.Mesh(new T.ConeGeometry(1.8, 1.0, 8), new T.MeshPhongMaterial({ color: 0xffffff, transparent: true, opacity: 0.7 }));
+        ch.position.set(0, 1.2, 0);
+        ch.rotation.x = Math.PI;
+        bg.add(ch);
+        var lineMat = new T.LineBasicMaterial({ color: 0xdddddd });
+        for (var i = 0; i < 4; i++) {
+          var a = i * Math.PI / 2;
+          var pts = [V3(0, 0.7, 0), V3(Math.sin(a) * 0.8, 1.1, Math.cos(a) * 0.8)];
+          var lineGeo = new T.BufferGeometry().setFromPoints(pts);
+          bg.add(new T.Line(lineGeo, lineMat));
+        }
+        airdropBox = bg;
+        scene.add(airdropBox);
+      }
+      if (airdropBox) {
+        airdropBox.position.set(as.landX, yPos, as.landZ);
+        airdropBox.rotation.y += 0.02;
+        if (as.phase === "landed" && airdropBox.children.length > 1) {
+          for (var i = 1; i < airdropBox.children.length; i++) airdropBox.children[i].visible = false;
+        }
+      }
+
+      // --- ????? ---
+      if (as.phase === "landed" && !airdropMarker) {
+        var T3 = THREE;
+        var ring = new T.Mesh(new T.RingGeometry(1.8, 2.0, 24),
+          new T.MeshBasicMaterial({ color: new T.Color(as.skin || "#ffffff"), transparent: true, opacity: 0.5, side: T.DoubleSide }));
+        ring.position.set(as.landX, 0.02, as.landZ);
+        ring.rotation.x = -Math.PI / 2;
+        airdropMarker = ring;
+        scene.add(airdropMarker);
+      }
+    }
+
+    // ??30????
+    if (as.phase === "landed" && now() - (as.landedAt || 0) > 30000) {
+      airdropState = null;
+    }
+  }
+
+
   function buildShopTabs() {
     const tabs = $('shopTabs');
     tabs.innerHTML = '';
@@ -937,9 +1450,17 @@
   function requestLock() {
     lockWanted = true;
     if (NOLOCK || TOUCH) return;   // 触屏没有指针锁定这回事，视角改由触摸拖拽驱动
-    try { canvas.requestPointerLock && canvas.requestPointerLock(); } catch (_) {}
+    try {
+      const request = canvas.requestPointerLock && canvas.requestPointerLock();
+      if (request && typeof request.catch === 'function') request.catch(() => {});
+    } catch (_) {}
   }
   document.addEventListener('pointerlockchange', () => {
+    if (document.pointerLockElement === canvas) {
+      lookInputReadyAt = performance.now() + LOOK_RESUME_GUARD_MS;
+      mouseDown = rmbDown = false;
+      return;
+    }
     if (!document.pointerLockElement && lockWanted && (mode === 'play' || mode === 'spec')
       && $('shop').classList.contains('hidden') && $('pause').classList.contains('hidden') && !NOLOCK && !TOUCH) {
       openPause();
@@ -962,10 +1483,20 @@
     me.swayX = Math.max(-0.06, Math.min(0.06, me.swayX + dx * 0.0005));
     me.swayY = Math.max(-0.05, Math.min(0.05, me.swayY + dy * 0.0005));
   }
+  function applyTouchLook(dx, dy) {
+    const distance = Math.hypot(dx, dy);
+    const acceleration = 1 + Math.min(0.55, Math.max(0, distance - 5) * 0.035);
+    applyLook(dx * acceleration, dy * 0.82 * acceleration, 0.0042);
+  }
   document.addEventListener('mousemove', e => {
     const locked = !!document.pointerLockElement || NOLOCK;
     if (!locked || mode === 'menu') return;
-    applyLook(e.movementX, e.movementY);
+    if (!NOLOCK && performance.now() < lookInputReadyAt) return;
+    const rawX = Number(e.movementX), rawY = Number(e.movementY);
+    if (!Number.isFinite(rawX) || !Number.isFinite(rawY)) return;
+    const dx = Math.max(-MAX_MOUSE_DELTA, Math.min(MAX_MOUSE_DELTA, rawX));
+    const dy = Math.max(-MAX_MOUSE_DELTA, Math.min(MAX_MOUSE_DELTA, rawY));
+    applyLook(dx, dy);
   });
   document.addEventListener('mousedown', e => {
     if (mode === 'menu' || isTyping()) return;
@@ -983,8 +1514,12 @@
 
   // ---------- 触屏：虚拟摇杆 + 视角拖拽（画布上的触点按落点区域二选一角色） ----------
   // 摇杆：浮动式，落在左下区域即在触点处生成；视角：其余区域拖拽，帧间坐标差喂给 applyLook()
-  // 按钮（.tbtn）pointer-events:auto 会先于画布收到触摸，这里天然不会跟按钮冲突
+  // 监听提升到页面级，确保触点落在聊天文字等 HUD DOM 上时仍能控制；交互控件与弹窗显式排除
   function joyZoneHit(x, y) { return x < innerWidth * 0.52 && y > innerHeight * 0.4; }
+  function isWorldTouchTarget(target) {
+    return !(target instanceof Element)
+      || !target.closest('button, input, textarea, select, a, .wslot, #interactHint, .overlay, #menu, #specBar');
+  }
   function showJoyAt(x, y) {
     const base = $('joyBase');
     base.style.left = (x - 56) + 'px'; base.style.top = (y - 56) + 'px';
@@ -993,20 +1528,26 @@
   }
   // 可自由驱动镜头：游戏中，或观战自由飞行。观战跟随时镜头锁定目标玩家，忽略摇杆/拖拽
   function canDriveCam() { return mode === 'play' || (mode === 'spec' && !isFollowing()); }
-  canvas.addEventListener('touchstart', e => {
-    if (!canDriveCam() || isTyping()) return;
+  document.addEventListener('touchstart', e => {
+    if (!TOUCH || !canDriveCam() || isTyping()) return;
+    let handled = false;
     for (const t of e.changedTouches) {
+      if (!isWorldTouchTarget(t.target)) continue;
       if (touch.joyId === null && joyZoneHit(t.clientX, t.clientY)) {
         touch.joyId = t.identifier; touch.joyBaseX = t.clientX; touch.joyBaseY = t.clientY;
         touch.joyX = 0; touch.joyZ = 0;
         showJoyAt(t.clientX, t.clientY);
+        handled = true;
       } else if (touch.lookId === null && !joyZoneHit(t.clientX, t.clientY)) {
         touch.lookId = t.identifier;
         activeTouches.set(t.identifier, { lastX: t.clientX, lastY: t.clientY });
+        handled = true;
       }
     }
-  }, { passive: true });
-  canvas.addEventListener('touchmove', e => {
+    if (handled) e.preventDefault();
+  }, { passive: false, capture: true });
+  document.addEventListener('touchmove', e => {
+    let handled = false;
     for (const t of e.changedTouches) {
       if (t.identifier === touch.joyId) {
         let dx = t.clientX - touch.joyBaseX, dy = t.clientY - touch.joyBaseY;
@@ -1014,15 +1555,18 @@
         if (dist > R) { dx = dx / dist * R; dy = dy / dist * R; }
         $('joyStick').style.transform = `translate(${dx}px,${dy}px)`;
         touch.joyX = dx / R; touch.joyZ = -dy / R;
+        handled = true;
       } else if (t.identifier === touch.lookId) {
         const info = activeTouches.get(t.identifier);
         if (!info) continue;
         const dx = t.clientX - info.lastX, dy = t.clientY - info.lastY;
         info.lastX = t.clientX; info.lastY = t.clientY;
-        applyLook(dx, dy, 0.0032);
+        applyTouchLook(dx, dy);
+        handled = true;
       }
     }
-  }, { passive: true });
+    if (handled) e.preventDefault();
+  }, { passive: false, capture: true });
   function touchEndHandler(e) {
     for (const t of e.changedTouches) {
       if (t.identifier === touch.joyId) {
@@ -1033,8 +1577,8 @@
       }
     }
   }
-  canvas.addEventListener('touchend', touchEndHandler, { passive: true });
-  canvas.addEventListener('touchcancel', touchEndHandler, { passive: true });
+  document.addEventListener('touchend', touchEndHandler, { passive: true, capture: true });
+  document.addEventListener('touchcancel', touchEndHandler, { passive: true, capture: true });
 
   // 触屏按钮：Fire/Jump 需要"按住"语义走 touchstart/touchend；其余简单点按复用原生 click 即可
   function touchActionAllowed() {
@@ -1215,9 +1759,18 @@
   }
   function setFollow(on) {                                    // F键 / 跟随按钮 共用
     if (on) { const list = specList(); if (list.length) specFollowId = list[0].id; }
-    else specFollowId = null;
+    else {
+      adoptCameraAsFreeView();
+      specFollowId = null;
+    }
     updateSpecBar();
     updateTouchLayout();
+  }
+  function adoptCameraAsFreeView() {
+    specFree.pos.copy(camera.position);
+    const rotation = new T.Euler().setFromQuaternion(camera.quaternion, 'YXZ');
+    me.pitch = Math.max(-1.53, Math.min(1.53, rotation.x));
+    me.yaw = rotation.y;
   }
   function updateSpecBar() {
     if (specFollowId != null && !ents.has(specFollowId)) specFollowId = null;   // 目标离场 → 回自由
@@ -1242,11 +1795,18 @@
   }
 
   // ---------- 本地战斗 ----------
+  function viewPitch() { return Math.max(-1.53, Math.min(1.53, me.pitch + me.recoilPitch)); }
   function camDir() {
-    return V3(0, 0, -1).applyEuler(new T.Euler(me.pitch, me.yaw, 0, 'YXZ'));
+    return V3(0, 0, -1).applyEuler(new T.Euler(viewPitch(), me.yaw, 0, 'YXZ'));
   }
   function eyePos() { return V3(me.pos.x, me.pos.y + defs.rules.eyeH, me.pos.z); }
   function effectiveView() { return me.zoom > 0.5 ? 'fp' : settings.view; }
+
+  function syncWeaponBloom(weapon) {
+    if (me.bloomWeapon === weapon) return;
+    me.bloomWeapon = weapon || null;
+    me.bloom = 0;
+  }
 
   // 跨端公平性：触屏精度天然低于鼠标，给触屏客户端一点"子弹磁吸"辅助瞄准（bullet magnetism）。
   // 只在本地把发送给服务器的开火方向朝最近目标中心柔性纠偏（≤35%），桌面端(TOUCH=false)完全不生效，
@@ -1275,6 +1835,17 @@
         if (dot > bestDot && !smokeBlocks(origin, to, dist)) { bestDot = dot; bestDir = to; }
       }
     }
+    // 特种精英怪也可被磁吸（触屏公平性：和 BOSS 一样纳入辅助）
+    const smYc = defs.airdrops && defs.airdrops.special ? defs.airdrops.special.yc : 1.5;
+    for (const e of specialMobs.values()) {
+      if (!e.cur) continue;
+      const to = V3(e.disp.x, smYc, e.disp.z).sub(origin);
+      const dist = to.length();
+      if (dist < 0.5 || dist > AIM_ASSIST_RANGE) continue;
+      to.normalize();
+      const dot = to.dot(dir);
+      if (dot > bestDot && !smokeBlocks(origin, to, dist)) { bestDot = dot; bestDir = to; }
+    }
     return bestDir ? dir.clone().lerp(bestDir, AIM_ASSIST_BLEND).normalize() : dir;
   }
 
@@ -1299,6 +1870,23 @@
       const oc = o.clone().sub(c);
       const b = oc.dot(d);
       const disc = b * b - (oc.lengthSq() - bi.radius * bi.radius);
+      if (disc > 0) { const tt = -b - Math.sqrt(disc); if (tt > 0 && tt < t) t = tt; }
+    }
+    // 特种精英怪与空投补给箱：本地命中预测纳入，避免打到它们时被当作"打墙"补错火花
+    const smYc = defs.airdrops && defs.airdrops.special ? defs.airdrops.special.yc : 1.5;
+    const smR = defs.airdrops && defs.airdrops.special ? defs.airdrops.special.radius : 0.9;
+    for (const e of specialMobs.values()) {
+      const c = V3(e.disp.x, smYc, e.disp.z);
+      const oc = o.clone().sub(c);
+      const b = oc.dot(d);
+      const disc = b * b - (oc.lengthSq() - (smR + 0.3) * (smR + 0.3));
+      if (disc > 0) { const tt = -b - Math.sqrt(disc); if (tt > 0 && tt < t) t = tt; }
+    }
+    if (airdropCrate && airdropCrate.mesh && airdropCrate.mesh.group.visible) {
+      const c = V3(airdropCrate.mesh.group.position.x, 0.85, airdropCrate.mesh.group.position.z);
+      const oc = o.clone().sub(c);
+      const b = oc.dot(d);
+      const disc = b * b - (oc.lengthSq() - 1.2 * 1.2);
       if (disc > 0) { const tt = -b - Math.sqrt(disc); if (tt > 0 && tt < t) t = tt; }
     }
     return { end: o.clone().addScaledVector(d, t), wall: t >= wallT - 0.02 && wallT < maxR - 0.05 };
@@ -1331,15 +1919,23 @@
       if (t - me.lastShot < def.cd * 1000) return;
       me.lastShot = t; me.firedOnce = true;
       me.ammoL--;
-      const spread = me.zoom > 0.5 ? 0 : def.spread * (me.moving ? 1.6 : 1);
+      syncWeaponBloom(mySnap.gw);
       const o = eyePos();
-      let d = camDir();
-      d.x += (Math.random() - 0.5) * spread * 2;
-      d.y += (Math.random() - 0.5) * spread * 2;
-      d.z += (Math.random() - 0.5) * spread * 2;
-      d.normalize();
-      d = applyAimAssist(d, o);
-      send({ type: 'fire', o: [o.x, o.y, o.z], d: [d.x, d.y, d.z] });
+      let d = applyAimAssist(camDir(), o);
+      const scoped = me.zoom > 0.5 && Number.isFinite(def.scopedSpread);
+      const baseSpread = scoped ? def.scopedSpread : def.spread;
+      const moveMultiplier = me.moving ? (def.moveSpreadMul || 1.6) : 1;
+      const spread = (Math.max(0, baseSpread || 0) + me.bloom) * moveMultiplier;
+      if (G.weaponSpread && typeof G.weaponSpread.apply === 'function') {
+        const direction = G.weaponSpread.apply([d.x, d.y, d.z], spread);
+        d.set(direction[0], direction[1], direction[2]);
+      } else {
+        d.x += (Math.random() - 0.5) * spread * 2;
+        d.y += (Math.random() - 0.5) * spread * 2;
+        d.z += (Math.random() - 0.5) * spread * 2;
+        d.normalize();
+      }
+      send({ type: 'fire', o: [o.x, o.y, o.z], d: [d.x, d.y, d.z], zm: me.zoom > 0.5 ? 1 : 0 });
       G.audio.shot(mySnap.gw);
       const { end, wall } = localRayEnd(o, d, def.range);
       const mp = o.clone().addScaledVector(d, 0.9).addScaledVector(V3(Math.cos(me.yaw), 0, -Math.sin(me.yaw)), 0.14);
@@ -1350,8 +1946,9 @@
       // 枪口青烟
       G.fx.dustPuff([mp.x, mp.y, mp.z], 0.5, '#9aa4b0');
       vmKick = Math.min(1, vmKick + (mySnap.gw === 'sniper' ? 1 : 0.4));
-      me.pitch += mySnap.gw === 'sniper' ? 0.02 : mySnap.gw === 'mg' ? 0.004 : 0.009;
-      me.spread = Math.min(14, me.spread + 5);
+      const recoil = Number(def.recoil) || 0;
+      me.recoilPitch = Math.min(0.06, me.recoilPitch + recoil);
+      me.bloom = Math.min(def.maxBloom || 0, me.bloom + (def.bloomPerShot || 0));
       if (myModel) myModel.attackT = 0;
       if (me.ammoL <= 0) { tryLocalReload(); }
     } else if (me.active === 'nade' && mySnap.ng) {
@@ -1436,6 +2033,13 @@
         send({ type: 'pickup', id: i });
       }
     }
+    for (const drop of lootMeshes.values()) {
+      if (t < drop.availableAt || t - drop.lastTry < 500) continue;
+      if (Math.hypot(drop.x - me.pos.x, drop.z - me.pos.z) < 2.3 && Math.abs(me.pos.y - drop.y) < 2) {
+        drop.lastTry = t;
+        send({ type: 'pickup', drop: drop.id });
+      }
+    }
     const md = Math.hypot(me.pos.x - defs.map.merchant.x, me.pos.z - defs.map.merchant.z);
     $('interactHint').classList.toggle('hidden', !(md < defs.rules.merchantDist && $('shop').classList.contains('hidden')));
   }
@@ -1445,11 +2049,11 @@
     moveSendT += dt;
     if (mode === 'play' && mySnap && mySnap.al && moveSendT > 0.066) {
       moveSendT = 0;
-      send({ type: 'move', p: [me.pos.x, me.pos.y, me.pos.z], ya: me.yaw, pi: me.pitch, an: me.moving ? 1 : 0 });
+      send({ type: 'move', p: [me.pos.x, me.pos.y, me.pos.z], ya: me.yaw, pi: viewPitch(), an: me.moving ? 1 : 0, zm: me.zoom > 0.5 ? 1 : 0 });
     }
     if (now() - lastPingAt > 2000 && wsOk) {
       lastPingAt = now();
-      send({ type: 'ping', t: lastPingAt });
+      send({ type: 'ping', t: lastPingAt, rtt: pingMs });
     }
   }
 
@@ -1534,6 +2138,15 @@
       const ring = pm.mesh.children[pm.mesh.children.length - 1];
       if (ring) ring.scale.setScalar(1 + Math.sin(perfNow / 300 + pm.pt.id) * 0.1);
     }
+    for (const drop of lootMeshes.values()) {
+      const settle = Math.min(1, Math.max(0, (perfNow - drop.bornAt) / 520));
+      const toss = settle < 1 ? Math.sin(settle * Math.PI) * 0.9 : 0;
+      drop.mesh.rotation.y += dt * 1.7;
+      drop.mesh.rotation.z = settle < 1 ? (1 - settle) * 0.45 * (drop.id % 2 ? 1 : -1) : 0;
+      drop.mesh.position.set(drop.x, drop.y + toss + Math.sin(perfNow / 520 + drop.id) * 0.1, drop.z);
+      const ring = drop.mesh.children[drop.mesh.children.length - 1];
+      if (ring) ring.scale.setScalar(1 + Math.sin(perfNow / 260 + drop.id) * 0.12);
+    }
     if (merchant) merchant.userData.gem.rotation.y += dt * 2;
   }
 
@@ -1572,8 +2185,10 @@
     if (!vm) return;
     const inPlay = mode === 'play' && mySnap && mySnap.al;
     const specEnt = mode === 'spec' && specView === 'fp' ? specTarget() : null;
-    const inSpecFp = !!(specEnt && specEnt.cur && specEnt.cur.al);
-    vm.group.visible = (inPlay && me.zoom < 0.5 && effectiveView() === 'fp') || inSpecFp;
+    const specSnap = specEnt && specEnt.cur;
+    const inSpecFp = !!(specSnap && specSnap.al);
+    const specZoom = !!(inSpecFp && specSnap.zm && specSnap.ac === 'gun' && specSnap.gw === 'sniper');
+    vm.group.visible = (inPlay && me.zoom < 0.5 && effectiveView() === 'fp') || (inSpecFp && !specZoom);
 
     if (inPlay) {
       const zomb = mySnap.bf.some(b => b[0] === 'zombie');
@@ -1606,7 +2221,7 @@
     }
 
     if (!inSpecFp) return;
-    const s = specEnt.cur;
+    const s = specSnap;
     const zomb = s.bf.some(b => b[0] === 'zombie');
     const held = s.ac === 'gun' ? s.gw : s.ac === 'nade' ? (s.ng || 'nade') : s.mw;
     G.models.setViewWeapon(vm, held, zomb && s.ac === 'melee');
@@ -1638,7 +2253,9 @@
   }
 
   // ---------- HUD 每帧 ----------
-  function hudFrame() {
+  function hudFrame(dt) {
+    const specSnap = mode === 'spec' && specView === 'fp' && specTarget() ? specTarget().cur : null;
+    const specZoom = !!(specSnap && specSnap.al && specSnap.zm && specSnap.ac === 'gun' && specSnap.gw === 'sniper');
     if (TOUCH) {
       const showScope = mode === 'play' && mySnap && mySnap.al && mySnap.gw === 'sniper' && me.active === 'gun';
       $('tScope').classList.toggle('hidden', !showScope);
@@ -1646,20 +2263,44 @@
       $('tScope').classList.toggle('on', showScope && rmbDown);
     }
     // 闪光弹白屏：前 18% 时长保持全白（完全看不见），之后随时间淡出
-    const blindRemain = blindUntil - now();
-    if (mode === 'play' && blindRemain > 0) {
-      const k = blindRemain / blindTotal, hold = 0.18;
+    const ownBlindRemain = blindUntil - now();
+    const blindRemain = mode === 'play' && mySnap && mySnap.al
+      ? ownBlindRemain
+      : specSnap && specSnap.al ? Math.max(0, specSnap.bl || 0) : 0;
+    const activeBlindTotal = mode === 'play' ? blindTotal : Math.max(1, specSnap ? specSnap.bt || 1 : 1);
+    if (blindRemain > 0) {
+      const k = blindRemain / activeBlindTotal, hold = 0.18;
       const op = k > (1 - hold) ? 1 : Math.max(0, k) / (1 - hold);
       $('flashWhite').style.opacity = Math.pow(Math.max(0, Math.min(1, op)), 0.7);
     } else {
       $('flashWhite').style.opacity = 0;
     }
-    if (mode !== 'play' || !mySnap) return;
-    me.spread = Math.max(0, me.spread - 0.6);
-    const sp = me.spread + (me.moving ? 4 : 0);
-    $('crosshair').style.setProperty('--sp', sp + 'px');
-    $('crosshair').style.display = (mySnap.al && me.zoom < 0.5 && $('shop').classList.contains('hidden')) ? '' : 'none';
-    $('scope').classList.toggle('hidden', me.zoom < 0.5);
+    $('scope').classList.toggle('hidden', mode === 'play' ? me.zoom < 0.5 : !specZoom);
+    if (mode === 'spec') {
+      $('reloadBar').classList.add('hidden');
+      const specWeapon = specSnap && specSnap.ac === 'gun' ? specSnap.gw : null;
+      const sniperHipFire = specWeapon === 'sniper';
+      renderCrosshair(specWeapon, !!(specSnap && specSnap.an), 0, !!(specSnap && specSnap.al && !sniperHipFire && !specZoom));
+      return;
+    }
+    if (mode !== 'play' || !mySnap) {
+      $('crosshair').classList.add('hidden');
+      $('reloadBar').classList.add('hidden');
+      return;
+    }
+    const activeWeapon = me.active === 'gun' ? mySnap.gw : null;
+    syncWeaponBloom(activeWeapon);
+    const ch = crosshairCfg(activeWeapon);
+    const def = activeWeapon ? defs.weapons[activeWeapon] : null;
+    if (def) me.bloom = Math.max(0, me.bloom - (def.bloomDecay || 0) * dt);
+    const bloomVisual = def && def.maxBloom > 0 ? ch.max * me.bloom / def.maxBloom : 0;
+    const sniperHipFire = me.active === 'gun' && mySnap.gw === 'sniper';
+    renderCrosshair(
+      me.active === 'gun' ? mySnap.gw : null,
+      me.moving,
+      bloomVisual,
+      mySnap.al && !sniperHipFire && me.zoom < 0.5 && $('shop').classList.contains('hidden')
+    );
     const rl = me.reloadUntil - now();
     const rb = $('reloadBar');
     if (rl > 0 && mySnap.gw) {
@@ -1680,8 +2321,13 @@
   // ---------- 相机 ----------
   const TP_DIST = 3.4;
   function updateCamera(dt) {
+    me.recoilPitch *= Math.exp(-dt * 7);
+    if (me.recoilPitch < 0.0001) me.recoilPitch = 0;
     const hasSpeed = mode === 'play' && mySnap && mySnap.bf.some(b => b[0] === 'speed');
-    const targetFov = BASE_FOV - me.zoom * 51 + (hasSpeed && me.moving ? 6 : 0);
+    const specSnap = mode === 'spec' && specView === 'fp' && specTarget() ? specTarget().cur : null;
+    const specZoom = specSnap && specSnap.al && specSnap.zm && specSnap.ac === 'gun' && specSnap.gw === 'sniper' ? 1 : 0;
+    const viewZoom = mode === 'play' ? me.zoom : specZoom;
+    const targetFov = BASE_FOV - viewZoom * 51 + (hasSpeed && me.moving ? 6 : 0);
     if (Math.abs(camera.fov - targetFov) > 0.1) {
       camera.fov += (targetFov - camera.fov) * Math.min(1, dt * 12);
       camera.updateProjectionMatrix();
@@ -1701,10 +2347,10 @@
           const d = Math.max(0.6, Math.min(len, t - 0.25));
           camera.position.copy(eye).addScaledVector(dir, d);
           if (camera.position.y < 0.3) camera.position.y = 0.3;
-          camera.rotation.set(me.pitch, me.yaw, 0);
+          camera.rotation.set(viewPitch(), me.yaw, 0);
         } else {
           camera.position.set(me.pos.x, me.pos.y + defs.rules.eyeH, me.pos.z);
-          camera.rotation.set(me.pitch, me.yaw, 0);
+          camera.rotation.set(viewPitch(), me.yaw, 0);
         }
       } else {
         const dp = V3(me.pos.x, me.pos.y + 7, me.pos.z + 5);
@@ -1712,7 +2358,11 @@
         camera.lookAt(me.pos.x, 0.5, me.pos.z);
       }
     } else if (mode === 'spec') {
-      const e = specTarget();
+      let e = specTarget();
+      if (!e && specFollowId != null) {
+        adoptCameraAsFreeView();
+        specFollowId = null;
+      }
       if (e) {
         const pi = e.disp.pi !== undefined ? e.disp.pi : e.cur.pi;   // pitch/yaw 同源（都用插值值），消除两轴不同步
         const eye = V3(e.disp.x, e.disp.y + defs.rules.eyeH, e.disp.z);
@@ -1749,7 +2399,7 @@
         if (keys.KeyC) specFree.pos.y -= spd * dt;
         specFree.pos.y = Math.max(0.5, Math.min(60, specFree.pos.y));
         camera.position.copy(specFree.pos);
-        camera.rotation.set(me.pitch, me.yaw, 0);
+        camera.rotation.set(viewPitch(), me.yaw, 0);
       }
       // 每 500ms 刷新观战条（含跟随目标离场后回退自由的处理），跟随/自由两态都覆盖
       if (Math.floor(perfNow / 500) !== Math.floor((perfNow - dt * 1000) / 500)) updateSpecBar();
@@ -1757,6 +2407,13 @@
       const a = perfNow / 9000;
       camera.position.set(Math.cos(a) * 38, 16, Math.sin(a) * 38);
       camera.lookAt(0, 1, 0);
+    }
+    if (mode === 'play' && mySnap && mySnap.al && respawnCameraUntil > perfNow) {
+      const progress = 1 - (respawnCameraUntil - perfNow) / RESPAWN_CAMERA_BLEND_MS;
+      const eased = 1 - Math.pow(1 - Math.max(0, Math.min(1, progress)), 3);
+      const targetQuaternion = camera.quaternion.clone();
+      camera.position.lerpVectors(respawnCameraPos, camera.position, eased);
+      camera.quaternion.copy(respawnCameraQuat).slerp(targetQuaternion, eased);
     }
     const sh = G.fx.getShake();
     if (sh) { camera.position.x += sh.x; camera.position.y += sh.y; camera.position.z += sh.z; }
@@ -1803,15 +2460,19 @@
     renderEnts(dt);
     renderSelf(dt);
     renderViewModel(dt);
+    updateAirdropRender(dt);
+    renderSpecialMobs(dt);
     renderShopPre(dt);
-    hudFrame();
+    hudFrame(dt);
     updateCamera(dt);
     G.fx.update(dt);
     renderSceneFrame();
     fpsCnt++;
     if (perfNow - fpsAt > 1000) {
       $('fpsNum').textContent = fpsCnt + ' FPS';
-      $('pingNum').textContent = pingMs + ' ms';
+      $('pingNum').textContent = pingMs > 0 ? pingMs + ' ms' : '-- ms';
+      const pingChip = $('pingChip');
+      pingChip.className = pingMs <= 0 ? 'unknown' : pingMs < 80 ? '' : pingMs <= 150 ? 'warn' : 'bad';
       const di = G.world.dayInfo();
       $('dayChip').textContent = `${di.icon} ${di.phase}`;
       // 运行时画质自动降级：持续低帧率就砍掉阴影这类纯观感开销（绝不动视距/雾距，公平性红线）

@@ -51,11 +51,14 @@
   </div>
 </div>
 
+<!-- ======== 战斗 / 观战共用视觉覆盖层 ======== -->
+<div id="crosshair" class="hidden"><i class="ch t"></i><i class="ch b"></i><i class="ch l"></i><i class="ch r"></i><i class="ch dot"></i></div>
+<div id="scope" class="hidden"><div class="scope-ring"></div><div class="scope-line h"></div><div class="scope-line v"></div></div>
+<div id="flashWhite"></div>
+
 <!-- ======== 游戏 HUD ======== -->
 <div id="hud" class="hidden">
-  <div id="crosshair"><i class="ch t"></i><i class="ch b"></i><i class="ch l"></i><i class="ch r"></i><i class="ch dot"></i></div>
   <div id="hitmarker">✕</div>
-  <div id="scope" class="hidden"><div class="scope-ring"></div><div class="scope-line h"></div><div class="scope-line v"></div></div>
 
   <div id="vitals">
     <div class="bar-row"><span class="bar-ico">❤️</span><div class="bar hp"><div id="hpFill"></div><span id="hpNum"></span></div></div>
@@ -74,7 +77,9 @@
     <div class="tl-row">
       <div id="coinBox">🪙 <span id="coinNum">0</span></div>
       <div id="dayChip">🌙 深夜</div>
+      <div id="pingChip" class="unknown">📶 <span id="pingNum">-- ms</span></div>
     </div>
+    <div id="airdropHint" class="airdrop-hint hidden"></div>
     <div id="buffRow"></div>
   </div>
   <div id="dmgDirWrap"></div>
@@ -95,8 +100,7 @@
 
   <div id="dmgVignette"></div>
   <div id="zombieTint"></div>
-  <div id="flashWhite"></div>
-  <div id="statLine"><span id="fpsNum"></span> · <span id="pingNum"></span></div>
+  <div id="statLine"><span id="fpsNum"></span></div>
 </div>
 
 <!-- ======== 聊天 ======== -->
@@ -203,6 +207,7 @@
 <script src="js/models.js"></script>
 <script src="js/world.js"></script>
 <script src="js/effects.js"></script>
-<script src="js/game.js"></script>
+<script src="js/weapon-spread.js?v=20260716a"></script>
+<script src="js/game.js?v=20260716a"></script>
 </body>
 </html>

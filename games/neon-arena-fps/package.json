@@ -5,7 +5,8 @@
   "main": "server/index.js",
   "scripts": {
     "start": "node server/index.js",
-    "dev": "node server/index.js"
+    "dev": "node server/index.js",
+    "ac:report": "node server/tools/anticheat-report.js"
   },
   "dependencies": {
     "express": "^4.19.2",
