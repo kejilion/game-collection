@@ -113,6 +113,8 @@ const WEAPONS = {
   pistol: { slot: 'gun', name: '手枪', dmg: 22, range: 80, cd: 0.27, mag: 12, reload: 1.3, auto: false, spread: 0.014, moveSpreadMul: 1.45, bloomPerShot: 0.002, maxBloom: 0.004, bloomDecay: 0.025, recoil: 0.009, reserveMags: 8 },
   mg: { slot: 'gun', name: '机枪', dmg: 13, range: 65, cd: 0.09, mag: 40, reload: 2.4, auto: true, spread: 0.03, moveSpreadMul: 1.4, bloomPerShot: 0.002, maxBloom: 0.012, bloomDecay: 0.018, recoil: 0.004, reserveMags: 6 },
   sniper: { slot: 'gun', name: '狙击枪', dmg: 95, range: 220, cd: 1.4, mag: 5, reload: 2.8, auto: false, spread: 0.03, scopedSpread: 0.0005, moveSpreadMul: 1.8, bloomPerShot: 0.003, maxBloom: 0.004, bloomDecay: 0.02, recoil: 0.02, zoom: true, reserveMags: 4 },
+  // 单发装填、慢速可见弹体与范围爆发；低总弹量、自伤和掩体遮挡共同限制近距离无脑清场。
+  rocket: { slot: 'gun', name: '火箭筒', dmg: 105, range: 100, cd: 1.25, mag: 1, reload: 2.8, auto: false, spread: 0.006, moveSpreadMul: 1.5, bloomPerShot: 0, maxBloom: 0, bloomDecay: 0, recoil: 0.035, reserveMags: 4, projectile: 'rocket', projectileSpeed: 24, radius: 5.6, falloff: 0.55, selfDamageMul: 0.7 },
   // count = 携带个数（拾取补满，投完切近战）
   nade:   { slot: 'nade',  name: '手雷',   dmg: 105, radius: 6.5, fuse: 2.2, cd: 2.0, kind: 'frag',  count: 5 },
   flash:  { slot: 'nade',  name: '闪光弹', radius: 14,  fuse: 1.3, cd: 1.6, kind: 'flash', blindMax: 5.0, blindRadius: 14, count: 6 },
@@ -139,7 +141,7 @@ const BUFFS = {
 
 // 拾取点各分类可随机出的物品
 const PICKUP_POOLS = {
-  wep:   ['knife', 'sword', 'hammer', 'pistol', 'pistol', 'mg', 'mg', 'sniper', 'nade', 'nade', 'flash', 'flash', 'smoke', 'smoke'],
+  wep:   ['knife', 'sword', 'hammer', 'pistol', 'pistol', 'mg', 'mg', 'sniper', 'rocket', 'nade', 'nade', 'flash', 'flash', 'smoke', 'smoke'],
   equip: ['health', 'health', 'armor', 'armor', 'boots'],
   buff:  ['speed', 'rage', 'crit', 'invis', 'zombie', 'jump', 'shield'],
 };

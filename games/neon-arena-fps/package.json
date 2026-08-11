@@ -1,11 +1,12 @@
 {
   "name": "neon-arena-fps",
-  "version": "1.0.0",
+  "version": "1.1.1",
   "description": "3D 第一人称多人在线竞技射击游戏 — 单房间权威 Node 服务器 + Three.js 客户端",
   "main": "server/index.js",
   "scripts": {
     "start": "node server/index.js",
     "dev": "node server/index.js",
+    "test": "node scripts/verify-rocket.js && node scripts/verify-session-guard.js && node scripts/verify-session-guard-e2e.js && node scripts/verify-anticheat-sustained-speed.js",
     "ac:report": "node server/tools/anticheat-report.js"
   },
   "dependencies": {

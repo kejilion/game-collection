@@ -12,7 +12,7 @@ const r2 = v => Math.round(v * 100) / 100;
 const r5 = v => Math.round(v * 100000) / 100000;
 
 const COLORS = ['#ff6b6b', '#4dabf7', '#69db7c', '#ffd43b', '#da77f2', '#ffa94d', '#63e6e2', '#f783ac', '#a9e34b', '#748ffc', '#ff8787', '#66d9e8'];
-const PROJ_KIND = { fire: 0, bullet: 1, orb: 2 };
+const PROJ_KIND = { fire: 0, bullet: 1, orb: 2, rocket: 3 };
 const NADE_KIND = { frag: 0, flash: 1, smoke: 2 };
 const KILL_PACE_MAX_WINDOW = 60000;
 const KILL_PACE_RULES = [
@@ -52,8 +52,15 @@ const AC_BEHAVIOR = {
   dominanceEvidenceMs: 300000,
   dominanceObserveMs: 60000,
   dominanceWeight: 10,
+  dominanceFusionWeight: 35,
+  dominanceFusionMinVictims: 4,
+  dominanceFusionMinPlayers: 3,
+  dominanceCooldownEvents: 2,
+  dominanceMovementEvents: 2,
+  dominanceMovementMaxRttMs: 250,
 };
-const DOMINANCE_EVIDENCE_RULES = new Set(['aim', 'hipsniper', 'spk', 'preaim']);
+const DOMINANCE_AIM_RULES = new Set(['aim', 'hipsniper', 'spk', 'preaim']);
+const DOMINANCE_MOVEMENT_RULES = new Set(['teleport', 'speed', 'fly', 'clip']);
 
 function antiCheatVictimKey(victim) {
   if (victim && victim.mon && victim.mon.identity) return `identity:${victim.mon.identity}`;
@@ -242,10 +249,10 @@ class World {
     return p;
   }
 
-  removePlayer(id) {
+  removePlayer(id, reason = 'leave') {
     const p = this.players.get(id);
     if (!p) return;
-    this.auditSession(p, p.mon && p.mon.kicked ? (p.mon.lastAction || 'kick') : 'leave', true);
+    this.auditSession(p, p.mon && p.mon.kicked ? (p.mon.lastAction || 'kick') : reason, true);
     if (p.purgeProfile || (p.mon && p.mon.kicked)) board.clearHistory(p.name);
     else this.saveProfile(p);
     this.ac.detach(id);
@@ -627,6 +634,30 @@ class World {
     this.recordAuditShot(p, p.gun);
     this.markShotAwareness(p, t);
     const d = { x: dv[0], y: dv[1], z: dv[2] };
+
+    if (def.projectile === 'rocket') {
+      const mView = this.viewVec(p);
+      p.mon.aimShot({ dir: dv, view: mView, hit: false, headshot: false });
+      const mRight = [Math.cos(p.yaw), 0, -Math.sin(p.yaw)];
+      const muzzle = {
+        x: eye.x + d.x * 1.05 + mRight[0] * 0.12,
+        y: eye.y + d.y * 1.05 - 0.12,
+        z: eye.z + d.z * 1.05 + mRight[2] * 0.12,
+      };
+      this.spawnProj('rocket', muzzle, {
+        x: d.x * def.projectileSpeed,
+        y: d.y * def.projectileSpeed,
+        z: d.z * def.projectileSpeed,
+      }, def.dmg, {
+        owner: p.id, wp: p.gun, aoe: def.radius, falloff: def.falloff,
+        selfMul: def.selfDamageMul, maxRange: def.range, speed: def.projectileSpeed,
+      });
+      this.broadcast({
+        type: 'fx', k: 'rocketshot', id: p.id, wp: p.gun,
+        o: [r2(muzzle.x), r2(muzzle.y), r2(muzzle.z)],
+      });
+      return;
+    }
 
     let bestT = def.range, target = null, headshot = false, hitBoss = false, hitBarrel = null;
     for (const o of this.players.values()) {
@@ -1100,16 +1131,28 @@ class World {
     if (kd < AC_BEHAVIOR.dominanceMinKd || kpm < AC_BEHAVIOR.dominanceMinKpm) return;
     const evidence = attacker.mon.violations.filter(entry =>
       !entry.persistent && t - entry.t <= AC_BEHAVIOR.dominanceEvidenceMs
-      && DOMINANCE_EVIDENCE_RULES.has(entry.rule)
     );
-    const evidenceRules = [...new Set(evidence.map(entry => entry.rule))];
+    const aimRules = [...new Set(evidence.filter(entry => DOMINANCE_AIM_RULES.has(entry.rule)).map(entry => entry.rule))];
+    const cooldownEvents = evidence.filter(entry => entry.rule === 'cooldown').length;
+    const movementEvents = evidence.filter(entry => DOMINANCE_MOVEMENT_RULES.has(entry.rule)).length;
+    const lowLatencyMovement = typeof attacker.mon.movementEvidenceSafe === 'function'
+      && attacker.mon.movementEvidenceSafe(AC_BEHAVIOR.dominanceMovementMaxRttMs);
+    const fused = state.victims.size >= AC_BEHAVIOR.dominanceFusionMinVictims
+      && this.players.size >= AC_BEHAVIOR.dominanceFusionMinPlayers
+      && cooldownEvents >= AC_BEHAVIOR.dominanceCooldownEvents
+      && movementEvents >= AC_BEHAVIOR.dominanceMovementEvents
+      && lowLatencyMovement;
     const detail = `${attacker.kills}杀${attacker.deaths}死 K/D=${kd.toFixed(1)}，${kpm.toFixed(1)}杀/分，目标${state.victims.size}人`;
-    if (evidenceRules.length) {
+    if (fused) {
       state.nextCheckAt = t + AC_BEHAVIOR.dominanceObserveMs * 2;
-      attacker.mon.flag('dominance', AC_BEHAVIOR.dominanceWeight, `${detail}，关联 ${evidenceRules.join('/')}`);
+      attacker.mon.flag('dominance', AC_BEHAVIOR.dominanceFusionWeight, `${detail}，关联 cooldown×${cooldownEvents}/movement×${movementEvents}`);
+    } else if (aimRules.length) {
+      state.nextCheckAt = t + AC_BEHAVIOR.dominanceObserveMs * 2;
+      attacker.mon.flag('dominance', AC_BEHAVIOR.dominanceWeight, `${detail}，关联 ${aimRules.join('/')}`);
     } else {
       state.nextCheckAt = t + AC_BEHAVIOR.dominanceObserveMs;
-      attacker.mon.observe('dominance', `${detail}，暂无枪法证据`);
+      const context = `cooldown×${cooldownEvents}/movement×${movementEvents}`;
+      attacker.mon.observe('dominance', `${detail}，组合证据不足（${context}）`);
     }
   }
 
@@ -1120,7 +1163,24 @@ class World {
       if (!p.alive) continue;
       const d = Math.hypot(p.pos.x - pos.x, (p.pos.y + 1) - pos.y, p.pos.z - pos.z);
       if (d <= radius) {
-        this.applyDamage(p, dmg * (1 - falloff * d / radius), attacker, { wp: opts.wp, bossName: opts.bossName });
+        const directHit = opts.directTargetId === p.id;
+        if (opts.lineOfSight && !directHit && d > 0.2) {
+          const dir = {
+            x: (p.pos.x - pos.x) / d,
+            y: ((p.pos.y + 1) - pos.y) / d,
+            z: (p.pos.z - pos.z) / d,
+          };
+          const sightStart = {
+            x: pos.x + dir.x * 0.12,
+            y: pos.y + dir.y * 0.12,
+            z: pos.z + dir.z * 0.12,
+          };
+          const sightDistance = Math.max(0, d - 0.12);
+          if (this.obstacleBlock(sightStart, dir, sightDistance) < sightDistance - 0.15) continue;
+        }
+        const selfMul = attacker && p === attacker ? (opts.selfMul === undefined ? 1 : opts.selfMul) : 1;
+        const distanceMul = directHit ? 1 : (1 - falloff * d / radius);
+        this.applyDamage(p, dmg * distanceMul * selfMul, attacker, { wp: opts.wp, bossName: opts.bossName });
       }
     }
     if (this.boss) {
@@ -1944,17 +2004,37 @@ class World {
       }
       f.pos.x += f.vel.x * dt; f.pos.y += f.vel.y * dt; f.pos.z += f.vel.z * dt;
       let boom = false;
-      const hitR = f.kind === 'bullet' ? 0.8 : f.kind === 'orb' ? 1.0 : 1.15;
+      const hitR = f.kind === 'bullet' ? 0.8 : f.kind === 'orb' ? 1.0 : f.kind === 'rocket' ? 0.8 : 1.15;
       for (const p of this.players.values()) {
-        if (!p.alive) continue;
+        if (!p.alive || (f.kind === 'rocket' && p.id === f.owner)) continue;
         if (Math.hypot(p.pos.x - f.pos.x, p.pos.y + 1.2 - f.pos.y, p.pos.z - f.pos.z) < hitR) {
           if (f.kind === 'bullet') this.applyDamage(p, f.dmg, null, { bossName: f.bossName });
+          if (f.kind === 'rocket') f.directTargetId = p.id;
           boom = true; break;
         }
       }
-      const life = f.kind === 'bullet' ? 2500 : f.kind === 'orb' ? 6000 : 4500;
+      if (!boom && f.kind === 'rocket') {
+        if (this.boss && Math.hypot(this.boss.pos.x - f.pos.x, this.boss.cfg.yc - f.pos.y, this.boss.pos.z - f.pos.z) < this.boss.cfg.radius + 0.65) boom = true;
+        for (const mob of this.specialMobs) {
+          if (Math.hypot(mob.pos.x - f.pos.x, mob.yc - f.pos.y, mob.pos.z - f.pos.z) < mob.radius + 0.65) { boom = true; break; }
+        }
+        if (!boom && this.airdropCrate && this.airdropCrate.alive
+          && Math.hypot(this.airdropCrate.pos.x - f.pos.x, 0.9 - f.pos.y, this.airdropCrate.pos.z - f.pos.z) < 1.35) boom = true;
+        if (!boom) {
+          for (const br of this.barrels) {
+            if (br.alive && Math.hypot(br.x - f.pos.x, 0.9 - f.pos.y, br.z - f.pos.z) < MAP.barrelR + 0.55) { boom = true; break; }
+          }
+        }
+      }
+      const life = f.kind === 'bullet' ? 2500
+        : f.kind === 'orb' ? 6000
+          : f.kind === 'rocket' ? Math.min(5000, (f.maxRange || 100) / Math.max(1, f.speed || 24) * 1000)
+            : 4500;
       if (!boom && (f.pos.y < 0.1 || Math.abs(f.pos.x) > MAP.half || Math.abs(f.pos.z) > MAP.half || t - f.born > life)) boom = true;
-      if (boom) this.explodeProj(f, i);
+      if (boom) {
+        if (f.kind === 'rocket' && f.pos.y < 0.2) f.pos.y = 0.2;
+        this.explodeProj(f, i);
+      }
     }
     // 巫妖延迟爆破 / 空投导弹延迟轰炸
     for (let i = this.blasts.length - 1; i >= 0; i--) {
@@ -2053,8 +2133,17 @@ class World {
       return;
     }
     const r = f.aoe || (f.kind === 'orb' ? 1.6 : 2);
-    this.broadcast({ type: 'fx', k: 'explode', pos: [r2(f.pos.x), r2(Math.max(0.2, f.pos.y)), r2(f.pos.z)], r, fire: f.kind === 'fire', vp: f.kind === 'orb' });
-    this.aoeDamage({ x: f.pos.x, y: f.pos.y, z: f.pos.z }, r, f.dmg, null, { bossName: f.bossName, falloff: 0.35 });
+    const isRocket = f.kind === 'rocket';
+    const attacker = isRocket && f.owner ? (this.players.get(f.owner) || null) : null;
+    this.broadcast({ type: 'fx', k: 'explode', pos: [r2(f.pos.x), r2(Math.max(0.2, f.pos.y)), r2(f.pos.z)], r, fire: f.kind === 'fire' || isRocket, vp: f.kind === 'orb', rocket: isRocket });
+    this.aoeDamage({ x: f.pos.x, y: f.pos.y, z: f.pos.z }, r, f.dmg, attacker, {
+      wp: isRocket ? (f.wp || 'rocket') : null,
+      bossName: f.bossName,
+      falloff: isRocket ? f.falloff : 0.35,
+      selfMul: isRocket ? f.selfMul : 1,
+      lineOfSight: isRocket,
+      directTargetId: isRocket ? f.directTargetId : null,
+    });
   }
 
   // ---------- 快照 ----------

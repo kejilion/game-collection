@@ -318,6 +318,19 @@ G.models = (function () {
         g.add(body, barrel, muzzle, scope, scopeLens, stock, grip); fxMats.push(barrelMat, scopeMat);
         break;
       }
+      case 'rocket': {
+        const tubeMat = std('#4f5851', { metalness: 0.5, roughness: 0.45 });
+        const tube = cylZ(0.085, 0.085, 0.82, tubeMat, 16, true); tube.position.z = -0.28;
+        const rear = muzzleRing(0.11, dark); rear.position.z = 0.13;
+        const muzzle = muzzleRing(0.11, metal); muzzle.position.z = -0.69;
+        const shield = box(0.25, 0.18, 0.04, dark); shield.position.set(0, 0.06, -0.16);
+        const sightMat = std('#ff7a24', { emissive: '#7a2100', emissiveIntensity: 0.7 });
+        const sight = box(0.035, 0.08, 0.12, sightMat); sight.position.set(0, 0.14, -0.35);
+        const grip = box(0.05, 0.15, 0.07, dark); grip.position.set(0, -0.13, -0.12); grip.rotation.x = 0.12;
+        const shoulder = box(0.12, 0.11, 0.14, wood); shoulder.position.set(0, -0.02, 0.18);
+        g.add(tube, rear, muzzle, shield, sight, grip, shoulder); fxMats.push(tubeMat, sightMat);
+        break;
+      }
       case 'nade': {
         const b = sph(0.09, std('#3c5232', { roughness: 0.5 }));
         const topMat = std('#9aa4b0', { metalness: 0.8, roughness: 0.3 });

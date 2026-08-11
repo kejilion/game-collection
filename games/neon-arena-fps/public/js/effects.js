@@ -172,17 +172,25 @@ G.fx = (function () {
 
   function explosion(pos, r, opts) {
     const p = V(pos[0], Math.max(0.3, pos[1]), pos[2]);
-    const fire = opts && opts.fire, boss = opts && opts.boss, vp = opts && opts.vp;  // vp = 虚空紫
+    const fire = opts && opts.fire, boss = opts && opts.boss, vp = opts && opts.vp, rocket = opts && opts.rocket;  // vp = 虚空紫
     const ball = new T.Mesh(new T.SphereGeometry(1, 14, 10),
-      new T.MeshBasicMaterial({ color: vp ? 0xa66bff : fire ? 0xff7a30 : 0xffc860, transparent: true, opacity: 0.95, blending: T.AdditiveBlending, depthWrite: false }));
+      new T.MeshBasicMaterial({ color: vp ? 0xa66bff : rocket ? 0xff5a1f : fire ? 0xff7a30 : 0xffc860, transparent: true, opacity: 0.95, blending: T.AdditiveBlending, depthWrite: false }));
     ball.position.copy(p); ball.scale.setScalar(r * 0.25);
     spawnBlob(ball, 0.35, r * 0.85, true);
     const ring = new T.Mesh(new T.TorusGeometry(1, 0.06, 6, 28),
       new T.MeshBasicMaterial({ color: vp ? 0x8f5bff : boss ? 0xff5a3a : 0xffd080, transparent: true, opacity: 0.85, blending: T.AdditiveBlending, depthWrite: false }));
     ring.rotation.x = Math.PI / 2; ring.position.set(p.x, 0.15, p.z); ring.scale.setScalar(r * 0.2);
     spawnBlob(ring, 0.5, r * 1.3, true);
-    burst(p, boss ? 26 : 16, vp ? '#b48aff' : fire ? '#ff8a40' : '#ffc060', r * 1.6, 0.35, 0.7);
-    burst(p, 10, '#888', r * 0.7, 0.8, 1.4, { smoke: true, grav: -1.5, grow: 1.2 });
+    burst(p, boss || rocket ? 26 : 16, vp ? '#b48aff' : rocket ? '#ff6a28' : fire ? '#ff8a40' : '#ffc060', r * 1.6, 0.35, 0.7);
+    burst(p, rocket ? 16 : 10, rocket ? '#555' : '#888', r * 0.7, rocket ? 1 : 0.8, rocket ? 1.7 : 1.4, { smoke: true, grav: -1.5, grow: 1.2 });
+    if (rocket) {
+      const shock = new T.Mesh(new T.TorusGeometry(1, 0.045, 6, 32),
+        new T.MeshBasicMaterial({ color: 0xff9b45, transparent: true, opacity: 0.75, blending: T.AdditiveBlending, depthWrite: false }));
+      shock.rotation.x = Math.PI / 2;
+      shock.position.set(p.x, 0.2, p.z);
+      shock.scale.setScalar(r * 0.35);
+      spawnBlob(shock, 0.42, r * 1.65, true);
+    }
     boomLight.position.set(p.x, p.y + 1, p.z);
     boomLight.color.set(vp ? 0x9a6bff : 0xffa040);
     boomLight.intensity = boss ? 8 : 5;
@@ -394,6 +402,13 @@ G.fx = (function () {
     }
   }
 
+  function rocketTrail(pos, vel) {
+    const p = V(pos[0], pos[1], pos[2]);
+    const back = V(-vel[0], -vel[1], -vel[2]).normalize();
+    spawnP(p.clone().addScaledVector(back, 0.22), back.clone().multiplyScalar(2.2), '#ffb34d', 0.28, 0.16, { grav: 0, grow: 0.4 });
+    spawnP(p.clone().addScaledVector(back, 0.35), back.clone().multiplyScalar(1.4).add(V(0, 0.2, 0)), '#666', 0.34, 0.48, { smoke: true, grav: -0.4, grow: 1.8 });
+  }
+
   // 空投地面落点标记：闪烁的圆环
   function dropMarker(pos, color, progress) {
     const p = V(pos[0], 0.06, pos[1]);
@@ -435,7 +450,7 @@ G.fx = (function () {
 
   return {
     init, update, tracer, muzzle, impact, impactSpark, blood, explosion, telegraph, dustPuff, slam, die, respawnBeam, sparkle, roarWave, damageText,
-    flashPop, smokeCloud, airdropTrail, dropMarker, crateSparkle, spawnBurst, airdropWarnLine, burnField,
+    flashPop, smokeCloud, airdropTrail, rocketTrail, dropMarker, crateSparkle, spawnBurst, airdropWarnLine, burnField,
     getShake, shake: a => { shakeAmt = Math.min(1.2, shakeAmt + a); },
     punch, getKick,
   };

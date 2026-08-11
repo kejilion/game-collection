@@ -10,6 +10,7 @@ const board = require('./leaderboard');
 const cfg = require('./config');
 const { createChatFilter } = require('./chat-filter');
 const { createChatHistory } = require('./chat-history');
+const { SessionGuard } = require('./session-guard');
 const { AntiCheat, fpsPreset, createJsonStore, createAuditLog, TokenBucket, RATE_PRESETS } = require('./anticheat');
 
 const PORT = process.env.PORT || 3000;
@@ -33,6 +34,7 @@ app.get('/health', (req, res) => {
     anticheat: ac.status(),
     audit: audit.status(),
     wsGuard: connGuardStatus(),
+    sessionGuard: sessionGuard.status(),
     websocket: {
       compression: wsCompressionEnabled ? 'permessage-deflate' : 'off',
       compressionThreshold: wsCompressionEnabled ? wsCompression.threshold : null,
@@ -125,6 +127,7 @@ audit.write({
   channelDecayPerSec: ac.opts.channelDecayPerSec,
   movementBanContribution: ac.opts.movementBanContribution,
   movementKicksToBan: ac.opts.movementKicksToBan,
+  sustainedSpeed: ac.opts.sustainedSpeed,
   kicksToBan: ac.opts.kicksToBan,
   weights: ac.opts.weights,
   ruleChannels: ac.opts.ruleChannels,
@@ -314,24 +317,31 @@ function isNameBlocked(name) {
   return blocked;
 }
 
-// ---- 挂机/纯送死检测 ----
-const AFK_CHECK_INTERVAL = 15000;
-const AFK_DEATH_THRESHOLD = 10;  // 死亡超过此数且0击杀
+// ---- 参战会话与真实无操作治理 ----
+const sessionGuard = new SessionGuard({
+  maxPlayersPerDevice: envInt('DEVICE_MAX_PLAYERS', 1, 1),
+  maxPlayersPerIp: envInt('IP_MAX_PLAYERS', 2, 1),
+  warnAfterMs: envInt('AFK_WARN_MS', 180000, 1000),
+  kickAfterMs: envInt('AFK_KICK_MS', 300000, 2000),
+});
+const AFK_CHECK_INTERVAL = envInt('AFK_CHECK_INTERVAL_MS', 15000, 1000);
 setInterval(() => {
-  for (const [id, p] of world.players) {
-    if (p.kills === 0 && p.deaths >= AFK_DEATH_THRESHOLD) {
-      const ws = sockets.get(id);
-      console.log(`[anti-grief] 踢出纯送死玩家: ${p.name} (0杀/${p.deaths}死)`);
-      p.purgeProfile = true;
-      world.removePlayer(id);
-      sockets.delete(id);
-      if (ws) {
-        ws.playerId = 0;
-        rawSend(ws, JSON.stringify({ type: 'err', text: '长时间未参与战斗，已被移出' }));
-        // 记录踢出到反作弊
-        if (p.mon) ac.opts.store.addKick('ip:' + (p.ip || 'unknown'), 24*3600000);
-        if (p.mon) ac.opts.store.addKick('name:' + p.name, 24*3600000);
-      }
+  const result = sessionGuard.sweep();
+  for (const { playerId } of result.warnings) {
+    sendTo(playerId, { type: 'sys', text: '长时间无有效操作，继续无操作将自动退出对局' });
+  }
+  for (const { playerId, idleMs } of result.kicks) {
+    const p = world.players.get(playerId);
+    const ws = sockets.get(playerId);
+    if (!p) { sessionGuard.release(playerId); continue; }
+    console.log(`[session-guard] afk kick player=${p.name} idleMs=${Math.round(idleMs)}`);
+    sessionGuard.release(playerId);
+    world.removePlayer(playerId, 'afk');
+    sockets.delete(playerId);
+    if (ws) {
+      ws.playerId = 0;
+      rawSend(ws, JSON.stringify({ type: 'kicked', text: '长时间无有效操作，已退出对局' }));
+      setTimeout(() => { try { ws.close(4004, 'afk'); } catch (_) { /* ignore */ } }, 60);
     }
   }
 }, AFK_CHECK_INTERVAL);
@@ -350,7 +360,13 @@ wss.on('connection', (ws, req) => {
   }
   if (ipConnAdd(ws.ip) > IP_MAX_CONCURRENT) { ipConnDel(ws.ip); ws.close(4429, 'too many concurrent'); return; }
   ws.preBucket = new TokenBucket(6, 12);   // 加入前的连接级限速
-  ws.on('pong', () => { ws.isAlive = true; });
+  ws.on('pong', () => {
+    ws.isAlive = true;
+    if (!ws.heartbeatAt) return;
+    const p = ws.playerId ? world.players.get(ws.playerId) : null;
+    if (p && p.mon) p.mon.noteRtt(Date.now() - ws.heartbeatAt);
+    ws.heartbeatAt = 0;
+  });
   rawSend(ws, JSON.stringify(DEFS));
   rawSend(ws, JSON.stringify(world.boardMsg()));
   rawSend(ws, JSON.stringify(world.snapshot()));
@@ -382,37 +398,56 @@ wss.on('connection', (ws, req) => {
           rawSend(ws, JSON.stringify({ type: 'err', text: `你已被临时封禁，剩余约 ${mins} 分钟` }));
           return;
         }
+        const joinCheck = sessionGuard.canJoin({ ip: ws.ip, deviceId: m.deviceId });
+        if (!joinCheck.ok) {
+          const text = joinCheck.reason === 'missing_device_id'
+            ? '设备标识无效，请刷新页面后重试，或使用观战模式'
+            : joinCheck.reason === 'device_limit'
+              ? '该设备已有玩家在对局中，可使用观战模式'
+              : '当前网络已有多名玩家在对局中，请稍后再试或使用观战模式';
+          audit.write({
+            type: 'session_guard', action: 'reject', rule: joinCheck.reason,
+            identity: audit.identityHash(ws.ip), players: world.players.size,
+          });
+          rawSend(ws, JSON.stringify({ type: 'err', code: joinCheck.reason, text }));
+          return;
+        }
         ws.spectator = false;
         const np = world.addPlayer(m.name, ws.ip);
         ws.playerId = np.id;
         sockets.set(np.id, ws);
+        sessionGuard.activate(np.id, { ip: ws.ip, deviceId: joinCheck.deviceId, state: np });
+        if (!ws.heartbeatAt) {
+          ws.heartbeatAt = Date.now();
+          try { ws.ping(); } catch (_) { ws.heartbeatAt = 0; }
+        }
         rawSend(ws, JSON.stringify({ type: 'joined', id: np.id, you: { coins: np.coins, owned: np.owned, eq: np.eq }, name: np.name }));
         break;
       }
       case 'spectate': {
-        if (p) { world.removePlayer(p.id); sockets.delete(p.id); ws.playerId = 0; }
+        if (p) { sessionGuard.release(p.id); world.removePlayer(p.id); sockets.delete(p.id); ws.playerId = 0; }
         ws.spectator = true;
         rawSend(ws, JSON.stringify({ type: 'spec' }));
         break;
       }
       case 'leave': {
-        if (p) { world.removePlayer(p.id); sockets.delete(p.id); ws.playerId = 0; }
+        if (p) { sessionGuard.release(p.id); world.removePlayer(p.id); sockets.delete(p.id); ws.playerId = 0; }
         ws.spectator = false;
         rawSend(ws, JSON.stringify({ type: 'left' }));
         break;
       }
-      case 'move':   if (p) world.handleMove(p, m); break;
-      case 'melee':  if (p) world.handleMelee(p, m); break;
-      case 'fire':   if (p) world.handleFire(p, m); break;
-      case 'nade':   if (p) world.handleNade(p, m); break;
-      case 'reload': if (p) world.handleReload(p); break;
-      case 'switch': if (p) world.handleSwitch(p, m); break;
-      case 'pickup': if (p) world.handlePickup(p, m); break;
-      case 'chat':   if (p) world.handleChat(p, m); break;
-      case 'buy':    if (p) world.handleBuy(p, m); break;
-      case 'equip':  if (p) world.handleEquipCos(p, m); break;
+      case 'move':   if (p) { world.handleMove(p, m); sessionGuard.noteState(p.id, p); } break;
+      case 'melee':  if (p) { sessionGuard.noteActivity(p.id); world.handleMelee(p, m); } break;
+      case 'fire':   if (p) { sessionGuard.noteActivity(p.id); world.handleFire(p, m); } break;
+      case 'nade':   if (p) { sessionGuard.noteActivity(p.id); world.handleNade(p, m); } break;
+      case 'reload': if (p) { sessionGuard.noteActivity(p.id); world.handleReload(p); } break;
+      case 'switch': if (p) { sessionGuard.noteActivity(p.id); world.handleSwitch(p, m); } break;
+      case 'pickup': if (p) { sessionGuard.noteActivity(p.id); world.handlePickup(p, m); } break;
+      case 'chat':   if (p) { sessionGuard.noteActivity(p.id); world.handleChat(p, m); } break;
+      case 'buy':    if (p) { sessionGuard.noteActivity(p.id); world.handleBuy(p, m); } break;
+      case 'equip':  if (p) { sessionGuard.noteActivity(p.id); world.handleEquipCos(p, m); } break;
       case 'ping':
-        if (p && p.mon) p.mon.noteRtt(m.rtt);
+        if (p && p.mon) p.mon.noteClientRtt(m.rtt);
         rawSend(ws, JSON.stringify({ type: 'pong', t: m.t }));
         break;
     }
@@ -420,7 +455,7 @@ wss.on('connection', (ws, req) => {
 
   ws.on('close', () => {
     ipConnDel(ws.ip);
-    if (ws.playerId) { world.removePlayer(ws.playerId); sockets.delete(ws.playerId); }
+    if (ws.playerId) { sessionGuard.release(ws.playerId); world.removePlayer(ws.playerId); sockets.delete(ws.playerId); }
   });
   ws.on('error', () => { /* close 会跟着触发 */ });
 });
@@ -430,7 +465,8 @@ setInterval(() => {
   for (const ws of wss.clients) {
     if (!ws.isAlive) { ws.terminate(); continue; }
     ws.isAlive = false;
-    try { ws.ping(); } catch (_) { /* 忽略 */ }
+    ws.heartbeatAt = Date.now();
+    try { ws.ping(); } catch (_) { ws.heartbeatAt = 0; }
   }
 }, 15000);
 

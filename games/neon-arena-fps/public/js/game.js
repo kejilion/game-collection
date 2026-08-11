@@ -32,12 +32,13 @@
     return (hwc <= 4 || mem <= 3) ? QUALITY.low : QUALITY.medium;
   })();
 
-  const WICON = { fist: '👊', knife: '🔪', sword: '⚔️', hammer: '🔨', pistol: '🔫', mg: '💥', sniper: '🎯', nade: '🧨', flash: '🔆', smoke: '💨', boss: '👹', barrel: '🛢️' };
+  const WICON = { fist: '👊', knife: '🔪', sword: '⚔️', hammer: '🔨', pistol: '🔫', mg: '💥', sniper: '🎯', rocket: '🚀', nade: '🧨', flash: '🔆', smoke: '💨', boss: '👹', barrel: '🛢️' };
   const COS_ICON = { hat_cowboy: '🤠', hat_beret: '🧢', hat_horns: '😈', hat_crown: '👑', face_shades: '🕶️', face_visor: '🥽', back_cape: '🦸', back_jet: '🚀', back_wings: '👼', fx_ice: '❄️', fx_gold: '✨', fx_rainbow: '🌈' };
   const CROSSHAIR = {
     pistol: { cls: 'w-pistol', base: 1, move: 3, max: 8 },
     mg: { cls: 'w-mg', base: 3, move: 6, max: 14 },
     sniper: { cls: 'w-sniper', base: 8, move: 8, max: 10 },
+    rocket: { cls: 'w-rocket', base: 8, move: 4, max: 6 },
     default: { cls: '', base: 2, move: 4, max: 10 },
   };
   const crosshairCfg = w => CROSSHAIR[w] || CROSSHAIR.default;
@@ -45,7 +46,7 @@
     const ch = crosshairCfg(weapon);
     const crosshair = $('crosshair');
     crosshair.style.setProperty('--sp', ch.base + spread + (moving ? ch.move : 0) + 'px');
-    crosshair.classList.remove('w-pistol', 'w-mg', 'w-sniper');
+    crosshair.classList.remove('w-pistol', 'w-mg', 'w-sniper', 'w-rocket');
     if (ch.cls) crosshair.classList.add(ch.cls);
     crosshair.classList.toggle('hidden', !visible);
     return ch;
@@ -115,6 +116,7 @@
     active: 'melee', ammoL: 0, reserve: 0, nadeLeft: 0, reloadUntil: 0, reloadDur: 1,
     lastMelee: 0, lastShot: 0, lastNade: -99999, lastSwitch: 0,
     moving: false, zoom: 0, stepT: 0, bloom: 0, bloomWeapon: null, fallV: 0, recoilPitch: 0,
+    serverReloading: false, reloadSyncPending: false, reloadAmmoBefore: 0, forceAmmoSync: false,
     swayX: 0, swayY: 0,
   };
   const keys = {};
@@ -151,13 +153,26 @@
   let airdropSoundPlayed = false;
 
   // ---------- 网络 ----------
+  function getDeviceId() {
+    const key = 'neonArenaDeviceId';
+    let value = localStorage.getItem(key) || '';
+    if (/^[a-f0-9]{32}$/.test(value)) return value;
+    const bytes = new Uint8Array(16);
+    if (globalThis.crypto && typeof globalThis.crypto.getRandomValues === 'function') globalThis.crypto.getRandomValues(bytes);
+    else for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+    value = Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
+    localStorage.setItem(key, value);
+    return value;
+  }
+  const deviceId = getDeviceId();
+  function joinMessage() { return { type: 'join', name: myName, deviceId }; }
   function connect() {
     const url = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
     ws = new WebSocket(url);
     ws.onopen = () => {
       wsOk = true;
       $('lost').classList.add('hidden');
-      if (rejoinWanted && myName) send({ type: 'join', name: myName });
+      if (rejoinWanted && myName) send(joinMessage());
     };
     ws.onmessage = e => {
       let m; try { m = JSON.parse(e.data); } catch (_) { return; }
@@ -433,7 +448,19 @@
   }
   function makeProjMesh(kind) {
     const g = new T.Group();
-    if (kind === 1) {          // 机炮弹幕
+    if (kind === 3) {          // 玩家火箭弹：橙色弹头、深色弹身与尾焰
+      const body = new T.Mesh(new T.CylinderGeometry(0.09, 0.09, 0.52, 10),
+        new T.MeshStandardMaterial({ color: '#454b50', metalness: 0.65, roughness: 0.35 }));
+      body.rotation.x = Math.PI / 2;
+      const tip = new T.Mesh(new T.ConeGeometry(0.095, 0.2, 10),
+        new T.MeshStandardMaterial({ color: '#ff7a24', emissive: '#7a2100', emissiveIntensity: 0.8 }));
+      tip.rotation.x = -Math.PI / 2;
+      tip.position.z = -0.36;
+      const glow = new T.Sprite(new T.SpriteMaterial({ color: '#ff9a38', transparent: true, opacity: 0.8, blending: T.AdditiveBlending, depthWrite: false }));
+      glow.position.z = 0.32;
+      glow.scale.setScalar(0.55);
+      g.add(body, tip, glow);
+    } else if (kind === 1) {   // 机炮弹幕
       const s = new T.Mesh(new T.SphereGeometry(0.11, 6, 6), new T.MeshBasicMaterial({ color: '#ffd23c' }));
       g.add(s);
     } else if (kind === 2) {   // 追踪法球
@@ -492,7 +519,7 @@
       }
       let e = idx >= 0 ? pool[idx] : null;
       if (!e) {
-        e = { id: n.id, kind: n.kind, g: make(n.kind), target: n.pos.clone(), vel: n.vel.clone(), netAt: perfNow };
+        e = { id: n.id, kind: n.kind, g: make(n.kind), target: n.pos.clone(), vel: n.vel.clone(), netAt: perfNow, trailAt: 0 };
         e.g.position.copy(n.pos);
         scene.add(e.g);
         pool.push(e);
@@ -522,8 +549,16 @@
       if (ballistic) want.y -= 0.5 * grav * lead * lead;
       if (e.g.position.distanceToSquared(want) > 64) e.g.position.copy(want);
       else e.g.position.lerp(want, k);
-      e.g.rotation.x += dt * 7;
-      e.g.rotation.y += dt * 4;
+      if (e.kind === 3 && e.vel.lengthSq() > 0.01) {
+        e.g.quaternion.setFromUnitVectors(V3(0, 0, -1), e.vel.clone().normalize());
+        if (perfNow - e.trailAt >= 55) {
+          e.trailAt = perfNow;
+          G.fx.rocketTrail([e.g.position.x, e.g.position.y, e.g.position.z], [e.vel.x, e.vel.y, e.vel.z]);
+        }
+      } else {
+        e.g.rotation.x += dt * 7;
+        e.g.rotation.y += dt * 4;
+      }
     }
   }
   function renderMovingProjectiles(dt) {
@@ -665,10 +700,25 @@
 
   function onMySnap(s) {
     const wasAlive = mySnap ? mySnap.al : 1;
+    const previousGun = mySnap ? mySnap.gw : null;
+    const reloadCompleted = me.serverReloading && s.rl <= 0;
+    const reloadAmmoReady = me.reloadSyncPending && s.rl <= 0 && s.am > me.reloadAmmoBefore;
     mySnap = s;
-    if (s.rl > 0) { me.reloadUntil = now() + s.rl; me.reloadDur = defs.weapons[s.gw] ? defs.weapons[s.gw].reload * 1000 : 1000; }
-    else if (me.reloadUntil > now() + 200) me.reloadUntil = 0;
-    if (Math.abs(s.am - me.ammoL) > 1 || s.rl > 0) me.ammoL = s.am;
+    if (s.rl > 0) {
+      me.serverReloading = true;
+      me.reloadSyncPending = true;
+      me.reloadAmmoBefore = s.am;
+      me.reloadUntil = now() + s.rl;
+      me.reloadDur = defs.weapons[s.gw] ? defs.weapons[s.gw].reload * 1000 : 1000;
+    } else {
+      me.serverReloading = false;
+      if (reloadCompleted || me.reloadUntil > now() + 200) me.reloadUntil = 0;
+    }
+    if (s.gw !== previousGun || Math.abs(s.am - me.ammoL) > 1 || s.rl > 0 || reloadCompleted || reloadAmmoReady || me.forceAmmoSync) {
+      me.ammoL = s.am;
+    }
+    if (reloadAmmoReady || me.forceAmmoSync || s.gw !== previousGun || !s.gw) me.reloadSyncPending = false;
+    me.forceAmmoSync = false;
     me.reserve = s.re | 0; me.nadeLeft = s.nl | 0;   // 备弹/投掷数以服务端为准
     const zomb = s.bf.some(b => b[0] === 'zombie');
     if (zomb) me.active = 'melee';
@@ -748,6 +798,17 @@
         if (!m.tg) G.fx.impactSpark(m.e, '#ffe6a8');   // 没打中任何目标：在终点补个墙面/环境命中火花
         break;
       }
+      case 'rocketshot': {
+        if (m.id !== myId) {
+          const muzzle = V3(m.o[0], m.o[1], m.o[2]);
+          G.fx.muzzle(muzzle, 0xffa238);
+          G.fx.dustPuff(m.o, 0.8, '#5f6368');
+          if (distToMe(m.o) < 90) G.audio.shot('rocket');
+        }
+        const e = ents.get(m.id);
+        if (e) { e.model.attackT = 0; e.model.attackDur = 0.45; }
+        break;
+      }
       case 'melee': {
         if (m.id === myId) break;
         const e = ents.get(m.id);
@@ -788,7 +849,7 @@
       }
       case 'immune': G.fx.damageText(m.pos, '免疫', '#9fd8ef', false); if (m.tg !== myId) G.audio.immune(); break;
       case 'explode':
-        G.fx.explosion(m.pos, m.r, { fire: m.fire, boss: m.boss, vp: m.vp });
+        G.fx.explosion(m.pos, m.r, { fire: m.fire, boss: m.boss, vp: m.vp, rocket: m.rocket });
         if (distToMe(m.pos) < 90) G.audio.explosion(m.boss || m.r > 4);
         break;
       case 'flashbang':
@@ -929,6 +990,7 @@
   }
 
   function onGot(m) {
+    if (m.kind === 'wep' && defs.weapons[m.item] && defs.weapons[m.item].slot === 'gun') me.forceAmmoSync = true;
     if (m.kind === 'buff') {
       G.audio.buff();
       if (m.item === 'zombie') G.audio.zombie();
@@ -1731,7 +1793,7 @@
     G.audio.init();
     myName = $('nameInput').value.trim() || ('玩家' + Math.floor(Math.random() * 900 + 100));
     $('menuErr').textContent = '';
-    send({ type: 'join', name: myName });
+    send(joinMessage());
   };
   $('btnSpec').onclick = () => { G.audio.init(); send({ type: 'spectate' }); };
   $('btnDeathSpec').onclick = () => { send({ type: 'spectate' }); };
@@ -1739,7 +1801,7 @@
   $('nameInput').addEventListener('keydown', e => { if (e.code === 'Enter') $('btnPlay').click(); e.stopPropagation(); });
   function joinFromSpec() {
     myName = myName || $('nameInput').value.trim() || ('玩家' + Math.floor(Math.random() * 900 + 100));
-    send({ type: 'join', name: myName });
+    send(joinMessage());
   }
 
   // ---------- 观战 ----------
@@ -1937,15 +1999,20 @@
       }
       send({ type: 'fire', o: [o.x, o.y, o.z], d: [d.x, d.y, d.z], zm: me.zoom > 0.5 ? 1 : 0 });
       G.audio.shot(mySnap.gw);
-      const { end, wall } = localRayEnd(o, d, def.range);
       const mp = o.clone().addScaledVector(d, 0.9).addScaledVector(V3(Math.cos(me.yaw), 0, -Math.sin(me.yaw)), 0.14);
       mp.y -= 0.1;
-      G.fx.tracer([mp.x, mp.y, mp.z], [end.x, end.y, end.z], '#ffe0a0');
-      G.fx.muzzle(mp);
-      if (wall) G.fx.impactSpark([end.x, end.y, end.z], '#ffe6a8');
-      // 枪口青烟
-      G.fx.dustPuff([mp.x, mp.y, mp.z], 0.5, '#9aa4b0');
-      vmKick = Math.min(1, vmKick + (mySnap.gw === 'sniper' ? 1 : 0.4));
+      if (def.projectile === 'rocket') {
+        G.fx.muzzle(mp, 0xffa238);
+        G.fx.dustPuff([mp.x, mp.y, mp.z], 0.9, '#5f6368');
+      } else {
+        const { end, wall } = localRayEnd(o, d, def.range);
+        G.fx.tracer([mp.x, mp.y, mp.z], [end.x, end.y, end.z], '#ffe0a0');
+        G.fx.muzzle(mp);
+        if (wall) G.fx.impactSpark([end.x, end.y, end.z], '#ffe6a8');
+        // 枪口青烟
+        G.fx.dustPuff([mp.x, mp.y, mp.z], 0.5, '#9aa4b0');
+      }
+      vmKick = Math.min(1, vmKick + (mySnap.gw === 'sniper' || def.projectile === 'rocket' ? 1 : 0.4));
       const recoil = Number(def.recoil) || 0;
       me.recoilPitch = Math.min(0.06, me.recoilPitch + recoil);
       me.bloom = Math.min(def.maxBloom || 0, me.bloom + (def.bloomPerShot || 0));

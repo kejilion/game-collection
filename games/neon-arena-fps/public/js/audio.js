@@ -134,6 +134,7 @@ G.audio = (function () {
       if (wp === 'pistol') { burst(0.12, 2400, 0.5, 0.1); tone('square', 320, 90, 0.08, 0.16); }
       else if (wp === 'mg') { burst(0.09, 2000, 0.42, 0.07); tone('square', 260, 80, 0.06, 0.13); }
       else if (wp === 'sniper') { burst(0.35, 1400, 0.8, 0.3); tone('sawtooth', 190, 40, 0.3, 0.28); burst(0.4, 300, 0.4, 0.4); }
+      else if (wp === 'rocket') { burst(0.42, 520, 0.85, 0.36, 'bandpass'); tone('sawtooth', 155, 48, 0.38, 0.34); burst(0.3, 180, 0.55, 0.28); }
     },
     dryFire() { tone('square', 900, 700, 0.05, 0.1); },
     reload() { tone('square', 500, 380, 0.05, 0.12); tone('square', 700, 550, 0.05, 0.12, 0.16); },

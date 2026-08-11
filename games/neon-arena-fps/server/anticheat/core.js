@@ -30,6 +30,15 @@ const DEFAULTS = {
   kicksToBan: 3,             // 24h 内被踢 N 次自动升级封禁
   movementKicksToBan: 6,     // 仅网络敏感规则导致的踢出提高升级门槛，避免高延迟误封
   kickWindowMs: 24 * 3600 * 1000,
+  sustainedSpeed: {
+    enabled: true,
+    windowMs: 5 * 60 * 1000,
+    observeCount: 12,
+    warnCount: 20,
+    kickCount: 36,
+    maxRttMs: 150,
+    minRttSamples: 3,
+  },
   // 各规则默认计分权重
   weights: {
     teleport: 10,  // 单包位移超过瞬移阈值
@@ -47,7 +56,7 @@ const DEFAULTS = {
     teleport: 'movement', speed: 'movement', fly: 'movement', clip: 'movement',
     cooldown: 'combat', aim: 'combat', hipsniper: 'combat', spk: 'combat',
     killpace: 'combat', streak: 'combat', preaim: 'combat', dominance: 'combat',
-    badvec: 'integrity', range: 'integrity',
+    badvec: 'integrity', range: 'integrity', sustainedspeed: 'integrity',
   },
   scoreCooldownMs: {
     badvec: 1000, cooldown: 10000, range: 3000, spk: 30000,
@@ -70,6 +79,7 @@ const DEFAULTS = {
     lagGraceMs: 1500,
     lagCreditMaxMs: 1000,
     moveFlagCooldownMs: 2500,
+    penaltyRttMs: 500,              // 服务端协议心跳 RTT 达到此值时仍回拉非法位置，但暂停移动计分
     maxAboveFloor: 4.5,
     airMinAboveFloor: 1.25,
     maxAirMs: 1900,
@@ -175,11 +185,15 @@ class Monitor {
     this._spk = { shotsFired: 0, killRecords: [] };
     this._lastScoreAt = new Map();
     this._persistentScores = new Map();
-    this.networkRtt = null;
+    this._sustainedSpeedEvents = [];
+    this._sustainedSpeedStage = 0;
+    this.networkRtt = null;         // 仅接受服务端 WebSocket ping/pong 测得的可信 RTT
+    this.clientRtt = null;          // 客户端自报 RTT 只作诊断，不参与处罚
     this.identity = this.engine.identityFor(this.meta);
     this.ruleCounts = {};
     this.observeCounts = {};
     this._rttSamples = [];
+    this._clientRttSamples = [];
     this.stats = { corrections: 0, teleports: 0, dropped: 0 };
   }
   get enabled() { return this.engine.opts.enabled; }
@@ -235,7 +249,37 @@ class Monitor {
     if (this.violations.length > 30) this.violations.shift();
     this.engine._log(entry);
     this.engine._evaluate(this, entry);
+    this.trackSustainedSpeed(rule, t);
     return true;
+  }
+
+  trackSustainedSpeed(rule, t) {
+    const cfg = this.engine.opts.sustainedSpeed || {};
+    if (!cfg.enabled || rule !== 'speed') return;
+    if (this._rttSamples.length < Math.max(1, Number(cfg.minRttSamples) || 1)) return;
+    if (!this.movementEvidenceSafe(Number(cfg.maxRttMs) || 150)) return;
+
+    const windowMs = Math.max(1000, Number(cfg.windowMs) || 300000);
+    this._sustainedSpeedEvents = this._sustainedSpeedEvents.filter(at => t - at <= windowMs);
+    this._sustainedSpeedEvents.push(t);
+    const count = this._sustainedSpeedEvents.length;
+    const observeCount = Math.max(1, Number(cfg.observeCount) || 12);
+    const warnCount = Math.max(observeCount, Number(cfg.warnCount) || 20);
+    const kickCount = Math.max(warnCount, Number(cfg.kickCount) || 36);
+    const nextStage = count >= kickCount ? 3 : count >= warnCount ? 2 : count >= observeCount ? 1 : 0;
+
+    const previousStage = this._sustainedSpeedStage;
+    this._sustainedSpeedStage = nextStage;
+    if (nextStage === 0) return;
+    if (nextStage >= 1 && previousStage < 1)
+      this.observe('sustainedspeed', `可信低延迟持续超速 ${count} 次/${Math.round(windowMs / 1000)}s`);
+    if (nextStage <= previousStage || nextStage < 2) return;
+
+    const score = nextStage >= 3
+      ? this.engine.opts.thresholds.kick
+      : this.engine.opts.thresholds.warn;
+    this.flag('sustainedspeed', score,
+      `可信低延迟持续超速 ${count} 次/${Math.round(windowMs / 1000)}s rtt=${Math.round(this.networkRtt)}ms`);
   }
 
   // 不随时间衰减的弱辅助分；适合连杀等上下文证据，调用方负责在死亡/回合结束时清零。
@@ -321,10 +365,17 @@ class Monitor {
 
   noteRtt(value) {
     const sample = +value;
-    if (!isFinite(sample) || sample < 0 || sample > 5000) return;
+    if (!isFinite(sample) || sample < 0 || sample > 15000) return;
     this.networkRtt = this.networkRtt === null ? sample : this.networkRtt * 0.75 + sample * 0.25;
     this._rttSamples.push(sample);
     if (this._rttSamples.length > 60) this._rttSamples.shift();
+  }
+  noteClientRtt(value) {
+    const sample = +value;
+    if (!isFinite(sample) || sample < 0 || sample > 5000) return;
+    this.clientRtt = this.clientRtt === null ? sample : this.clientRtt * 0.75 + sample * 0.25;
+    this._clientRttSamples.push(sample);
+    if (this._clientRttSamples.length > 60) this._clientRttSamples.shift();
   }
   rttStats() {
     if (!this._rttSamples.length) return null;
@@ -346,6 +397,9 @@ class Monitor {
     if (t - this._lastCorrectionAt < correctionGraceMs) return false;
     if (this._mv && t < (this._mv.lagGraceUntil || 0)) return false;
     return true;
+  }
+  movementEvidenceSafe(maxRttMs = 250) {
+    return this._rttSamples.length > 0 && this.networkRtt !== null && this.networkRtt <= maxRttMs;
   }
   vec3(arr, opts) {
     if (!Array.isArray(arr) || arr.length < 3) { this.flag('badvec', undefined, '缺失向量'); return null; }
@@ -397,7 +451,8 @@ class Monitor {
     } else if (!lagProtected) st.lagCredit = 0;
     const allowed = lagProtected ? Math.max(normalAllowed, (st.lagCredit || 0) + M.packetPad) : normalAllowed;
     const movementFlag = (rule, weight, detail) => {
-      if (lagProtected || t < (st.nextFlagAt || 0)) return false;
+      const latencyProtected = this._rttSamples.length > 0 && this.networkRtt >= M.penaltyRttMs;
+      if (lagProtected || latencyProtected || t < (st.nextFlagAt || 0)) return false;
       st.nextFlagAt = t + M.moveFlagCooldownMs;
       const rtt = this.networkRtt === null ? '' : ` rtt=${Math.round(this.networkRtt)}ms`;
       this.flag(rule, weight, `${detail} raw=${rawDelta}ms${rtt}`);
@@ -585,7 +640,8 @@ class Monitor {
     s.shotsFired = 0;
     if (s.killRecords.length >= S.evalKills) {
       const gunKills = s.killRecords.filter(k => k.gun);
-      const evaluatedKills = gunKills.filter(k => k.wp !== 'sniper');
+      // 狙击枪与火箭筒都以单发爆发为设计目标，不参与“每杀耗弹过低”规则。
+      const evaluatedKills = gunKills.filter(k => k.wp !== 'sniper' && k.wp !== 'rocket');
       if (evaluatedKills.length >= S.minGunKills) {
         const totalShots = evaluatedKills.reduce((sum, k) => sum + k.shots, 0);
         const avgSpk = totalShots / evaluatedKills.length;
